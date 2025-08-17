@@ -1,0 +1,57 @@
+# Source files and development assets
+src/
+examples/
+docs/
+specs/
+scripts/
+
+# Test files and output
+test/
+tests/
+src/test/
+**/*.test.ts
+**/*.spec.ts
+test-output/
+coverage/
+spider-logs/
+
+# Development configuration
+.claude/
+tsconfig.*.json
+vite.config.ts
+vitest.config.ts
+eslint.config.mjs
+.prettierrc
+.changeset/
+
+# Development dependencies
+node_modules/
+.env
+.env.*
+
+# Build artifacts (keep dist/ for publishing)
+*.tsbuildinfo
+*.log
+*.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# NPM and package management
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Legacy files
+SCRAPY_FEATURE_ANALYSIS.md
+service_pattern.md

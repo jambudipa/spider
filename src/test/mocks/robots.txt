@@ -1,0 +1,20 @@
+User-agent: *
+Disallow: /private/
+Disallow: /admin/
+Disallow: /api/
+Allow: /api/public/
+Crawl-delay: 1
+
+User-agent: Googlebot
+Disallow: /no-google/
+Crawl-delay: 0
+
+User-agent: BadBot
+Disallow: /
+
+User-agent: SpiderExample/1.0
+Allow: /
+Crawl-delay: 0.5
+
+# Sitemap
+Sitemap: https://example.com/sitemap.xml

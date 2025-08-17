@@ -1,0 +1,426 @@
+# @jambudipa.io/spider
+
+A powerful, Effect.js-based web crawling framework for modern TypeScript applications. Built for type safety, composability, and enterprise-scale crawling operations.
+
+## ✨ Key Features
+
+- **🔥 Effect.js Foundation**: Type-safe, functional composition with robust error handling
+- **⚡ High Performance**: Concurrent crawling with intelligent worker pool management  
+- **🤖 Robots.txt Compliant**: Automatic robots.txt parsing and compliance checking
+- **🔄 Resumable Crawls**: State persistence and crash recovery capabilities
+- **🛡️ Middleware System**: Extensible middleware for rate limiting, authentication, and custom processing
+- **📊 Built-in Monitoring**: Comprehensive logging and performance monitoring
+- **🎯 TypeScript First**: Full type safety with excellent IntelliSense support
+
+## 🚀 Getting Started
+
+### Installation
+
+```bash
+npm install @jambudipa/spider effect
+```
+
+### Your First Crawl
+
+```typescript
+import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
+import { Effect, Sink } from 'effect'
+
+const program = Effect.gen(function* () {
+  // Create spider instance
+  const spider = yield* SpiderService
+  
+  // Set up result collection
+  const collectSink = Sink.forEach(result =>
+    Effect.sync(() => console.log(`Found: ${result.pageData.title}`))
+  )
+  
+  // Start crawling
+  yield* spider.crawl('https://example.com', collectSink)
+})
+
+// Run with default configuration
+Effect.runPromise(program.pipe(
+  Effect.provide(SpiderService.Default)
+))
+```
+
+## 🎯 What's Next?
+
+### 🆕 New to Spider?
+- **[Getting Started Guide](./docs/guides/getting-started.md)** - Complete setup and first crawl
+- **[Configuration Guide](./docs/guides/configuration.md)** - Customise Spider for your needs
+- **[Basic Examples](./docs/examples/basic-crawling.md)** - Working examples to get you started
+
+### 🔄 Migrating from Another Library?
+- **[Migration Guide](./docs/guides/migration.md)** - Move from Puppeteer, Playwright, or Scrapy
+- **[Advanced Patterns](./docs/guides/advanced-patterns.md)** - Implement sophisticated crawling logic
+- **[Performance Guide](./docs/guides/performance.md)** - Optimise for your use case
+
+### 🏭 Building Production Systems?
+- **[Enterprise Patterns](./docs/examples/enterprise-patterns.md)** - Production-ready crawling solutions
+- **[Monitoring Guide](./docs/features/monitoring.md)** - Set up observability and alerting
+- **[API Reference](./docs/api/)** - Complete technical documentation
+
+## 🛠️ Quick Configuration
+
+```typescript
+import { makeSpiderConfig } from '@jambudipa/spider'
+
+const config = makeSpiderConfig({
+  maxDepth: 3,
+  maxPages: 100,
+  maxConcurrentWorkers: 5,
+  ignoreRobotsTxt: false, // Respect robots.txt
+  requestDelayMs: 1000
+})
+```
+
+## Core Concepts
+
+### Spider Configuration
+
+The spider can be configured for different scraping scenarios:
+
+```typescript
+import { makeSpiderConfig } from '@jambudipa.io/spider';
+
+const config = makeSpiderConfig({
+  // Basic settings
+  maxDepth: 5,
+  maxPages: 1000,
+  respectRobotsTxt: true,
+  
+  // Rate limiting
+  rateLimitDelay: 2000,
+  maxConcurrentRequests: 3,
+  
+  // Content handling
+  followRedirects: true,
+  maxRedirects: 5,
+  
+  // Timeouts
+  requestTimeout: 30000,
+  
+  // User agent
+  userAgent: 'MyBot/1.0'
+});
+```
+
+### Middleware System
+
+Add custom processing with middleware:
+
+```typescript
+import { 
+  SpiderService, 
+  MiddlewareManager,
+  LoggingMiddleware,
+  RateLimitMiddleware,
+  UserAgentMiddleware 
+} from '@jambudipa.io/spider';
+
+const middlewares = new MiddlewareManager()
+  .use(new LoggingMiddleware({ level: 'info' }))
+  .use(new RateLimitMiddleware({ delay: 1000 }))
+  .use(new UserAgentMiddleware({ 
+    userAgent: 'MyBot/1.0 (+https://example.com/bot)' 
+  }));
+
+// Use with spider configuration
+const config = makeSpiderConfig({
+  middleware: middlewares
+});
+```
+
+### Resumable Scraping
+
+Resume interrupted scraping sessions:
+
+```typescript
+import { 
+  SpiderService, 
+  ResumabilityService,
+  FileStorageBackend 
+} from '@jambudipa.io/spider';
+import { Effect, Layer } from 'effect';
+
+// Configure resumability with file storage
+const resumabilityLayer = Layer.succeed(
+  ResumabilityService,
+  ResumabilityService.of({
+    strategy: 'hybrid',
+    backend: new FileStorageBackend('./spider-state')
+  })
+);
+
+const program = Effect.gen(function* () {
+  const spider = yield* SpiderService;
+  const resumability = yield* ResumabilityService;
+  
+  // Configure session
+  const sessionKey = 'my-scraping-session';
+  
+  // Check for existing session
+  const existingState = yield* resumability.restore(sessionKey);
+  
+  if (existingState) {
+    console.log('Resuming previous session...');
+    // Resume from saved state
+    yield* spider.resumeFromState(existingState);
+  }
+  
+  // Start or continue crawling
+  const result = yield* spider.crawl({
+    url: 'https://example.com',
+    sessionKey,
+    saveState: true
+  });
+  
+  return result;
+}).pipe(
+  Effect.provide(Layer.mergeAll(
+    SpiderService.Default,
+    resumabilityLayer
+  ))
+);
+```
+
+### Link Extraction
+
+Extract and process links from pages:
+
+```typescript
+import { LinkExtractorService } from '@jambudipa.io/spider';
+
+const program = Effect.gen(function* () {
+  const linkExtractor = yield* LinkExtractorService;
+  
+  const result = yield* linkExtractor.extractLinks({
+    html: '<html>...</html>',
+    baseUrl: 'https://example.com',
+    filters: {
+      allowedDomains: ['example.com', 'sub.example.com'],
+      excludePatterns: ['/admin', '/private']
+    }
+  });
+  
+  console.log(`Found ${result.links.length} links`);
+  return result;
+}).pipe(
+  Effect.provide(LinkExtractorService.Default)
+);
+```
+
+## API Reference
+
+### Core Services
+
+- **SpiderService**: Main spider service for web crawling
+- **SpiderSchedulerService**: Manages crawling queue and prioritisation
+- **LinkExtractorService**: Extracts and filters links from HTML content
+- **ResumabilityService**: Handles state persistence and resumption
+- **ScraperService**: Low-level HTTP scraping functionality
+
+### Configuration
+
+- **SpiderConfig**: Main configuration interface
+- **makeSpiderConfig()**: Factory function for creating configurations
+
+### Middleware
+
+- **MiddlewareManager**: Manages middleware chain
+- **LoggingMiddleware**: Logs requests and responses
+- **RateLimitMiddleware**: Implements rate limiting
+- **UserAgentMiddleware**: Sets custom user agents
+- **StatsMiddleware**: Collects scraping statistics
+
+### Storage Backends
+
+- **FileStorageBackend**: File-based state storage
+- **PostgresStorageBackend**: PostgreSQL storage (requires database)
+- **RedisStorageBackend**: Redis storage (requires Redis server)
+
+## Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxDepth` | number | 3 | Maximum crawling depth |
+| `maxPages` | number | 100 | Maximum pages to crawl |
+| `respectRobotsTxt` | boolean | true | Follow robots.txt rules |
+| `rateLimitDelay` | number | 1000 | Delay between requests (ms) |
+| `maxConcurrentRequests` | number | 1 | Maximum concurrent requests |
+| `requestTimeout` | number | 30000 | Request timeout (ms) |
+| `followRedirects` | boolean | true | Follow HTTP redirects |
+| `maxRedirects` | number | 5 | Maximum redirect hops |
+| `userAgent` | string | Auto-generated | Custom user agent string |
+
+## Error Handling
+
+The library uses Effect for comprehensive error handling:
+
+```typescript
+import { NetworkError, ResponseError, RobotsTxtError } from '@jambudipa.io/spider';
+
+const program = Effect.gen(function* () {
+  const spider = yield* SpiderService;
+  
+  const result = yield* spider.crawl({
+    url: 'https://example.com'
+  }).pipe(
+    Effect.catchTags({
+      NetworkError: (error) => {
+        console.log('Network issue:', error.message);
+        return Effect.succeed(null);
+      },
+      ResponseError: (error) => {
+        console.log('HTTP error:', error.statusCode);
+        return Effect.succeed(null);
+      },
+      RobotsTxtError: (error) => {
+        console.log('Robots.txt blocked:', error.message);
+        return Effect.succeed(null);
+      }
+    })
+  );
+  
+  return result;
+});
+```
+
+## Advanced Usage
+
+### Custom Middleware
+
+Create custom middleware for specific needs:
+
+```typescript
+import { SpiderMiddleware, SpiderRequest, SpiderResponse } from '@jambudipa.io/spider';
+import { Effect } from 'effect';
+
+class CustomAuthMiddleware implements SpiderMiddleware {
+  constructor(private apiKey: string) {}
+  
+  processRequest(request: SpiderRequest): Effect.Effect<SpiderRequest, never> {
+    return Effect.succeed({
+      ...request,
+      headers: {
+        ...request.headers,
+        'Authorization': `Bearer ${this.apiKey}`
+      }
+    });
+  }
+  
+  processResponse(response: SpiderResponse): Effect.Effect<SpiderResponse, never> {
+    return Effect.succeed(response);
+  }
+}
+
+// Use in middleware chain
+const middlewares = new MiddlewareManager()
+  .use(new CustomAuthMiddleware('your-api-key'));
+```
+
+### Performance Monitoring
+
+Monitor scraping performance:
+
+```typescript
+import { WorkerHealthMonitorService } from '@jambudipa.io/spider';
+
+const program = Effect.gen(function* () {
+  const healthMonitor = yield* WorkerHealthMonitorService;
+  
+  // Start monitoring
+  yield* healthMonitor.startMonitoring();
+  
+  // Your scraping code here...
+  
+  // Get health metrics
+  const metrics = yield* healthMonitor.getMetrics();
+  
+  console.log('Performance metrics:', {
+    requestsPerMinute: metrics.requestsPerMinute,
+    averageResponseTime: metrics.averageResponseTime,
+    errorRate: metrics.errorRate
+  });
+});
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/new-feature`
+3. Make your changes
+4. Add tests for new functionality
+5. Run tests: `npm test`
+6. Run linting: `npm run lint`
+7. Commit changes: `git commit -am 'Add new feature'`
+8. Push to branch: `git push origin feature/new-feature`
+9. Submit a pull request
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build the package
+npm run build
+
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+
+# Type checking
+npm run typecheck
+
+# Linting
+npm run lint
+
+# Format code
+npm run format
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Changelog
+
+### 1.0.0
+- Initial standalone release
+- Migrated from monorepo structure
+- Full TypeScript support
+- Comprehensive middleware system
+- Resumable scraping functionality
+- Multiple storage backends
+- Rate limiting and performance monitoring
+
+## 📚 Documentation
+
+Comprehensive documentation is available in the [`/docs`](./docs) directory:
+
+### 🚀 Quick Links
+- **[Getting Started Guide](./docs/guides/getting-started.md)** - Installation, setup, and first crawl
+- **[API Reference](./docs/api/)** - Complete API documentation
+- **[Configuration Guide](./docs/guides/configuration.md)** - Configuration options and patterns
+- **[Examples](./docs/examples/)** - Working examples for common use cases
+
+### 📖 Complete Documentation
+- **[Documentation Index](./docs/README.md)** - Overview of all available documentation
+- **[User Guides](./docs/guides/)** - Step-by-step tutorials and best practices
+- **[Feature Documentation](./docs/features/)** - Deep dives into key capabilities
+- **[Advanced Examples](./docs/examples/)** - Real-world usage patterns
+
+## Support
+
+- [GitHub Issues](https://github.com/jambudipa-io/spider/issues)
+- [Complete Documentation](./docs/)
+- [Working Examples](./docs/examples/)
+
+---
+
+Built with ❤️ by [Jambudipa.io](https://jambudipa.io)

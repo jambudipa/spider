@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Complex test page with various link types">
+    <meta name="og:title" content="Complex Test Page">
+    <meta name="og:description" content="Testing various HTML elements">
+    <meta property="og:image" content="https://example.com/image.jpg">
+    <title>Complex Test Page</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="canonical" href="https://example.com/complex-page">
+    <link rel="alternate" href="https://example.com/fr/complex-page" hreflang="fr">
+</head>
+<body>
+    <header>
+        <nav class="main-nav">
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/products/">Products</a>
+            <a href="//example.com/protocol-relative">Protocol Relative</a>
+            <a href="#">Hash Link</a>
+            <a href="javascript:void(0)">JavaScript Link</a>
+            <a>No HREF Link</a>
+        </nav>
+    </header>
+    
+    <main>
+        <article>
+            <h1>Complex Content Testing</h1>
+            
+            <!-- Different link formats -->
+            <section class="link-formats">
+                <a href="/normal-link">Normal Link</a>
+                <a href="/trailing-slash/">Trailing Slash</a>
+                <a href="/double//slash">Double Slash</a>
+                <a href="/query?param=value">Query String</a>
+                <a href="/fragment#section">Fragment</a>
+                <a href="/encoded%20link">Encoded Link</a>
+                <a href="/very/long/path/that/goes/on/and/on/and/on/testing/url/length/limits/in/the/spider/crawler">Long URL</a>
+            </section>
+            
+            <!-- Area map -->
+            <img src="/map.jpg" usemap="#testmap" alt="Test Map">
+            <map name="testmap">
+                <area shape="rect" coords="0,0,100,100" href="/area1.html" alt="Area 1">
+                <area shape="circle" coords="150,150,50" href="/area2.html" alt="Area 2">
+            </map>
+            
+            <!-- Forms with different actions -->
+            <form action="/search" method="get">
+                <input type="text" name="q">
+                <button type="submit">Search</button>
+            </form>
+            
+            <form action="https://external.com/submit" method="post">
+                <input type="email" name="email">
+                <button type="submit">Subscribe</button>
+            </form>
+            
+            <form method="post">
+                <input type="text" name="field">
+                <button type="submit">No Action Form</button>
+            </form>
+            
+            <!-- Frames -->
+            <iframe src="/iframe-content.html" title="IFrame"></iframe>
+            <frame src="/frame-content.html">
+            
+            <!-- Custom attributes for extraction -->
+            <div data-url="/custom-attribute-link">Custom Attribute</div>
+            <span data-href="/another-custom">Another Custom</span>
+            
+            <!-- Malformed URLs for testing -->
+            <a href="ht!tp://malformed">Malformed Protocol</a>
+            <a href="http://[invalid">Invalid URL</a>
+            <a href="http://">Empty Host</a>
+            
+            <!-- File type links -->
+            <a href="/document.pdf">PDF Document</a>
+            <a href="/image.jpg">JPEG Image</a>
+            <a href="/archive.zip">ZIP Archive</a>
+            <a href="/script.js">JavaScript File</a>
+            <a href="/style.css">CSS File</a>
+            <a href="/video.mp4">Video File</a>
+            <a href="/executable.exe">Executable</a>
+        </article>
+        
+        <!-- Nested structure -->
+        <aside>
+            <div class="widget">
+                <h3>Related Links</h3>
+                <ul>
+                    <li><a href="/related1">Related 1</a></li>
+                    <li><a href="/related2">Related 2</a></li>
+                    <li>
+                        <ul>
+                            <li><a href="/nested1">Nested 1</a></li>
+                            <li><a href="/nested2">Nested 2</a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+    </main>
+    
+    <footer>
+        <link href="/footer-specific.css" rel="stylesheet">
+        <a href="/contact">Contact</a>
+        <a href="/sitemap.xml">Sitemap</a>
+    </footer>
+</body>
+</html>

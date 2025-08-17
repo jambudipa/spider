@@ -1,0 +1,108 @@
+{
+  "name": "@jambudipa.io/spider",
+  "version": "0.1.0",
+  "description": "A comprehensive web scraping library with resumable operations, middleware support, and built-in rate limiting",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "dev": "vite build --watch",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "test:run": "vitest run",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit --skipLibCheck --downlevelIteration --project tsconfig.test.json",
+    "typecheck:examples": "tsc --noEmit --project tsconfig.examples.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build && npm run typecheck",
+    "prepack": "npm run build",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "npm run build && changeset publish",
+    "docs:api": "typedoc",
+    "docs:build": "npm run docs:api && npm run examples:validate",
+    "examples:run": "tsx",
+    "examples:validate": "tsx scripts/analyse-exports.ts",
+    "examples:run-all": "tsx examples/run-all.ts",
+    "test:examples": "vitest run tests/examples.test.ts",
+    "test:core": "vitest run tests/core",
+    "test:all": "npm run test:examples && npm run test:core"
+  },
+  "keywords": [
+    "web-scraping",
+    "crawler",
+    "spider",
+    "http",
+    "middleware",
+    "resumable",
+    "rate-limiting",
+    "typescript"
+  ],
+  "author": "Jambudipa.io",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jambudipa/spider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jambudipa/spider/issues"
+  },
+  "homepage": "https://github.com/jambudipa/spider#readme",
+  "peerDependencies": {
+    "@types/tough-cookie": "^4.0.5",
+    "cheerio": "^1.1.2",
+    "domhandler": "^5.0.3",
+    "effect": "^3.16.16",
+    "tough-cookie": "^6.0.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.5",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/typescript-estree": "^8.38.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/ui": "^1.6.0",
+    "@types/tough-cookie": "^4.0.5",
+    "cheerio": "^1.1.2",
+    "domhandler": "^5.0.3",
+    "effect": "^3.16.16",
+    "eslint": "^8.57.0",
+    "prettier": "^3.6.2",
+    "tough-cookie": "^6.0.0",
+    "tsx": "^4.20.3",
+    "typedoc": "^0.28.9",
+    "typedoc-plugin-markdown": "^4.8.0",
+    "tslib": "^2.3.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.0.0",
+    "vitest": "^1.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

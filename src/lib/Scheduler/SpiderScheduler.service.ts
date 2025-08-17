@@ -144,7 +144,7 @@ export interface StatePersistence {
  * @public
  */
 export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerService>()(
-  '@jambudipa.io/SpiderSchedulerService',
+  '@jambudipa/spiderSchedulerService',
   {
     effect: Effect.gen(function* () {
       const config = yield* SpiderConfig;

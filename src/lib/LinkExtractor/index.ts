@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { LinkExtractorService, type LinkExtractorConfig } from '@jambudipa.io/spider/LinkExtractor';
+ * import { LinkExtractorService, type LinkExtractorConfig } from '@jambudipa/spider/LinkExtractor';
  *
  * const program = Effect.gen(function* () {
  *   const extractor = yield* LinkExtractorService;

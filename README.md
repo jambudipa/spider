@@ -1,4 +1,4 @@
-# @jambudipa.io/spider
+# @jambudipa/spider
 
 A powerful, Effect.js-based web crawling framework for modern TypeScript applications. Built for type safety, composability, and enterprise-scale crawling operations.
 
@@ -49,17 +49,14 @@ Effect.runPromise(program.pipe(
 
 ### 🆕 New to Spider?
 - **[Getting Started Guide](./docs/guides/getting-started.md)** - Complete setup and first crawl
-- **[Configuration Guide](./docs/guides/configuration.md)** - Customise Spider for your needs
-- **[Basic Examples](./docs/examples/basic-crawling.md)** - Working examples to get you started
+- **[Examples](./docs/examples/)** - Working examples to get you started
 
-### 🔄 Migrating from Another Library?
-- **[Migration Guide](./docs/guides/migration.md)** - Move from Puppeteer, Playwright, or Scrapy
-- **[Advanced Patterns](./docs/guides/advanced-patterns.md)** - Implement sophisticated crawling logic
-- **[Performance Guide](./docs/guides/performance.md)** - Optimise for your use case
+### 🔄 Learn More
+- **[API Documentation](./docs/api/)** - Complete technical documentation
+- **[Feature Documentation](./docs/features/)** - Core capabilities
 
 ### 🏭 Building Production Systems?
-- **[Enterprise Patterns](./docs/examples/enterprise-patterns.md)** - Production-ready crawling solutions
-- **[Monitoring Guide](./docs/features/monitoring.md)** - Set up observability and alerting
+- **[Feature Documentation](./docs/features/)** - Advanced capabilities
 - **[API Reference](./docs/api/)** - Complete technical documentation
 
 ## 🛠️ Quick Configuration
@@ -83,7 +80,7 @@ const config = makeSpiderConfig({
 The spider can be configured for different scraping scenarios:
 
 ```typescript
-import { makeSpiderConfig } from '@jambudipa.io/spider';
+import { makeSpiderConfig } from '@jambudipa/spider';
 
 const config = makeSpiderConfig({
   // Basic settings
@@ -118,7 +115,7 @@ import {
   LoggingMiddleware,
   RateLimitMiddleware,
   UserAgentMiddleware 
-} from '@jambudipa.io/spider';
+} from '@jambudipa/spider';
 
 const middlewares = new MiddlewareManager()
   .use(new LoggingMiddleware({ level: 'info' }))
@@ -142,7 +139,7 @@ import {
   SpiderService, 
   ResumabilityService,
   FileStorageBackend 
-} from '@jambudipa.io/spider';
+} from '@jambudipa/spider';
 import { Effect, Layer } from 'effect';
 
 // Configure resumability with file storage
@@ -191,7 +188,7 @@ const program = Effect.gen(function* () {
 Extract and process links from pages:
 
 ```typescript
-import { LinkExtractorService } from '@jambudipa.io/spider';
+import { LinkExtractorService } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   const linkExtractor = yield* LinkExtractorService;
@@ -260,7 +257,7 @@ const program = Effect.gen(function* () {
 The library uses Effect for comprehensive error handling:
 
 ```typescript
-import { NetworkError, ResponseError, RobotsTxtError } from '@jambudipa.io/spider';
+import { NetworkError, ResponseError, RobotsTxtError } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   const spider = yield* SpiderService;
@@ -295,7 +292,7 @@ const program = Effect.gen(function* () {
 Create custom middleware for specific needs:
 
 ```typescript
-import { SpiderMiddleware, SpiderRequest, SpiderResponse } from '@jambudipa.io/spider';
+import { SpiderMiddleware, SpiderRequest, SpiderResponse } from '@jambudipa/spider';
 import { Effect } from 'effect';
 
 class CustomAuthMiddleware implements SpiderMiddleware {
@@ -326,7 +323,7 @@ const middlewares = new MiddlewareManager()
 Monitor scraping performance:
 
 ```typescript
-import { WorkerHealthMonitorService } from '@jambudipa.io/spider';
+import { WorkerHealthMonitorService } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   const healthMonitor = yield* WorkerHealthMonitorService;
@@ -406,7 +403,6 @@ Comprehensive documentation is available in the [`/docs`](./docs) directory:
 ### 🚀 Quick Links
 - **[Getting Started Guide](./docs/guides/getting-started.md)** - Installation, setup, and first crawl
 - **[API Reference](./docs/api/)** - Complete API documentation
-- **[Configuration Guide](./docs/guides/configuration.md)** - Configuration options and patterns
 - **[Examples](./docs/examples/)** - Working examples for common use cases
 
 ### 📖 Complete Documentation
@@ -417,7 +413,7 @@ Comprehensive documentation is available in the [`/docs`](./docs) directory:
 
 ## Support
 
-- [GitHub Issues](https://github.com/jambudipa-io/spider/issues)
+- [GitHub Issues](https://github.com/jambudipa/spider/issues)
 - [Complete Documentation](./docs/)
 - [Working Examples](./docs/examples/)
 

@@ -109,7 +109,7 @@ export interface SpiderLinkExtractionOptions {
 }
 
 export class SpiderService extends Effect.Service<SpiderService>()(
-  '@jambudipa.io/Spider',
+  '@jambudipa/spider',
   {
     effect: Effect.gen(function* () {
       const robots = yield* RobotsService;

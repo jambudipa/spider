@@ -248,7 +248,7 @@ export interface SpiderConfigService {
  * @public
  */
 export class SpiderConfig extends Effect.Service<SpiderConfigService>()(
-  '@jambudipa.io/SpiderConfig',
+  '@jambudipa/spiderConfig',
   {
     effect: Effect.sync(() => makeSpiderConfig({})),
   }

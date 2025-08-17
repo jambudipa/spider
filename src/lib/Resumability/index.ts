@@ -15,7 +15,7 @@
  * ## Quick Start
  *
  * ```typescript
- * import { ResumabilityService, ResumabilityConfigs } from '@jambudipa.io/spider/resumability';
+ * import { ResumabilityService, ResumabilityConfigs } from '@jambudipa/spider/resumability';
  *
  * // File-based resumability
  * const resumabilityLayer = ResumabilityService.fromConfig(

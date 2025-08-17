@@ -21,7 +21,7 @@ The LinkExtractorService provides sophisticated link extraction and filtering ca
 
 ```typescript
 import { Effect } from 'effect';
-import { LinkExtractorService } from '@jambudipa.io/spider';
+import { LinkExtractorService } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   const extractor = yield* LinkExtractorService;
@@ -83,7 +83,7 @@ import {
   Spider,
   LinkExtractorService,
   type CrawlResult,
-} from '@jambudipa.io/spider';
+} from '@jambudipa/spider';
 
 const enhancedSpider = Effect.gen(function* () {
   const spider = yield* Spider;
@@ -179,7 +179,7 @@ const program = Effect.gen(function* () {
 The service includes a powerful URL canonicalization function:
 
 ```typescript
-import { canonicalizeUrl } from '@jambudipa.io/spider';
+import { canonicalizeUrl } from '@jambudipa/spider';
 
 // Normalize URLs to standard form
 const canonical = canonicalizeUrl(

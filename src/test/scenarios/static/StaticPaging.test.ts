@@ -1,38 +1,154 @@
 /**
- * Static Paging Tests - STUB FILE
- * Tests for static HTML pagination
+ * StaticPaging Scenario Tests
+ * Tests for the StaticPaging scenario: static HTML pagination on web-scraping.dev/products
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { StaticScenarioBase } from '../../helpers/BaseScenarioTest';
+import { DataExtractor, Product } from '../../helpers/DataExtractor';
+import { TestHelper } from '../../helpers/TestHelper';
 
-describe('Static HTML Paging - Real Site Tests', () => {
-  it.skip('should extract products from products page', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+class StaticPagingTest extends StaticScenarioBase {
+  private products: Product[] = [];
+  private paginationLinks: string[] = [];
+  
+  constructor() {
+    super('static-paging');
+  }
+  
+  async extractProductsFromCurrentPage(): Promise<Product[]> {
+    return await DataExtractor.extractProducts(this.page);
+  }
+  
+  async extractPaginationLinks(): Promise<string[]> {
+    return await DataExtractor.extractPaginationLinks(this.page);
+  }
+  
+  async navigateAllPages(): Promise<void> {
+    const visitedUrls = new Set<string>();
+    const toVisit: string[] = [`${this.baseUrl}/products`];
+    
+    while (toVisit.length > 0) {
+      const url = toVisit.shift()!;
+      
+      if (visitedUrls.has(url)) continue;
+      visitedUrls.add(url);
+      
+      await this.context.adapter.goto(url);
+      
+      // Extract products from current page
+      const pageProducts = await this.extractProductsFromCurrentPage();
+      this.products.push(...pageProducts);
+      
+      // Extract pagination links
+      const links = await this.extractPaginationLinks();
+      const productLinks = links.filter(link => link.includes('/products'));
+      
+      for (const link of productLinks) {
+        if (!visitedUrls.has(link) && !toVisit.includes(link)) {
+          toVisit.push(link);
+        }
+      }
+      
+      // Limit to prevent infinite loops
+      if (visitedUrls.size >= 10) break;
+    }
+  }
+  
+  async validateScenario(): Promise<void> {
+    await super.validateScenario();
+    
+    // Validate we found products
+    expect(this.products.length).toBeGreaterThan(0);
+    
+    // Validate product structure
+    for (const product of this.products.slice(0, 5)) {
+      expect(product.title).toBeTruthy();
+      expect(product.price).toBeGreaterThan(0);
+    }
+  }
+}
+
+describe('StaticPaging Scenario Tests - Real Site', () => {
+  let test: StaticPagingTest;
+  
+  beforeAll(async () => {
+    test = new StaticPagingTest();
+    await test.setup();
   });
-
-  it.skip('should detect and follow pagination links', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+  
+  afterAll(async () => {
+    await test.cleanup();
   });
-
-  it.skip('should extract product details', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+  
+  it('should extract products from products page', async () => {
+    await test.navigateToScenario('/products');
+    const products = await test.extractProductsFromCurrentPage();
+    
+    expect(products).toBeDefined();
+    expect(products.length).toBeGreaterThan(0);
+    
+    // Validate first product structure
+    const firstProduct = products[0];
+    expect(firstProduct).toHaveProperty('title');
+    expect(firstProduct).toHaveProperty('price');
+    expect(firstProduct.price).toBeGreaterThan(0);
   });
-
-  it.skip('should handle pagination navigation', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+  
+  it('should detect and follow pagination links', async () => {
+    await test.navigateToScenario('/products');
+    const links = await test.extractPaginationLinks();
+    
+    expect(links).toBeDefined();
+    expect(links.length).toBeGreaterThan(0);
+    
+    // Check for page 2 link
+    const hasNextPage = links.some(link => 
+      link.includes('page=2') || link.includes('/products/2')
+    );
+    expect(hasNextPage).toBe(true);
   });
-
-  it.skip('should validate extracted data', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+  
+  it('should extract product details', async () => {
+    await test.navigateToScenario('/product/1');
+    const productDetails = await DataExtractor.extractProductDetails(test.page);
+    
+    expect(productDetails).toBeDefined();
+    expect(productDetails.title).toBeTruthy();
+    expect(productDetails.price).toBeGreaterThan(0);
+    expect(productDetails.description).toBeTruthy();
   });
-
-  it.skip('should handle missing pagination', () => {
-    // Test stubbed - Using simple test instead of complex Effect code
-    expect(true).toBe(true);
+  
+  it('should handle pagination navigation', async () => {
+    await test.navigateAllPages();
+    
+    // Should have collected products from multiple pages
+    expect(test.products.length).toBeGreaterThanOrEqual(20);
+    
+    // Validate all products have required fields
+    for (const product of test.products) {
+      expect(product.title).toBeTruthy();
+      expect(product.price).toBeGreaterThanOrEqual(0);
+    }
+  });
+  
+  it('should validate extracted data', async () => {
+    await test.navigateToScenario('/products');
+    const products = await test.extractProductsFromCurrentPage();
+    
+    for (const product of products) {
+      const validation = TestHelper.validateDataStructure(product, ['title', 'price']);
+      expect(validation.valid).toBe(true);
+      expect(validation.missing).toHaveLength(0);
+    }
+  });
+  
+  it('should handle missing pagination gracefully', async () => {
+    // Navigate to a page that might not have pagination
+    await test.navigateToScenario('/product/1');
+    const links = await test.extractPaginationLinks();
+    
+    // Should return empty array or few links, not error
+    expect(Array.isArray(links)).toBe(true);
   });
 });

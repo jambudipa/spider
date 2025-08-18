@@ -1,62 +1,106 @@
-# Spider User Guides
+# User Guides
 
-This directory contains step-by-step guides for learning and using Spider effectively.
+Step-by-step guides for using Spider effectively.
 
-## Available Guides
+## Getting Started
 
-### Getting Started
-- **[getting-started.md](./getting-started.md)** - Installation, setup, and your first crawl
-- **[configuration.md](./configuration.md)** - Complete configuration reference and patterns
+### [Getting Started Guide](./getting-started.md)
+Complete introduction to Spider:
+- Installation and setup
+- Your first crawler
+- Basic configuration
+- Processing results
 
-### Development Guides
-- **[middleware.md](./middleware.md)** - Creating and using custom middleware  
-- **[testing.md](./testing.md)** - Testing strategies for crawler applications
-- **[error-handling.md](./error-handling.md)** - Robust error handling patterns
+### [Configuration Guide](./configuration.md)
+Comprehensive configuration reference:
+- All configuration options
+- Common patterns
+- Environment-based config
+- Best practices
 
-### Advanced Usage
-- **[advanced-patterns.md](./advanced-patterns.md)** - Complex crawling strategies and patterns
-- **[performance.md](./performance.md)** - Performance optimisation and scaling
-- **[migration.md](./migration.md)** - Migrating from other crawling libraries
+## Core Features
+
+### [Browser Automation](./browser-automation.md)
+Handle JavaScript-rendered content:
+- Playwright integration
+- Dynamic content handling
+- Form interaction
+- Resource optimisation
+
+### [Anti-Bot Protection](./anti-bot.md)
+**Note: Spider doesn't have a dedicated anti-bot service.** This guide explains how to configure Spider's existing components to avoid detection:
+- Configuration strategies
+- Browser automation for challenges
+- Session management
+- Real-world scenarios
+
+### [Security Handling](./security.md)
+Authentication and protected content:
+- Login flows
+- Cookie management
+- Token extraction
+- Session persistence
+
+### [Performance Optimisation](./performance.md)
+Scale your crawling operations:
+- Concurrency tuning
+- Memory management
+- Caching strategies
+- Monitoring and profiling
 
 ## Guide Structure
 
-Each guide follows a consistent structure:
-1. **Overview** - What you'll learn and prerequisites
-2. **Step-by-step instructions** - Clear, actionable steps
-3. **Working examples** - Complete, tested code examples
-4. **Best practices** - Recommended approaches and patterns
-5. **Troubleshooting** - Common issues and solutions
+Each guide follows a consistent format:
+1. **Overview** - What the guide covers
+2. **Concepts** - Key ideas and terminology
+3. **Examples** - Working code samples
+4. **Patterns** - Common use cases
+5. **Best Practices** - Recommendations
+6. **Troubleshooting** - Common issues and solutions
 
-## Learning Path
+## Quick Navigation
 
-### Beginner Path
-1. [Getting Started](./getting-started.md) - Basic setup and first crawl
-2. [Configuration](./configuration.md) - Understanding configuration options
-3. [Error Handling](./error-handling.md) - Building robust crawlers
+### By Experience Level
 
-### Intermediate Path  
-1. [Middleware Development](./middleware.md) - Extending functionality
-2. [Testing](./testing.md) - Testing crawler applications
-3. [Advanced Patterns](./advanced-patterns.md) - Complex use cases
+**Beginner**
+- [Getting Started](./getting-started.md)
+- [Configuration](./configuration.md)
 
-### Advanced Path
-1. [Performance Optimisation](./performance.md) - Scaling crawling operations
-2. [Migration](./migration.md) - Integrating with existing systems
-3. [Enterprise Patterns](../examples/enterprise-patterns.md) - Production systems
+**Intermediate**
+- [Browser Automation](./browser-automation.md)
+- [Security Handling](./security.md)
 
-## Code Examples
+**Advanced**
+- [Anti-Bot Protection](./anti-bot.md)
+- [Performance Optimisation](./performance.md)
 
-All guides include working, tested examples:
+### By Use Case
 
-```typescript
-import { Spider, SpiderConfig } from '@jambudipa/spider'
-import { Effect, pipe } from 'effect'
+**"I need to crawl JavaScript sites"**
+→ [Browser Automation](./browser-automation.md)
 
-// Complete examples with error handling
-const program = Effect.gen(function* () {
-  const spider = yield* Spider
-  // ... detailed implementation
-})
-```
+**"I'm getting blocked"**
+→ [Anti-Bot Protection](./anti-bot.md)
 
-*All code examples are tested and verified to work with the current version of Spider.*
+**"I need to log in first"**
+→ [Security Handling](./security.md)
+
+**"My crawler is too slow"**
+→ [Performance Optimisation](./performance.md)
+
+**"I want to customise behaviour"**
+→ [Configuration Guide](./configuration.md)
+
+## Contributing
+
+Have suggestions for improving these guides? Please:
+1. Open an issue describing the improvement
+2. Submit a pull request with your changes
+3. Ensure examples are tested and working
+
+## Next Steps
+
+After reading the guides:
+- Explore [API Reference](../api/) for detailed documentation
+- Check [Examples](../examples/) for complete code samples
+- Review [Enterprise Patterns](../examples/enterprise-patterns.md) for production use

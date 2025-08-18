@@ -1,151 +1,142 @@
-# Spider Examples
+# Examples
 
-This directory contains comprehensive, working examples demonstrating Spider's capabilities in real-world scenarios.
+Working examples demonstrating Spider's capabilities and common use cases.
 
-## Example Categories
+## Getting Started Examples
 
-### Basic Usage
-- **[basic-crawling.md](./basic-crawling.md)** - Simple crawling scenarios and patterns
-  - Single page extraction
-  - Multi-page crawling with depth limits
-  - URL filtering and domain restrictions
-  - Basic data extraction
+### [Basic Crawling](./basic-crawling.md)
+Simple examples to get you started with Spider:
+- First crawler
+- Processing results
+- Error handling
+- Configuration basics
 
-### Industry Applications
-- **[e-commerce-scraping.md](./e-commerce-scraping.md)** - Product data extraction patterns
-  - Product catalogue crawling
-  - Price monitoring systems
-  - Inventory tracking
-  - Review and rating extraction
+### [Dynamic Content](./dynamic-content.md)
+Handle JavaScript-rendered content:
+- Single-page applications
+- Infinite scroll
+- AJAX content loading
+- Button-triggered loading
 
-- **[news-aggregation.md](./news-aggregation.md)** - News site crawling strategies
-  - Article discovery and extraction
-  - RSS feed integration
-  - Content classification
-  - Real-time news monitoring
+### [Authentication](./authentication.md)
+Work with protected content:
+- Login forms
+- Session management
+- API authentication
+- OAuth flows
 
-### Enterprise Patterns
-- **[enterprise-patterns.md](./enterprise-patterns.md)** - Large-scale crawling solutions
-  - High-throughput crawling architectures
-  - Distributed crawling with multiple instances
-  - Data pipeline integration
-  - Monitoring and alerting systems
+## Advanced Examples
 
-## Example Structure
+### [Anti-Bot Bypass](./anti-bot.md)
+Handle anti-bot protections:
+- User agent rotation
+- Request delays
+- Browser fingerprinting
+- Cookie challenges
 
-Each example includes:
+### [E-commerce Scraping](./e-commerce-scraping.md)
+Extract product data:
+- Product listings
+- Price monitoring
+- Inventory tracking
+- Review extraction
 
-### Complete Working Code
+### [Enterprise Patterns](./enterprise-patterns.md)
+Production-ready patterns:
+- Distributed crawling
+- Error recovery
+- Performance optimisation
+- Monitoring and alerting
+
+## Real-World Scenarios
+
+### [Web-scraping.dev Solutions](./scenarios/)
+Complete solutions for all 16 web-scraping.dev challenge scenarios:
+
+#### Basic Scenarios
+- Static pagination
+- Product markup extraction
+- Hidden data extraction
+
+#### Dynamic Content
+- Endless scroll pagination
+- Button-triggered loading
+- GraphQL background requests
+- Local storage interaction
+
+#### Security & Authentication
+- Secret API tokens
+- CSRF protection
+- Cookie-based authentication
+
+#### Special Cases
+- PDF downloads
+- Cookie popups
+- New tab navigation
+
+#### Anti-Bot Protection
+- Block page detection
+- Referer validation
+- Persistent cookie blocking
+
+## Quick Start Templates
+
+### Minimal Crawler
 ```typescript
-import { SpiderService, makeSpiderConfig, Effect } from '@jambudipa/spider'
+import { SpiderService } from '@jambudipa/spider'
+import { Effect, Sink } from 'effect'
 
-// Full implementation with proper error handling
-const program = Effect.gen(function* () {
-  // Complete example code
-})
-```
-
-### Configuration Examples
-```typescript
-// Real-world configuration patterns
-const config = makeSpiderConfig({
-  // Detailed configuration for specific use cases
-})
-```
-
-### Error Handling
-```typescript
-// Robust error handling patterns
-const program = pipe(
-  crawlOperation,
-  Effect.catchAll(error => handleSpecificError(error)),
-  Effect.retry(retryPolicy)
+Effect.gen(function* () {
+  const spider = yield* SpiderService
+  yield* spider.crawl('https://example.com', Sink.drain)
+}).pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.runPromise
 )
 ```
 
-### Performance Considerations
-- Memory usage patterns
-- Concurrency optimisation
-- Rate limiting strategies
-- Resource management
-
-## Running Examples
-
-### Prerequisites
-```bash
-npm install @jambudipa/spider effect
-```
-
-### Basic Example
+### Configured Crawler
 ```typescript
-// Copy and run any example
-import { exampleFunction } from './basic-crawling.md'
-await Effect.runPromise(exampleFunction())
+import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
+
+const config = makeSpiderConfig({
+  maxDepth: 3,
+  maxPages: 100,
+  requestDelayMs: 1000
+})
+
+// Use configuration...
 ```
 
-### Testing Examples
-All examples include:
-- Unit tests for individual components
-- Integration tests for complete workflows  
-- Performance benchmarks where relevant
-- Error scenario testing
+### Browser-Enabled Crawler
+```typescript
+import { BrowserManager } from '@jambudipa/spider/browser'
 
-## Real-World Integration
+const browser = new BrowserManager({
+  headless: true,
+  poolSize: 5
+})
 
-### Framework Integration
-Examples showing integration with:
-- **Express.js**: Web API endpoints for crawling
-- **Next.js**: Server-side crawling in React applications
-- **NestJS**: Enterprise-grade crawling services
-- **Fastify**: High-performance crawling APIs
+await browser.initialise()
+// Use browser...
+```
 
-### Database Integration
-Patterns for storing crawled data:
-- **PostgreSQL**: Relational data storage
-- **MongoDB**: Document-based storage
-- **Elasticsearch**: Search-optimised storage
-- **Redis**: Caching and session management
+## Running the Examples
 
-### Deployment Examples
-Production deployment patterns:
-- **Docker**: Containerised crawling services
-- **Kubernetes**: Scalable crawling clusters
-- **AWS Lambda**: Serverless crawling functions
-- **Google Cloud**: Managed crawling services
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Run examples: `npx tsx examples/[example-name].ts`
 
-## Performance Benchmarks
+## Contributing Examples
 
-### Throughput Examples
-- Single-threaded vs concurrent performance
-- Memory usage across different scales
-- Network utilisation patterns
-- CPU usage characteristics
+Have a useful example? Contributions are welcome! Please:
+1. Follow the existing format
+2. Include clear comments
+3. Test your example
+4. Submit a pull request
 
-### Scaling Patterns
-- Horizontal scaling with multiple instances
-- Vertical scaling with resource optimisation
-- Auto-scaling based on queue depth
-- Load balancing strategies
+## Need Help?
 
-## Use Case Index
-
-### By Industry
-- **E-commerce**: Product monitoring, price comparison
-- **Media**: News aggregation, content discovery
-- **Research**: Academic paper collection, data mining
-- **SEO**: Site analysis, competitor monitoring
-- **Security**: Vulnerability scanning, compliance checking
-
-### By Scale
-- **Small Scale**: < 1000 pages, single domain
-- **Medium Scale**: < 100k pages, multiple domains
-- **Large Scale**: > 1M pages, enterprise requirements
-- **Real-time**: Continuous monitoring and updates
-
-### By Complexity
-- **Basic**: Simple page extraction
-- **Intermediate**: Multi-step workflows with data processing
-- **Advanced**: Complex business logic and integrations
-- **Expert**: High-performance, fault-tolerant systems
-
-*All examples are tested and maintained to work with the current version of Spider.*
+- Check the [Getting Started Guide](../guides/getting-started.md)
+- Review the [API Reference](../api/)
+- Open an [issue on GitHub](https://github.com/jambudipa/spider/issues)

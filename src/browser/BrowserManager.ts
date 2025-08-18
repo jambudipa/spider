@@ -1,0 +1,189 @@
+/**
+ * Browser Manager for Playwright Integration
+ * Handles browser lifecycle, pooling, and resource management
+ */
+
+import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
+
+export interface BrowserConfig {
+  headless?: boolean;
+  timeout?: number;
+  poolSize?: number;
+  viewport?: { width: number; height: number };
+  userAgent?: string;
+  locale?: string;
+  extraHTTPHeaders?: Record<string, string>;
+}
+
+export class BrowserManager {
+  private browsers: Browser[] = [];
+  private contexts: Map<string, BrowserContext> = new Map();
+  private config: Required<BrowserConfig>;
+  private isInitialised = false;
+
+  constructor(config: BrowserConfig = {}) {
+    this.config = {
+      headless: config.headless ?? process.env.PLAYWRIGHT_HEADLESS === 'true',
+      timeout: config.timeout ?? 30000,
+      poolSize: config.poolSize ?? 3,
+      viewport: config.viewport ?? { width: 1920, height: 1080 },
+      userAgent: config.userAgent ?? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      locale: config.locale ?? 'en-GB',
+      extraHTTPHeaders: config.extraHTTPHeaders ?? {}
+    };
+  }
+
+  /**
+   * Initialise browser pool
+   */
+  async initialise(): Promise<void> {
+    if (this.isInitialised) return;
+
+    for (let i = 0; i < this.config.poolSize; i++) {
+      const browser = await this.launchBrowser();
+      this.browsers.push(browser);
+    }
+
+    this.isInitialised = true;
+  }
+
+  /**
+   * Launch a new browser instance
+   */
+  private async launchBrowser(): Promise<Browser> {
+    return await chromium.launch({
+      headless: this.config.headless,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+      ]
+    });
+  }
+
+  /**
+   * Get or create a browser context
+   */
+  async getContext(id: string, options?: BrowserContextOptions): Promise<BrowserContext> {
+    if (!this.isInitialised) {
+      await this.initialise();
+    }
+
+    if (this.contexts.has(id)) {
+      return this.contexts.get(id)!;
+    }
+
+    const browser = this.getLeastLoadedBrowser();
+    const context = await browser.newContext({
+      viewport: this.config.viewport,
+      userAgent: this.config.userAgent,
+      locale: this.config.locale,
+      extraHTTPHeaders: this.config.extraHTTPHeaders,
+      ...options
+    });
+
+    context.setDefaultTimeout(this.config.timeout);
+    this.contexts.set(id, context);
+
+    return context;
+  }
+
+  /**
+   * Create a new page in a context
+   */
+  async createPage(contextId: string): Promise<Page> {
+    const context = await this.getContext(contextId);
+    const page = await context.newPage();
+    
+    // Setup error handlers
+    page.on('pageerror', error => {
+      console.error(`Page error in context ${contextId}:`, error);
+    });
+
+    page.on('crash', () => {
+      console.error(`Page crashed in context ${contextId}`);
+    });
+
+    return page;
+  }
+
+  /**
+   * Get the browser with least contexts
+   */
+  private getLeastLoadedBrowser(): Browser {
+    let minContexts = Infinity;
+    let selectedBrowser = this.browsers[0];
+
+    for (const browser of this.browsers) {
+      const contextCount = browser.contexts().length;
+      if (contextCount < minContexts) {
+        minContexts = contextCount;
+        selectedBrowser = browser;
+      }
+    }
+
+    return selectedBrowser;
+  }
+
+  /**
+   * Close a specific context
+   */
+  async closeContext(id: string): Promise<void> {
+    const context = this.contexts.get(id);
+    if (context) {
+      await context.close();
+      this.contexts.delete(id);
+    }
+  }
+
+  /**
+   * Close all resources
+   */
+  async close(): Promise<void> {
+    // Close all contexts with error handling
+    for (const [id, context] of this.contexts) {
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn(`Error closing context ${id}:`, error);
+      }
+    }
+    this.contexts.clear();
+
+    // Close all browsers with error handling
+    for (const browser of this.browsers) {
+      try {
+        await browser.close();
+      } catch (error) {
+        console.warn(`Error closing browser:`, error);
+      }
+    }
+    this.browsers = [];
+
+    this.isInitialised = false;
+  }
+
+  /**
+   * Get statistics about browser pool
+   */
+  getStats(): {
+    browsers: number;
+    contexts: number;
+    pages: number;
+  } {
+    let totalPages = 0;
+    for (const context of this.contexts.values()) {
+      totalPages += context.pages().length;
+    }
+
+    return {
+      browsers: this.browsers.length,
+      contexts: this.contexts.size,
+      pages: totalPages
+    };
+  }
+}

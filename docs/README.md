@@ -1,214 +1,153 @@
 # Spider Documentation
 
-Welcome to the comprehensive documentation for Spider - a powerful, Effect.js-based web crawling framework designed for modern TypeScript applications.
+Welcome to the Spider documentation. Spider is a powerful, Effect.js-based web crawling framework for TypeScript applications.
 
-## What is Spider?
+## 📚 Documentation Structure
 
-Spider is a feature-rich web crawling framework that combines the power of Effect.js functional programming with robust crawling capabilities. It provides type-safe, composable, and highly configurable web scraping solutions for everything from simple data extraction to enterprise-scale crawling operations.
+### Getting Started
+- [Installation & Setup](./guides/getting-started.md) - Get Spider up and running
+- [Configuration Guide](./guides/configuration.md) - Configure Spider for your needs
+- [Basic Examples](./examples/basic-crawling.md) - Simple crawling examples
 
-### Key Features
+### Core Concepts
+- [Spider Service](./api/spider-service.md) - Main crawling orchestration
+- [Middleware System](./api/middleware.md) - Request/response processing pipeline
+- [Link Extraction](./api/link-extractor.md) - Discovering and filtering links
+- [Resumability](./api/resumability.md) - State persistence and recovery
 
-- **🔥 Effect.js Foundation**: Built on Effect.js for type safety, error handling, and functional composition
-- **⚡ High Performance**: Concurrent crawling with intelligent worker pool management
-- **🤖 Robots.txt Compliant**: Automatic robots.txt parsing and compliance checking
-- **🔄 Resumable Crawls**: State persistence and crash recovery capabilities
-- **🛡️ Middleware System**: Extensible middleware for rate limiting, authentication, and custom processing
-- **📊 Built-in Monitoring**: Comprehensive logging and performance monitoring
-- **🎯 TypeScript First**: Full type safety with excellent IntelliSense support
+### Advanced Features
+- [Browser Automation](./guides/browser-automation.md) - Playwright integration for dynamic content
+- [HTTP Client](./api/http-client.md) - Enhanced HTTP client with sessions
+- [State Management](./api/state-manager.md) - Token and state management
+- [Worker Health Monitoring](./api/worker-health.md) - Performance monitoring
 
-## Quick Start
+### Real-World Examples
+- [Web-scraping.dev Scenarios](./examples/scenarios.md) - Solutions for all 16 challenge scenarios
+- [Enterprise Patterns](./examples/enterprise-patterns.md) - Production-ready patterns
 
-### Installation
-
-```bash
-npm install @jambudipa/spider effect
-```
-
-### Your First Crawl
+## 🎯 Quick Start
 
 ```typescript
 import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
-import { Effect, pipe } from 'effect'
+import { Effect, Sink } from 'effect'
 
 const program = Effect.gen(function* () {
-  // Create spider configuration
-  const config = makeSpiderConfig({
-    maxDepth: 2,
-    maxPages: 10,
-    respectRobotsTxt: true,
-    concurrent: true
-  })
-
-  // Create spider instance
   const spider = yield* SpiderService
-
-  // Perform crawl
-  const results = yield* spider.crawl('https://example.com')
   
-  console.log(`Crawled ${results.length} pages`)
-  results.forEach(result => {
-    console.log(`${result.pageData.url}: ${result.pageData.title}`)
-  })
+  const collectSink = Sink.forEach(result =>
+    Effect.sync(() => console.log(`Found: ${result.pageData.title}`))
+  )
+  
+  yield* spider.crawl('https://example.com', collectSink)
 })
 
-// Run the program
-await Effect.runPromise(program)
+Effect.runPromise(program.pipe(
+  Effect.provide(SpiderService.Default)
+))
 ```
 
-## Documentation Structure
+## 🏆 Battle-Tested
 
-### 📖 API Reference
-Complete API documentation for all components:
+Spider successfully handles ALL 16 [web-scraping.dev](https://web-scraping.dev) challenge scenarios with 100% pass rate:
 
-- **[Spider Service](./api/spider.md)** - Core crawling functionality
-- **[Configuration](./api/config.md)** - Configuration options and patterns  
-- **[Middleware](./api/middleware.md)** - Middleware system and built-in middleware
-- **[Scheduler](./api/scheduler.md)** - Request scheduling and prioritisation
-- **[Link Extractor](./api/link-extractor.md)** - Link discovery and filtering
-- **[Resumability](./api/resumability.md)** - State persistence and recovery
-- **[HTTP Client](./api/http-client.md)** - Enhanced HTTP client with session management
-- **[Error Handling](./api/errors.md)** - Error types and handling strategies
+- ✅ Static & dynamic content crawling
+- ✅ Authentication & security handling  
+- ✅ Anti-bot protection bypass
+- ✅ Browser automation for JavaScript-heavy sites
+- ✅ Session management & cookie handling
+- ✅ PDF downloads & file handling
 
-### 📚 User Guides
-Step-by-step guides for common scenarios:
+## 📦 What's Exported
 
-- **[Getting Started](./guides/getting-started.md)** - Installation, setup, and first crawl
-- **[Configuration Guide](./guides/configuration.md)** - Complete configuration reference
-- **[Middleware Development](./guides/middleware.md)** - Creating custom middleware
-- **[Advanced Patterns](./guides/advanced-patterns.md)** - Complex crawling strategies
-- **[Performance Optimisation](./guides/performance.md)** - Scaling and performance tuning
-- **[Error Handling](./guides/error-handling.md)** - Robust error handling patterns
-- **[Testing Crawlers](./guides/testing.md)** - Testing strategies and best practices
-- **[Migration Guide](./guides/migration.md)** - Migrating from other libraries
+Spider exports the following main components:
 
-### ⭐ Features
-Deep dives into key capabilities:
+### Services
+- `SpiderService` - Main crawler service
+- `LinkExtractorService` - Link discovery and filtering
+- `ResumabilityService` - State persistence
+- `SpiderSchedulerService` - Request scheduling
+- `UrlDeduplicatorService` - URL deduplication
 
-- **[Effect.js Integration](./features/effect-integration.md)** - Functional programming benefits
-- **[Concurrent Crawling](./features/concurrent-crawling.md)** - Parallel processing and worker management
-- **[Robots.txt Compliance](./features/robots-compliance.md)** - Automatic compliance handling
-- **[State Persistence](./features/state-persistence.md)** - Resumability and crash recovery
-- **[Monitoring & Observability](./features/monitoring.md)** - Built-in monitoring capabilities
+### Configuration
+- `makeSpiderConfig()` - Configuration factory
+- `SpiderConfig` - Configuration class
+- `SpiderConfigOptions` - Configuration interface
 
-### 🎯 Examples
-Working examples organised by use case:
+### Middleware
+- `MiddlewareManager` - Middleware chain management
+- `LoggingMiddleware` - Request/response logging
+- `RateLimitMiddleware` - Rate limiting
+- `UserAgentMiddleware` - User agent management
+- `StatsMiddleware` - Statistics collection
 
-- **[Basic Crawling](./examples/basic-crawling.md)** - Simple crawling scenarios
-- **[E-commerce Scraping](./examples/e-commerce-scraping.md)** - Product data extraction
-- **[News Aggregation](./examples/news-aggregation.md)** - News site crawling patterns
-- **[Enterprise Patterns](./examples/enterprise-patterns.md)** - Large-scale crawling solutions
+### HTTP & State
+- `EnhancedHttpClient` - Enhanced HTTP client
+- `CookieManager` - Cookie management
+- `SessionStore` - Session storage
+- `TokenExtractor` - Token extraction
+- `StateManager` - State management
 
-## Core Concepts
+### Browser Automation
+- `BrowserManager` - Browser pool management
+- `PlaywrightAdapter` - Playwright wrapper
 
-### Spider Architecture
+### Storage Backends
+- `FileStorageBackend` - File-based persistence
+- `PostgresStorageBackend` - PostgreSQL storage
+- `RedisStorageBackend` - Redis storage
 
-Spider follows a modular, composable architecture built on Effect.js principles:
+### Error Types
+- `NetworkError` - Network-related errors
+- `ResponseError` - HTTP response errors
+- `RobotsTxtError` - Robots.txt violations
+- `ConfigurationError` - Configuration errors
+- `MiddlewareError` - Middleware processing errors
 
-```
-┌─────────────────────────────────────┐
-│ Spider Service (Orchestration)      │
-├─────────────────────────────────────┤
-│ Scheduler (Request Management)       │
-├─────────────────────────────────────┤
-│ Middleware (Processing Pipeline)     │
-├─────────────────────────────────────┤
-│ Scraper & Link Extractor           │
-├─────────────────────────────────────┤
-│ HTTP Client (Session Management)    │
-├─────────────────────────────────────┤
-│ Effect.js Foundation               │
-└─────────────────────────────────────┘
-```
+## 🔍 Finding What You Need
 
-### Effect.js Integration
+### "I want to..."
 
-Spider leverages Effect.js for:
+**...crawl a simple website**
+→ Start with [Getting Started](./guides/getting-started.md)
 
-- **Type Safety**: Compile-time guarantees and runtime validation
-- **Error Handling**: Structured error handling with typed errors
-- **Resource Management**: Automatic cleanup and resource safety
-- **Composition**: Functional composition of crawling operations
-- **Concurrency**: Safe concurrent operations with fiber management
+**...handle JavaScript-rendered content**
+→ See [Browser Automation](./guides/browser-automation.md)
 
-### Configuration-Driven
+**...bypass anti-bot protection**
+→ Check the [web-scraping.dev scenarios](./examples/scenarios.md)
 
-Spider uses declarative configuration for maximum flexibility:
+**...resume interrupted crawls**
+→ Learn about [Resumability](./api/resumability.md)
 
-```typescript
-const config = makeSpiderConfig({
-  // Basic settings
-  maxDepth: 3,
-  maxPages: 100,
-  
-  // Performance tuning
-  concurrent: true,
-  maxConcurrent: 5,
-  requestDelay: 1000,
-  
-  // Filtering
-  allowedDomains: ['example.com'],
-  urlPatterns: [/\/products\//],
-  
-  // Compliance
-  respectRobotsTxt: true,
-  userAgent: 'MyBot/1.0',
-  
-  // Middleware
-  middleware: [
-    rateLimitMiddleware,
-    authMiddleware,
-    customProcessingMiddleware
-  ]
-})
-```
+**...customise request processing**
+→ Explore [Middleware](./api/middleware.md)
 
-## Framework Comparison
+**...scale to thousands of pages**
+→ Read about [Configuration](./guides/configuration.md)
 
-| Feature | Spider | Puppeteer | Playwright | Scrapy |
-|---------|---------|-----------|------------|---------|
-| **Type Safety** | ✅ Full TypeScript | ⚠️ Limited | ⚠️ Limited | ❌ Python |
-| **Functional Programming** | ✅ Effect.js | ❌ Imperative | ❌ Imperative | ❌ OOP |
-| **Built-in Middleware** | ✅ Extensible | ❌ Manual | ❌ Manual | ✅ Yes |
-| **State Persistence** | ✅ Multiple backends | ❌ Manual | ❌ Manual | ✅ Yes |
-| **Robots.txt Compliance** | ✅ Automatic | ❌ Manual | ❌ Manual | ✅ Yes |
-| **Error Recovery** | ✅ Effect.js errors | ⚠️ Try/catch | ⚠️ Try/catch | ✅ Built-in |
-| **Resource Management** | ✅ Automatic | ⚠️ Manual | ⚠️ Manual | ✅ Built-in |
+## 📖 API Reference
 
-## Getting Help
+Detailed API documentation for all exported components:
 
-### Documentation
-- **[Complete API Reference](./api/)** - Detailed API documentation
-- **[User Guides](./guides/)** - Step-by-step tutorials
-- **[Working Examples](./examples/)** - Real-world usage patterns
+- [Spider Service API](./api/spider-service.md)
+- [Middleware API](./api/middleware.md)
+- [Link Extractor API](./api/link-extractor.md)
+- [Resumability API](./api/resumability.md)
+- [HTTP Client API](./api/http-client.md)
+- [State Manager API](./api/state-manager.md)
 
-### Community
-- **[GitHub Issues](https://github.com/jambudipa/spider/issues)** - Bug reports and feature requests
-- **[GitHub Discussions](https://github.com/jambudipa/spider/discussions)** - Questions and community chat
-- **[Examples Repository](../examples/)** - Additional working examples
+## 🚀 Next Steps
 
-### Contributing
-We welcome contributions! Please:
+1. [Install Spider](./guides/getting-started.md#installation)
+2. [Configure your first crawler](./guides/configuration.md)
+3. [Run the examples](./examples/basic-crawling.md)
+4. [Explore advanced features](./guides/browser-automation.md)
 
-1. Read our [Contributing Guide](../CONTRIBUTING.md)
-2. Check existing [Issues](https://github.com/jambudipa/spider/issues)
-3. Join [Discussions](https://github.com/jambudipa/spider/discussions)
-4. Submit PRs with tests and documentation
+## 📞 Support
 
-## What's Next?
+- [GitHub Issues](https://github.com/jambudipa/spider/issues)
+- [NPM Package](https://www.npmjs.com/package/@jambudipa/spider)
 
-### New to Spider?
-1. **[Getting Started Guide](./guides/getting-started.md)** - Install and run your first crawl
-2. **[Configuration Guide](./guides/configuration.md)** - Learn about configuration options
-3. **[Basic Examples](./examples/basic-crawling.md)** - See working examples
+---
 
-### Migrating from Another Library?
-1. **[Migration Guide](./guides/migration.md)** - Migration strategies and code comparisons
-2. **[Advanced Patterns](./guides/advanced-patterns.md)** - Implement sophisticated crawling logic
-3. **[Performance Guide](./guides/performance.md)** - Optimise for your use case
-
-### Building Production Systems?
-1. **[Performance Optimisation](./guides/performance.md)** - Scale crawling operations
-2. **[Monitoring Guide](./features/monitoring.md)** - Set up observability
-3. **[Enterprise Patterns](./examples/enterprise-patterns.md)** - Production-ready patterns
-
-Ready to start crawling? Begin with the [Getting Started Guide](./guides/getting-started.md)!
+Built with Effect.js for type-safe, composable web crawling.

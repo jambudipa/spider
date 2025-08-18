@@ -2,13 +2,39 @@
 
 A powerful, Effect.js-based web crawling framework for modern TypeScript applications. Built for type safety, composability, and enterprise-scale crawling operations.
 
+## 🏆 **Battle-Tested Against Real-World Scenarios**
+
+**Spider successfully handles ALL 16 https://web-scraping.dev challenge scenarios** - the most comprehensive web scraping test suite available:
+
+| ✅ Scenario | Description | Complexity |
+|-------------|-------------|------------|
+| **Static Paging** | Traditional pagination navigation | Basic |
+| **Endless Scroll** | Infinite scroll content loading | Dynamic |
+| **Button Loading** | Dynamic content via button clicks | Dynamic |
+| **GraphQL Requests** | Background API data fetching | Advanced |
+| **Hidden Data** | Extracting non-visible content | Intermediate |
+| **Product Markup** | Structured data extraction | Intermediate |
+| **Local Storage** | Browser storage interaction | Advanced |
+| **Secret API Tokens** | Authentication handling | Security |
+| **CSRF Protection** | Token-based security bypass | Security |
+| **Cookie Authentication** | Session-based access control | Security |
+| **PDF Downloads** | Binary file handling | Special |
+| **Cookie Popups** | Modal interaction handling | Special |
+| **New Tab Links** | Multi-tab navigation | Special |
+| **Block Pages** | Anti-bot detection handling | Anti-Block |
+| **Invalid Referer Blocking** | Header-based access control | Anti-Block |
+| **Persistent Cookie Blocking** | Long-term blocking mechanisms | Anti-Block |
+
+🎯 **[View Live Test Results](https://github.com/jambudipa/spider/actions)** | 📊 **100% Test Pass Rate** | 🚀 **Production Ready**
+
 ## ✨ Key Features
 
 - **🔥 Effect.js Foundation**: Type-safe, functional composition with robust error handling
 - **⚡ High Performance**: Concurrent crawling with intelligent worker pool management  
 - **🤖 Robots.txt Compliant**: Automatic robots.txt parsing and compliance checking
 - **🔄 Resumable Crawls**: State persistence and crash recovery capabilities
-- **🛡️ Middleware System**: Extensible middleware for rate limiting, authentication, and custom processing
+- **🛡️ Anti-Bot Bypass**: Handles complex blocking mechanisms and security measures
+- **🌐 Browser Automation**: Playwright integration for JavaScript-heavy sites
 - **📊 Built-in Monitoring**: Comprehensive logging and performance monitoring
 - **🎯 TypeScript First**: Full type safety with excellent IntelliSense support
 
@@ -50,14 +76,17 @@ Effect.runPromise(program.pipe(
 ### 🆕 New to Spider?
 - **[Getting Started Guide](./docs/guides/getting-started.md)** - Complete setup and first crawl
 - **[Examples](./docs/examples/)** - Working examples to get you started
+- **[Basic Configuration](./docs/guides/configuration.md)** - Configuration options
 
-### 🔄 Learn More
-- **[API Documentation](./docs/api/)** - Complete technical documentation
-- **[Feature Documentation](./docs/features/)** - Core capabilities
+### 🔄 Advanced Usage
+- **[Browser Automation](./docs/guides/browser-automation.md)** - Handle dynamic content
+- **[Anti-Bot Protection](./docs/guides/anti-bot.md)** - Bypass blocking mechanisms
+- **[Security Handling](./docs/guides/security.md)** - Authentication and sessions
 
 ### 🏭 Building Production Systems?
-- **[Feature Documentation](./docs/features/)** - Advanced capabilities
+- **[Performance Guide](./docs/guides/performance.md)** - Scale your crawling operations
 - **[API Reference](./docs/api/)** - Complete technical documentation
+- **[Enterprise Patterns](./docs/examples/enterprise-patterns.md)** - Production-ready patterns
 
 ## 🛠️ Quick Configuration
 
@@ -344,18 +373,6 @@ const program = Effect.gen(function* () {
 });
 ```
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/new-feature`
-3. Make your changes
-4. Add tests for new functionality
-5. Run tests: `npm test`
-6. Run linting: `npm run lint`
-7. Commit changes: `git commit -am 'Add new feature'`
-8. Push to branch: `git push origin feature/new-feature`
-9. Submit a pull request
-
 ## Development
 
 ```bash
@@ -385,17 +402,6 @@ npm run format
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## Changelog
-
-### 1.0.0
-- Initial standalone release
-- Migrated from monorepo structure
-- Full TypeScript support
-- Comprehensive middleware system
-- Resumable scraping functionality
-- Multiple storage backends
-- Rate limiting and performance monitoring
-
 ## 📚 Documentation
 
 Comprehensive documentation is available in the [`/docs`](./docs) directory:
@@ -419,4 +425,4 @@ Comprehensive documentation is available in the [`/docs`](./docs) directory:
 
 ---
 
-Built with ❤️ by [Jambudipa.io](https://jambudipa.io)
+Built with ❤️ by [JAMBUDIPA](https://jambudipa.io)

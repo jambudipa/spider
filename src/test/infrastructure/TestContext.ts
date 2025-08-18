@@ -1,17 +1,12 @@
 /**
- * Test Context Service - Final Fixed Version
+ * Test Context Service - Fixed for TypeScript
  * Provides a managed test environment with Spider instance for real site testing
  */
 
-import { Context, Effect, Layer, pipe } from 'effect';
-import { SpiderService } from '../../lib/Spider/Spider.service.js';
-import {
-  makeSpiderConfig,
-  SpiderConfig,
-} from '../../lib/Config/SpiderConfig.service.js';
-import { SpiderLoggerLive } from '../../lib/Logging/SpiderLogger.service.js';
-import { makeTestRateLimiter, RateLimiterService } from './RateLimiter.js';
-import { EffectAssertions } from '../assertions/EffectAssertions.js';
+import { Context, Effect, Layer } from 'effect';
+import type { SpiderService } from '../../lib/Spider/Spider.service.js';
+import type { RateLimiterService } from './RateLimiter.js';
+import type { EffectAssertions } from '../assertions/EffectAssertions.js';
 
 export interface TestContext {
   readonly spider: SpiderService;
@@ -33,89 +28,80 @@ export interface TestContextConfig {
   readonly scenarioPath?: string;
 }
 
-/**
- * Create a test context for running tests
- */
-export const createTestContext = (
-  config: TestContextConfig = {}
-): Effect.Effect<TestContext, never, SpiderService> =>
-  Effect.gen(function* () {
-    const baseUrl = config.baseUrl ?? 'https://web-scraping.dev';
-
-    // Create rate limiter
-    const rateLimiter = yield* makeTestRateLimiter();
-
-    // Get Spider service from context
-    const spider = yield* SpiderService;
-
-    // Create assertions helper
-    const assertions = EffectAssertions.make();
-
-    // Create cleanup function
-    const cleanup = () => Effect.void;
-
-    return {
-      spider,
-      baseUrl,
-      rateLimiter,
-      assertions,
-      cleanup,
-    } as TestContext;
-  }) as Effect.Effect<TestContext, never, SpiderService>;
-
 export class TestContextService {
   static make = (
     config: TestContextConfig = {}
-  ): Effect.Effect<TestContext, never, SpiderService> =>
-    createTestContext(config);
+  ): Effect.Effect<TestContext, never, any> =>
+    Effect.gen(function* () {
+      // Import dependencies dynamically
+      const SpiderModule = yield* Effect.promise(
+        () => import('../../lib/Spider/Spider.service.js')
+      );
+      const RateLimiterModule = yield* Effect.promise(
+        () => import('./RateLimiter.js')
+      );
+      const AssertionsModule = yield* Effect.promise(
+        () => import('../assertions/EffectAssertions.js')
+      );
 
-  static withRateLimit = (
-    requestsPerSecond: number
-  ): Effect.Effect<TestContext, never, SpiderService> =>
+      // Use real web-scraping.dev URL
+      const baseUrl = config.baseUrl ?? 'https://web-scraping.dev';
+
+      // Create rate limiter for respectful testing
+      const rateLimiter = yield* RateLimiterModule.RateLimiterService.make({
+        requestsPerSecond: config.requestsPerSecond ?? 0.5,
+        burstSize: 2,
+      });
+
+      // Get Spider service from context
+      const spider = yield* SpiderModule.SpiderService;
+
+      // Create assertions helper
+      const assertions = AssertionsModule.EffectAssertions.make();
+
+      // Create cleanup function
+      const cleanup = () =>
+        Effect.sync(() => {
+          console.log('Test cleanup complete');
+        });
+
+      return {
+        spider,
+        baseUrl,
+        rateLimiter,
+        assertions,
+        cleanup,
+      } as TestContext;
+    });
+
+  static withRateLimit = (requestsPerSecond: number) =>
     TestContextService.make({ requestsPerSecond });
 
-  static withScenario = (
-    scenarioPath: string
-  ): Effect.Effect<TestContext, never, SpiderService> =>
+  static withScenario = (scenarioPath: string) =>
     TestContextService.make({
       scenarioPath,
       requestsPerSecond: 0.5,
     });
-
-  /**
-   * Create a test context with Spider service provided
-   */
-  static makeWithSpider = (
-    config: TestContextConfig = {}
-  ): Effect.Effect<TestContext, never, never> => {
-    const spiderConfig = makeSpiderConfig({
-      maxPages: 10,
-      maxDepth: 2,
-      requestDelayMs: 2000,
-      userAgent: 'Spider Test Suite',
-      ...config.spiderConfig,
-    });
-
-    return pipe(
-      createTestContext(config),
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(spiderConfig)),
-      Effect.provide(SpiderLoggerLive)
-    );
-  };
 }
 
 // Scenario paths on web-scraping.dev
 export const ScenarioPaths = {
+  // Static content
   staticPaging: '/products',
   productMarkup: '/product/1',
   hiddenData: '/hidden',
+
+  // Dynamic content
   endlessScroll: '/scroll',
   buttonLoading: '/load-more',
   graphql: '/graphql',
+
+  // Authentication
   apiToken: '/api-auth',
   cookieAuth: '/cookie-auth',
   csrf: '/csrf',
+
+  // Special scenarios
   fileDownload: '/downloads',
   modalPopup: '/modal',
   cookiePopup: '/cookies',
@@ -128,7 +114,7 @@ export const defaultTestConfig: TestContextConfig = {
   requestsPerSecond: 0.5,
 };
 
-// Layer for providing TestContext
+// Layer for providing TestContext in tests
 export const TestContextLive = Layer.effect(
   TestContext,
   TestContextService.make(defaultTestConfig)

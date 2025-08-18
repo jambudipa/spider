@@ -1,253 +1,434 @@
 # Getting Started with Spider
 
-Welcome to Spider - a powerful, Effect.js-based web crawling framework. This guide will get you up and running with your first web crawl in just a few minutes.
+This guide will help you install Spider and create your first web crawler in TypeScript.
 
 ## Prerequisites
 
-- **Node.js 18+** - Spider requires modern Node.js features
-- **TypeScript 5.0+** - For TypeScript projects (recommended)
-- **Basic Effect.js knowledge** - Helpful but not required for basic usage
+- Node.js 18+ installed
+- TypeScript knowledge helpful but not required
+- Basic understanding of async/await
 
 ## Installation
-
-Install Spider and its peer dependency Effect.js:
 
 ```bash
 npm install @jambudipa/spider effect
 ```
 
-For TypeScript projects, types are included automatically.
+Spider is built on Effect.js, so you'll need both packages.
 
-## Your First Crawl
+### TypeScript Configuration
 
-Let's start with a simple example that crawls a website and logs the page titles:
+Add these compiler options to your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+## Your First Crawler
+
+### Basic Example
+
+Create a file `crawler.ts`:
 
 ```typescript
 import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
 import { Effect, Sink } from 'effect'
 
-// Create a simple program
-const crawlProgram = Effect.gen(function* () {
+const program = Effect.gen(function* () {
   // Get the spider service
   const spider = yield* SpiderService
   
-  // Define how to handle each crawled page
+  // Create a sink to collect results
   const collectSink = Sink.forEach(result =>
     Effect.sync(() => {
-      console.log(`📄 ${result.pageData.title}`)
-      console.log(`🔗 ${result.pageData.url}`)
-      console.log(`📊 Depth: ${result.depth}`)
-      console.log('---')
+      console.log(`📄 Found page: ${result.pageData.title}`)
+      console.log(`   URL: ${result.pageData.url}`)
+      console.log(`   Links: ${result.pageData.links.length}`)
     })
   )
   
   // Start crawling
   yield* spider.crawl('https://example.com', collectSink)
-  
-  console.log('✅ Crawling completed!')
 })
 
-// Run the program with default configuration
-Effect.runPromise(crawlProgram.pipe(
-  Effect.provide(SpiderService.Default)
-)).catch(console.error)
-```
-
-Run this example:
-
-```bash
-npx tsx your-crawler.ts  # or ts-node if you prefer
-```
-
-## Understanding the Example
-
-Let's break down what's happening:
-
-### 1. The Spider Service
-```typescript
-const spider = yield* SpiderService
-```
-This gets the SpiderService using Effect.js dependency injection. The spider handles all crawling operations.
-
-### 2. The Result Sink
-```typescript
-const collectSink = Sink.forEach(result =>
-  Effect.sync(() => {
-    // Process each crawled page here
-  })
+// Run the program
+Effect.runPromise(
+  program.pipe(Effect.provide(SpiderService.Default))
+).then(
+  () => console.log('✅ Crawling completed!'),
+  error => console.error('❌ Error:', error)
 )
 ```
-Sinks define how to process crawled pages. Spider streams results to your sink as pages are discovered and processed.
 
-### 3. Starting the Crawl
-```typescript
-yield* spider.crawl('https://example.com', collectSink)
+Run it:
+
+```bash
+npx tsx crawler.ts
 ```
-This starts crawling from the given URL, sending all results to your sink.
 
-### 4. Configuration Layer
-```typescript
-Effect.provide(SpiderService.Default)
-```
-This provides the default Spider configuration. You can customise this as needed.
+## Configuration
 
-## Adding Configuration
-
-Let's enhance the example with some configuration:
+### Basic Configuration
 
 ```typescript
-import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
-import { Effect, Sink } from 'effect'
+import { makeSpiderConfig, SpiderService } from '@jambudipa/spider'
+import { Effect, Layer } from 'effect'
 
-const crawlProgram = Effect.gen(function* () {
+// Create configuration
+const config = makeSpiderConfig({
+  maxDepth: 2,           // Only crawl 2 levels deep
+  maxPages: 10,          // Stop after 10 pages
+  requestDelayMs: 1000,  // Wait 1 second between requests
+  userAgent: 'MyBot/1.0'
+})
+
+// Create a configured layer
+const ConfiguredSpider = Layer.succeed(SpiderConfig, config).pipe(
+  Layer.provide(SpiderService.Default)
+)
+
+// Use in your program
+const program = Effect.gen(function* () {
   const spider = yield* SpiderService
+  // ... crawling logic
+})
+
+Effect.runPromise(
+  program.pipe(Effect.provide(ConfiguredSpider))
+)
+```
+
+### Common Configuration Options
+
+```typescript
+const config = makeSpiderConfig({
+  // Crawling limits
+  maxDepth: 3,              // Maximum link depth
+  maxPages: 100,            // Maximum pages to crawl
+  
+  // Performance
+  maxConcurrentWorkers: 5,  // Parallel workers
+  requestDelayMs: 2000,     // Delay between requests
+  requestTimeout: 30000,    // Request timeout (30s)
+  
+  // Behaviour
+  respectRobotsTxt: true,   // Respect robots.txt
+  followRedirects: true,    // Follow HTTP redirects
+  
+  // User agent
+  userAgent: 'MyBot/1.0 (+https://mysite.com/bot)'
+})
+```
+
+## Handling Results
+
+### Processing Pages
+
+```typescript
+const program = Effect.gen(function* () {
+  const spider = yield* SpiderService
+  
+  const results: any[] = []
   
   const collectSink = Sink.forEach(result =>
     Effect.sync(() => {
-      console.log(`📄 ${result.pageData.title} (depth: ${result.depth})`)
-    })
-  )
-  
-  // Start crawling with multiple URLs
-  yield* spider.crawl([
-    'https://example.com',
-    'https://httpbin.org'
-  ], collectSink)
-})
-
-// Custom configuration
-const customConfig = makeSpiderConfig({
-  maxDepth: 2,        // Only crawl 2 levels deep
-  maxPages: 20,       // Stop after 20 pages
-  requestDelayMs: 1000, // 1 second between requests
-  ignoreRobotsTxt: false, // Follow robots.txt rules
-  maxConcurrentWorkers: 3 // Use 3 concurrent workers
-})
-
-Effect.runPromise(crawlProgram.pipe(
-  Effect.provide(customConfig)
-)).catch(console.error)
-```
-
-## Error Handling
-
-Spider uses Effect.js for robust error handling:
-
-```typescript
-const safeCrawlProgram = Effect.gen(function* () {
-  const spider = yield* SpiderService
-  
-  const collectSink = Sink.forEach(result =>
-    Effect.sync(() => {
-      console.log(`✅ Successfully crawled: ${result.pageData.url}`)
-    })
-  )
-  
-  // Crawl with error handling
-  const result = yield* spider.crawl('https://example.com', collectSink).pipe(
-    Effect.catchTags({
-      NetworkError: (error) => {
-        console.log(`🌐 Network error: ${error.message}`)
-        return Effect.succeed(null)
-      },
-      RobotsTxtError: (error) => {
-        console.log(`🤖 Robots.txt blocked: ${error.message}`)
-        return Effect.succeed(null)
+      // Extract data from each page
+      const pageData = {
+        url: result.pageData.url,
+        title: result.pageData.title,
+        content: result.pageData.content,
+        links: result.pageData.links,
+        metadata: result.pageData.metadata
+      }
+      
+      results.push(pageData)
+      
+      // Process immediately if needed
+      if (pageData.url.includes('/product/')) {
+        console.log('Found product page:', pageData.url)
       }
     })
   )
   
-  console.log('Crawl completed:', result)
-})
-```
-
-## Working with Different Data
-
-You can extract structured data from pages:
-
-```typescript
-const dataExtractionProgram = Effect.gen(function* () {
-  const spider = yield* SpiderService
-  
-  // Collect results into an array
-  const results = yield* spider.crawl('https://example.com', Sink.collectAll())
-  
-  // Process the collected data
-  for (const result of results) {
-    const { pageData } = result
-    
-    console.log({
-      title: pageData.title,
-      url: pageData.url,
-      linkCount: pageData.links.length,
-      contentLength: pageData.html.length
-    })
-  }
+  yield* spider.crawl('https://example.com', collectSink)
   
   return results
 })
 ```
 
-## Next Steps
-
-Now that you have Spider running, explore these topics:
-
-### Configuration
-- **[Configuration Guide](./configuration.md)** - Learn about all configuration options
-- **[Performance Tuning](./performance.md)** - Optimise crawling performance
-- **[Rate Limiting](./configuration.md#rate-limiting)** - Control request rates
-
-### Advanced Features
-- **[Middleware Development](./middleware.md)** - Create custom processing middleware
-- **[Resumability](../features/state-persistence.md)** - Pause and resume crawls
-- **[Monitoring](../features/monitoring.md)** - Monitor crawling operations
-
-### Examples
-- **[Basic Examples](../examples/basic-crawling.md)** - More crawling patterns
-- **[E-commerce Examples](../examples/e-commerce-scraping.md)** - Product data extraction
-- **[Enterprise Patterns](../examples/enterprise-patterns.md)** - Production-ready solutions
-
-### API Reference
-- **[Spider API](../api/spider.md)** - Complete Spider service documentation
-- **[Configuration API](../api/config.md)** - All configuration options
-- **[Error Handling](../api/errors.md)** - Error types and handling
-
-## Common Issues
-
-### Permission Errors
-If you get robots.txt permission errors, you can disable robots.txt checking:
+### Error Handling
 
 ```typescript
-const config = makeSpiderConfig({
-  ignoreRobotsTxt: true // ⚠️ Use responsibly
+import { NetworkError, ResponseError, RobotsTxtError } from '@jambudipa/spider'
+
+const program = Effect.gen(function* () {
+  const spider = yield* SpiderService
+  
+  yield* spider.crawl('https://example.com', collectSink).pipe(
+    Effect.catchTags({
+      NetworkError: (error) => {
+        console.log('Network issue:', error.message)
+        return Effect.succeed([]) // Return empty results
+      },
+      ResponseError: (error) => {
+        console.log(`HTTP ${error.statusCode} error`)
+        return Effect.succeed([])
+      },
+      RobotsTxtError: (error) => {
+        console.log('Blocked by robots.txt:', error.message)
+        return Effect.succeed([])
+      }
+    })
+  )
 })
 ```
 
-### Memory Usage
-For large crawls, consider using streaming sinks instead of collecting all results:
+## Adding Middleware
+
+### Logging Middleware
 
 ```typescript
-// Instead of Sink.collectAll()
-const streamingSink = Sink.forEach(result =>
-  Effect.sync(() => {
-    // Process each result immediately
-    processResult(result)
+import { MiddlewareManager, LoggingMiddleware } from '@jambudipa/spider'
+
+const middleware = new MiddlewareManager()
+  .use(new LoggingMiddleware({ 
+    level: 'info',
+    logRequests: true,
+    logResponses: true 
+  }))
+
+const config = makeSpiderConfig({
+  middleware,
+  maxPages: 10
+})
+```
+
+### Rate Limiting
+
+```typescript
+import { RateLimitMiddleware } from '@jambudipa/spider'
+
+const middleware = new MiddlewareManager()
+  .use(new RateLimitMiddleware({
+    requestsPerSecond: 2,
+    perDomain: true
+  }))
+```
+
+### Custom Headers
+
+```typescript
+class CustomHeaderMiddleware {
+  name = 'custom-headers'
+  
+  processRequest(request) {
+    return Effect.succeed({
+      ...request,
+      headers: {
+        ...request.headers,
+        'X-Custom-Header': 'value',
+        'Accept': 'text/html'
+      }
+    })
+  }
+}
+
+const middleware = new MiddlewareManager()
+  .use(new CustomHeaderMiddleware())
+```
+
+## Link Filtering
+
+### Domain Filtering
+
+```typescript
+const config = makeSpiderConfig({
+  // Only crawl these domains
+  allowedDomains: ['example.com', 'subdomain.example.com'],
+  
+  // Skip these file types
+  skipFileExtensions: ['pdf', 'jpg', 'png', 'zip']
+})
+```
+
+### Custom Link Extraction
+
+```typescript
+import { LinkExtractorService } from '@jambudipa/spider'
+
+const program = Effect.gen(function* () {
+  const linkExtractor = yield* LinkExtractorService
+  
+  const result = yield* linkExtractor.extractLinks({
+    html: '<html>...</html>',
+    baseUrl: 'https://example.com',
+    filters: {
+      allowedDomains: ['example.com'],
+      excludePatterns: ['/admin', '/private', '/api']
+    }
+  })
+  
+  console.log(`Found ${result.links.length} valid links`)
+})
+```
+
+## Browser Automation
+
+For JavaScript-heavy sites, enable browser automation:
+
+```typescript
+const config = makeSpiderConfig({
+  enableBrowserAutomation: true,
+  browserOptions: {
+    headless: true,
+    viewport: { width: 1920, height: 1080 }
+  },
+  waitForDynamicContent: true
+})
+```
+
+See the [Browser Automation Guide](./browser-automation.md) for details.
+
+## State Persistence
+
+Enable resumable crawling:
+
+```typescript
+import { ResumabilityService, FileStorageBackend } from '@jambudipa/spider'
+
+const resumabilityLayer = Layer.succeed(
+  ResumabilityService,
+  ResumabilityService.of({
+    strategy: 'hybrid',
+    backend: new FileStorageBackend('./crawler-state')
   })
 )
+
+// Your crawler can now resume from crashes
 ```
 
-### TypeScript Issues
-Ensure you have Effect.js types installed:
+See the [Resumability API](../api/resumability.md) for details.
 
-```bash
-npm install --save-dev @types/node
+## Complete Example
+
+Here's a complete example that crawls a website and saves product data:
+
+```typescript
+import { 
+  SpiderService, 
+  makeSpiderConfig,
+  MiddlewareManager,
+  LoggingMiddleware,
+  RateLimitMiddleware
+} from '@jambudipa/spider'
+import { Effect, Sink, Layer } from 'effect'
+import * as fs from 'fs/promises'
+
+// Configure middleware
+const middleware = new MiddlewareManager()
+  .use(new LoggingMiddleware({ level: 'info' }))
+  .use(new RateLimitMiddleware({ 
+    requestsPerSecond: 2,
+    perDomain: true 
+  }))
+
+// Configure spider
+const config = makeSpiderConfig({
+  maxDepth: 3,
+  maxPages: 50,
+  middleware,
+  userAgent: 'ProductBot/1.0',
+  allowedDomains: ['shop.example.com'],
+  skipFileExtensions: ['jpg', 'png', 'pdf']
+})
+
+// Create program
+const program = Effect.gen(function* () {
+  const spider = yield* SpiderService
+  const products: any[] = []
+  
+  // Create sink to process results
+  const productSink = Sink.forEach(result =>
+    Effect.sync(() => {
+      // Extract product data if this is a product page
+      if (result.pageData.url.includes('/product/')) {
+        const product = {
+          url: result.pageData.url,
+          title: result.pageData.title,
+          // Extract structured data if available
+          metadata: result.pageData.metadata,
+          crawledAt: new Date().toISOString()
+        }
+        products.push(product)
+        console.log(`Found product: ${product.title}`)
+      }
+    })
+  )
+  
+  // Start crawling
+  yield* spider.crawl('https://shop.example.com', productSink)
+  
+  // Save results
+  yield* Effect.promise(() => 
+    fs.writeFile(
+      'products.json', 
+      JSON.stringify(products, null, 2)
+    )
+  )
+  
+  console.log(`✅ Saved ${products.length} products to products.json`)
+  return products
+})
+
+// Run with configuration
+const ConfiguredSpider = Layer.succeed(SpiderConfig, config).pipe(
+  Layer.provide(SpiderService.Default)
+)
+
+Effect.runPromise(
+  program.pipe(Effect.provide(ConfiguredSpider))
+).catch(console.error)
 ```
+
+## Next Steps
+
+- [Configuration Guide](./configuration.md) - Learn about all configuration options
+- [Browser Automation](./browser-automation.md) - Handle JavaScript-rendered content
+- [Middleware Development](../api/middleware.md) - Create custom middleware
+- [Example Scenarios](../examples/scenarios.md) - See real-world examples
+
+## Troubleshooting
+
+### Common Issues
+
+**Module not found errors**
+- Ensure both `@jambudipa/spider` and `effect` are installed
+- Check your TypeScript configuration
+
+**Robots.txt blocking**
+- Set `respectRobotsTxt: false` in config (use responsibly)
+- Or ensure your user agent is allowed
+
+**Rate limiting**
+- Increase `requestDelayMs` in configuration
+- Use `RateLimitMiddleware` with appropriate settings
+
+**Memory issues with large crawls**
+- Reduce `maxConcurrentWorkers`
+- Process results in batches
+- Enable state persistence for resumability
 
 ## Getting Help
 
-- **[Documentation](../README.md)** - Complete documentation index
-- **[API Reference](../api/)** - Detailed API documentation  
-- **[Examples](../examples/)** - Working code examples
-- **[GitHub Issues](https://github.com/jambudipa/spider/issues)** - Report bugs or request features
-
-Ready to build something amazing? Check out our [examples](../examples/) or dive into the [API documentation](../api/)!
+- Check the [API documentation](../api/)
+- View [example code](../examples/)
+- Open an [issue on GitHub](https://github.com/jambudipa/spider/issues)

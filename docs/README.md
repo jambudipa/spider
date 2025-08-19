@@ -1,153 +1,64 @@
 # Spider Documentation
 
-Welcome to the Spider documentation. Spider is a powerful, Effect.js-based web crawling framework for TypeScript applications.
+Welcome to the Spider documentation! Spider is a comprehensive web scraping library built with TypeScript, featuring resumable operations, middleware support, and built-in rate limiting.
 
-## 📚 Documentation Structure
+## Documentation Structure
 
-### Getting Started
-- [Installation & Setup](./guides/getting-started.md) - Get Spider up and running
-- [Configuration Guide](./guides/configuration.md) - Configure Spider for your needs
-- [Basic Examples](./examples/basic-crawling.md) - Simple crawling examples
+This documentation follows the [Diátaxis](https://diataxis.fr/) framework, organizing content into four distinct types to serve different user needs:
 
-### Core Concepts
-- [Spider Service](./api/spider-service.md) - Main crawling orchestration
-- [Middleware System](./api/middleware.md) - Request/response processing pipeline
-- [Link Extraction](./api/link-extractor.md) - Discovering and filtering links
-- [Resumability](./api/resumability.md) - State persistence and recovery
+### 🎓 [Tutorial](./tutorial/)
+**Learning-oriented lessons** that guide you through building your first web scrapers.
 
-### Advanced Features
-- [Browser Automation](./guides/browser-automation.md) - Playwright integration for dynamic content
-- [HTTP Client](./api/http-client.md) - Enhanced HTTP client with sessions
-- [State Management](./api/state-manager.md) - Token and state management
-- [Worker Health Monitoring](./api/worker-health.md) - Performance monitoring
+- **[Getting Started](./tutorial/getting-started.md)** - Your first Spider application, step by step
 
-### Real-World Examples
-- [Web-scraping.dev Scenarios](./examples/scenarios.md) - Solutions for all 16 challenge scenarios
-- [Enterprise Patterns](./examples/enterprise-patterns.md) - Production-ready patterns
+*Start here if you're new to Spider or web scraping.*
 
-## 🎯 Quick Start
+### 📋 [How-to Guides](./how-to/)
+**Goal-oriented instructions** for solving specific scraping challenges.
 
-```typescript
-import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
-import { Effect, Sink } from 'effect'
+- **[Authentication](./how-to/authentication.md)** - Handle login forms, cookies, and session management
+- **[Data Extraction](./how-to/data-extraction.md)** - Advanced techniques for extracting structured data
+- **[Resumable Operations](./how-to/resumable-operations.md)** - Implement fault-tolerant, long-running crawls
 
-const program = Effect.gen(function* () {
-  const spider = yield* SpiderService
-  
-  const collectSink = Sink.forEach(result =>
-    Effect.sync(() => console.log(`Found: ${result.pageData.title}`))
-  )
-  
-  yield* spider.crawl('https://example.com', collectSink)
-})
+*Use these guides when you have a specific task to accomplish.*
 
-Effect.runPromise(program.pipe(
-  Effect.provide(SpiderService.Default)
-))
-```
+### 📚 [Reference](./reference/)
+**Information-oriented documentation** with precise technical details.
 
-## 🏆 Battle-Tested
+- **[API Reference](./reference/api-reference.md)** - Complete API documentation for all classes and methods
+- **[Configuration](./reference/configuration.md)** - Comprehensive configuration options and settings
 
-Spider successfully handles ALL 16 [web-scraping.dev](https://web-scraping.dev) challenge scenarios with 100% pass rate:
+*Reference these documents when you need exact parameter details or method signatures.*
 
-- ✅ Static & dynamic content crawling
-- ✅ Authentication & security handling  
-- ✅ Anti-bot protection bypass
-- ✅ Browser automation for JavaScript-heavy sites
-- ✅ Session management & cookie handling
-- ✅ PDF downloads & file handling
+### 🧠 [Explanation](./explanation/)
+**Understanding-oriented documentation** that provides context and rationale.
 
-## 📦 What's Exported
+- **[Architecture](./explanation/architecture.md)** - Design decisions, patterns, and system overview
+- **[Web Scraping Concepts](./explanation/web-scraping-concepts.md)** - Fundamental concepts and best practices
 
-Spider exports the following main components:
+*Read these to understand the "why" behind Spider's design and web scraping in general.*
 
-### Services
-- `SpiderService` - Main crawler service
-- `LinkExtractorService` - Link discovery and filtering
-- `ResumabilityService` - State persistence
-- `SpiderSchedulerService` - Request scheduling
-- `UrlDeduplicatorService` - URL deduplication
+## Quick Start
 
-### Configuration
-- `makeSpiderConfig()` - Configuration factory
-- `SpiderConfig` - Configuration class
-- `SpiderConfigOptions` - Configuration interface
+If you're just getting started, begin with the **[Tutorial](./tutorial/getting-started.md)**. It will walk you through installation and your first scraping script.
 
-### Middleware
-- `MiddlewareManager` - Middleware chain management
-- `LoggingMiddleware` - Request/response logging
-- `RateLimitMiddleware` - Rate limiting
-- `UserAgentMiddleware` - User agent management
-- `StatsMiddleware` - Statistics collection
+If you have a specific problem to solve, check the **[How-to Guides](./how-to/)** for targeted solutions.
 
-### HTTP & State
-- `EnhancedHttpClient` - Enhanced HTTP client
-- `CookieManager` - Cookie management
-- `SessionStore` - Session storage
-- `TokenExtractor` - Token extraction
-- `StateManager` - State management
+For complete API details, see the **[Reference](./reference/)** section.
 
-### Browser Automation
-- `BrowserManager` - Browser pool management
-- `PlaywrightAdapter` - Playwright wrapper
+To understand Spider's design philosophy and web scraping concepts, explore the **[Explanation](./explanation/)** documents.
 
-### Storage Backends
-- `FileStorageBackend` - File-based persistence
-- `PostgresStorageBackend` - PostgreSQL storage
-- `RedisStorageBackend` - Redis storage
+## Navigation Tips
 
-### Error Types
-- `NetworkError` - Network-related errors
-- `ResponseError` - HTTP response errors
-- `RobotsTxtError` - Robots.txt violations
-- `ConfigurationError` - Configuration errors
-- `MiddlewareError` - Middleware processing errors
+- **New to web scraping?** → Start with [Web Scraping Concepts](./explanation/web-scraping-concepts.md), then the [Tutorial](./tutorial/getting-started.md)
+- **Experienced with scraping?** → Jump to the [How-to Guides](./how-to/) for specific techniques
+- **Need API details?** → Go straight to the [API Reference](./reference/api-reference.md)
+- **Want to understand the architecture?** → Read the [Architecture explanation](./explanation/architecture.md)
 
-## 🔍 Finding What You Need
+## Contributing to Documentation
 
-### "I want to..."
-
-**...crawl a simple website**
-→ Start with [Getting Started](./guides/getting-started.md)
-
-**...handle JavaScript-rendered content**
-→ See [Browser Automation](./guides/browser-automation.md)
-
-**...bypass anti-bot protection**
-→ Check the [web-scraping.dev scenarios](./examples/scenarios.md)
-
-**...resume interrupted crawls**
-→ Learn about [Resumability](./api/resumability.md)
-
-**...customise request processing**
-→ Explore [Middleware](./api/middleware.md)
-
-**...scale to thousands of pages**
-→ Read about [Configuration](./guides/configuration.md)
-
-## 📖 API Reference
-
-Detailed API documentation for all exported components:
-
-- [Spider Service API](./api/spider-service.md)
-- [Middleware API](./api/middleware.md)
-- [Link Extractor API](./api/link-extractor.md)
-- [Resumability API](./api/resumability.md)
-- [HTTP Client API](./api/http-client.md)
-- [State Manager API](./api/state-manager.md)
-
-## 🚀 Next Steps
-
-1. [Install Spider](./guides/getting-started.md#installation)
-2. [Configure your first crawler](./guides/configuration.md)
-3. [Run the examples](./examples/basic-crawling.md)
-4. [Explore advanced features](./guides/browser-automation.md)
-
-## 📞 Support
-
-- [GitHub Issues](https://github.com/jambudipa/spider/issues)
-- [NPM Package](https://www.npmjs.com/package/@jambudipa/spider)
+This documentation is part of the Spider project. If you find errors, have suggestions, or want to contribute new guides, please see the project repository for contribution guidelines.
 
 ---
 
-Built with Effect.js for type-safe, composable web crawling.
+*Documentation organized using the [Diátaxis framework](https://diataxis.fr/) for better learning and reference experiences.*

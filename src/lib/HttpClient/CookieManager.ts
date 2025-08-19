@@ -5,6 +5,7 @@
 
 import { Context, Effect, Layer, Ref } from 'effect';
 import { Cookie, CookieJar } from 'tough-cookie';
+import { JsonUtils } from '../utils/JsonUtils.js';
 
 export interface CookieManagerService {
   /**
@@ -133,22 +134,24 @@ export const makeCookieManager = (): Effect.Effect<
             catch: () => new Error('Failed to serialize cookies'),
           });
 
-          return JSON.stringify(serialized);
+          return yield* JsonUtils.stringify(serialized);
         }).pipe(Effect.orElseSucceed(() => '{}')),
 
       deserialize: (data: string) =>
         Effect.gen(function* () {
-          try {
-            const parsed = JSON.parse(data);
-            const newJar = CookieJar.deserialize(parsed);
+          // Parse JSON data using JsonUtils
+          const parsed = yield* JsonUtils.parse(data).pipe(
+            Effect.mapError(error => new Error(`Invalid cookie JSON format: ${error.message}`))
+          );
 
-            yield* Effect.tryPromise({
-              try: () => Promise.resolve(newJar),
-              catch: () => new Error('Failed to deserialize cookie jar'),
-            }).pipe(Effect.flatMap((jar) => Ref.set(jarRef, jar)));
-          } catch (error) {
-            yield* Effect.fail(new Error(`Invalid cookie data: ${error}`));
-          }
+          // Deserialize cookie jar with error handling
+          const newJar = yield* Effect.tryPromise({
+            try: () => CookieJar.deserialize(parsed as any),
+            catch: (error) => new Error(`Failed to deserialize cookie jar: ${error}`)
+          });
+
+          // Set the new jar reference
+          yield* Ref.set(jarRef, newJar as CookieJar);
         }),
     };
   });

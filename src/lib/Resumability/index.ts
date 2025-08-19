@@ -8,7 +8,7 @@
  *
  * - **Multiple Strategies**: Full state, delta, hybrid, and auto-selection
  * - **Multiple Backends**: File system, Redis, PostgreSQL with extensible interface
- * - **Effect.js Native**: Full integration with Effect.js ecosystem
+ * - **Effect Native**: Full integration with Effect ecosystem
  * - **Type Safe**: Complete TypeScript support with runtime validation
  * - **Production Ready**: Handles concurrency, errors, and edge cases
  *

@@ -1,45 +1,8 @@
 import { Effect, MutableHashMap, Option } from 'effect';
-import { CrawlTask } from '../Spider/Spider.service.js';
-import { PageData } from '../PageData/PageData.js';
 import { MiddlewareError } from '../errors.js';
-
-/**
- * Request object used in the middleware pipeline.
- *
- * Contains the crawl task along with optional headers and metadata
- * that can be modified by middleware during processing.
- *
- * @group Interfaces
- * @public
- */
-export interface SpiderRequest {
-  /** The crawl task containing URL and depth information */
-  task: CrawlTask;
-  /** HTTP headers to include with the request */
-  headers?: Record<string, string>;
-  /** Additional metadata that can be used by middleware */
-  meta?: Record<string, unknown>;
-}
-
-/**
- * Response object used in the middleware pipeline.
- *
- * Contains the extracted page data along with optional HTTP response
- * information and metadata from middleware processing.
- *
- * @group Interfaces
- * @public
- */
-export interface SpiderResponse {
-  /** The extracted page data including content, links, and metadata */
-  pageData: PageData;
-  /** HTTP status code of the response */
-  statusCode?: number;
-  /** HTTP response headers */
-  headers?: Record<string, string>;
-  /** Additional metadata added by middleware */
-  meta?: Record<string, unknown>;
-}
+// Import the Data types from the new types file
+import { SpiderRequest, SpiderResponse } from './types.js';
+export { SpiderRequest, SpiderResponse } from './types.js';
 
 /**
  * Interface for implementing custom middleware components.
@@ -415,13 +378,9 @@ export class UserAgentMiddleware extends Effect.Service<UserAgentMiddleware>()(
     effect: Effect.sync(() => ({
       create: (userAgent: string): SpiderMiddleware => ({
         processRequest: (request: SpiderRequest) =>
-          Effect.succeed({
-            ...request,
-            headers: {
-              ...request.headers,
-              'User-Agent': userAgent,
-            },
-          }),
+          Effect.succeed(
+            request.withHeaders({ 'User-Agent': userAgent })
+          ),
       }),
     })),
   }
@@ -478,14 +437,17 @@ export class StatsMiddleware extends Effect.Service<StatsMiddleware>()(
             processResponse: (response: SpiderResponse) =>
               Effect.sync(() => {
                 incr('responses_received');
-                if (response.statusCode) {
-                  incr(`status_${response.statusCode}`);
-                  if (response.statusCode >= 200 && response.statusCode < 300) {
-                    incr('responses_success');
-                  } else if (response.statusCode >= 400) {
-                    incr('responses_error');
+                Option.match(response.statusCode, {
+                  onNone: () => {},
+                  onSome: (statusCode) => {
+                    incr(`status_${statusCode}`);
+                    if (statusCode >= 200 && statusCode < 300) {
+                      incr('responses_success');
+                    } else if (statusCode >= 400) {
+                      incr('responses_error');
+                    }
                   }
-                }
+                })
                 incr('bytes_downloaded', response.pageData.html.length);
                 return response;
               }),

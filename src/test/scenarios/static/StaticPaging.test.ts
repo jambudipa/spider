@@ -9,11 +9,19 @@ import { DataExtractor, Product } from '../../helpers/DataExtractor';
 import { TestHelper } from '../../helpers/TestHelper';
 
 class StaticPagingTest extends StaticScenarioBase {
-  private products: Product[] = [];
-  private paginationLinks: string[] = [];
+  protected products: Product[] = [];
+  protected paginationLinks: string[] = [];
   
   constructor() {
     super('static-paging');
+  }
+
+  get getProducts() {
+    return this.products;
+  }
+
+  get getPaginationLinks() {
+    return this.paginationLinks;
   }
   
   async extractProductsFromCurrentPage(): Promise<Product[]> {
@@ -26,7 +34,7 @@ class StaticPagingTest extends StaticScenarioBase {
   
   async navigateAllPages(): Promise<void> {
     const visitedUrls = new Set<string>();
-    const toVisit: string[] = [`${this.baseUrl}/products`];
+    const toVisit: string[] = [`${this.getBaseUrl()}/products`];
     
     while (toVisit.length > 0) {
       const url = toVisit.shift()!;
@@ -34,7 +42,7 @@ class StaticPagingTest extends StaticScenarioBase {
       if (visitedUrls.has(url)) continue;
       visitedUrls.add(url);
       
-      await this.context.adapter.goto(url);
+      await this.getContext().adapter.goto(url);
       
       // Extract products from current page
       const pageProducts = await this.extractProductsFromCurrentPage();
@@ -111,7 +119,7 @@ describe('StaticPaging Scenario Tests - Real Site', () => {
   
   it('should extract product details', async () => {
     await test.navigateToScenario('/product/1');
-    const productDetails = await DataExtractor.extractProductDetails(test.page);
+    const productDetails = await DataExtractor.extractProductDetails(test.getPage());
     
     expect(productDetails).toBeDefined();
     expect(productDetails.title).toBeTruthy();
@@ -123,10 +131,10 @@ describe('StaticPaging Scenario Tests - Real Site', () => {
     await test.navigateAllPages();
     
     // Should have collected products from multiple pages
-    expect(test.products.length).toBeGreaterThanOrEqual(20);
+    expect(test.getProducts.length).toBeGreaterThanOrEqual(20);
     
     // Validate all products have required fields
-    for (const product of test.products) {
+    for (const product of test.getProducts) {
       expect(product.title).toBeTruthy();
       expect(product.price).toBeGreaterThanOrEqual(0);
     }

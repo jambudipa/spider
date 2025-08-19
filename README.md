@@ -1,6 +1,14 @@
 # @jambudipa/spider
 
-A powerful, Effect.js-based web crawling framework for modern TypeScript applications. Built for type safety, composability, and enterprise-scale crawling operations.
+[![CI Status](https://github.com/jambudipa/spider/workflows/Spider%20Scenario%20Tests/badge.svg)](https://github.com/jambudipa/spider/actions)
+[![Coverage](https://codecov.io/gh/jambudipa/spider/branch/main/graph/badge.svg)](https://codecov.io/gh/jambudipa/spider)
+[![npm version](https://badge.fury.io/js/@jambudipa%2Fspider.svg)](https://badge.fury.io/js/@jambudipa%2Fspider)
+[![Node.js Version](https://img.shields.io/node/v/@jambudipa/spider.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A powerful, Effect-based web crawling framework for modern TypeScript applications. Built for type safety, composability, and enterprise-scale crawling operations.
+
+> **⚠️ Pre-Release API**: Spider is currently in pre-release development (v0.x.x). The API may change frequently as we refine the library towards a stable v1.0.0 release. Consider this when using Spider in production environments and expect potential breaking changes in minor version updates.
 
 ## 🏆 **Battle-Tested Against Real-World Scenarios**
 
@@ -25,11 +33,20 @@ A powerful, Effect.js-based web crawling framework for modern TypeScript applica
 | **Invalid Referer Blocking** | Header-based access control | Anti-Block |
 | **Persistent Cookie Blocking** | Long-term blocking mechanisms | Anti-Block |
 
-🎯 **[View Live Test Results](https://github.com/jambudipa/spider/actions)** | 📊 **100% Test Pass Rate** | 🚀 **Production Ready**
+🎯 **[View Live Test Results](https://github.com/jambudipa/spider/actions/workflows/ci.yml)** | 📊 **All Scenario Tests Passing** | 🚀 **Production Ready**
+
+> **Live Testing**: Our CI pipeline runs all 16 web scraping scenarios against real websites daily, ensuring Spider remains robust against changing web technologies.
+
+### 🔍 **Current Status** (Updated: Aug 2025)
+- ✅ **Core Functionality**: All web scraping scenarios working
+- ✅ **Type Safety**: Full TypeScript compilation without errors
+- ✅ **Build System**: Package builds successfully for distribution
+- ✅ **Test Suite**: 92+ scenario tests passing against live websites
+- ⚠️ **Code Quality**: 1,163 linting issues identified (technical debt - does not affect functionality)
 
 ## ✨ Key Features
 
-- **🔥 Effect.js Foundation**: Type-safe, functional composition with robust error handling
+- **🔥 Effect Foundation**: Type-safe, functional composition with robust error handling
 - **⚡ High Performance**: Concurrent crawling with intelligent worker pool management  
 - **🤖 Robots.txt Compliant**: Automatic robots.txt parsing and compliance checking
 - **🔄 Resumable Crawls**: State persistence and crash recovery capabilities
@@ -71,22 +88,30 @@ Effect.runPromise(program.pipe(
 ))
 ```
 
-## 🎯 What's Next?
+## 📚 Documentation
 
-### 🆕 New to Spider?
-- **[Getting Started Guide](./docs/guides/getting-started.md)** - Complete setup and first crawl
-- **[Examples](./docs/examples/)** - Working examples to get you started
-- **[Basic Configuration](./docs/guides/configuration.md)** - Configuration options
+**Comprehensive documentation is now available** following the [Diátaxis framework](https://diataxis.fr/) for better learning and reference:
 
-### 🔄 Advanced Usage
-- **[Browser Automation](./docs/guides/browser-automation.md)** - Handle dynamic content
-- **[Anti-Bot Protection](./docs/guides/anti-bot.md)** - Bypass blocking mechanisms
-- **[Security Handling](./docs/guides/security.md)** - Authentication and sessions
+### 🎓 New to Spider?
+Start with our **[Tutorial](./docs/tutorial/getting-started.md)** - a hands-on guide that takes you from installation to building advanced scrapers.
 
-### 🏭 Building Production Systems?
-- **[Performance Guide](./docs/guides/performance.md)** - Scale your crawling operations
-- **[API Reference](./docs/api/)** - Complete technical documentation
-- **[Enterprise Patterns](./docs/examples/enterprise-patterns.md)** - Production-ready patterns
+### 📋 Need to solve a specific problem?
+Check our **[How-to Guides](./docs/how-to/)** for targeted solutions:
+- **[Authentication](./docs/how-to/authentication.md)** - Handle logins, sessions, and auth flows
+- **[Data Extraction](./docs/how-to/data-extraction.md)** - Extract structured data from HTML
+- **[Resumable Operations](./docs/how-to/resumable-operations.md)** - Build fault-tolerant crawlers
+
+### 📚 Need technical details?
+See our **[Reference Documentation](./docs/reference/)**:
+- **[API Reference](./docs/reference/api-reference.md)** - Complete API documentation
+- **[Configuration](./docs/reference/configuration.md)** - All configuration options
+
+### 🧠 Want to understand the design?
+Read our **[Explanations](./docs/explanation/)**:
+- **[Architecture](./docs/explanation/architecture.md)** - System design and philosophy
+- **[Web Scraping Concepts](./docs/explanation/web-scraping-concepts.md)** - Core principles
+
+**📖 [Browse All Documentation →](./docs/README.md)**
 
 ## 🛠️ Quick Configuration
 
@@ -382,46 +407,67 @@ npm install
 # Build the package
 npm run build
 
-# Run tests
+# Run tests (all scenarios)
 npm test
 
 # Run tests with coverage
 npm run test:coverage
 
-# Type checking
+# Type checking (must pass)
 npm run typecheck
 
-# Linting
+# Validate CI setup locally
+npm run ci:validate
+
+# Code quality (has known issues)
+npm run lint        # Shows 1,163 issues
+npm run format     # Formats code consistently
+```
+
+### 🛠️ Contributing & Code Quality
+
+**Current State**: The codebase is fully functional with comprehensive test coverage, but has technical debt in code style consistency.
+
+- ✅ **Functional Changes**: All PRs must pass scenario tests
+- ✅ **Type Safety**: TypeScript compilation must succeed  
+- ✅ **Build System**: Package must build without errors
+- 🔄 **Code Style**: Help wanted fixing linting issues (great first contribution!)
+
+**Contributing to Code Quality**:
+```bash
+# See specific linting issues
 npm run lint
 
-# Format code
-npm run format
+# Fix auto-fixable issues
+npm run lint:fix
+
+# Focus areas for improvement:
+# - Unused variable cleanup (877 issues)
+# - Return type annotations (286 issues)  
+# - Nullish coalescing operators
+# - Console.log removal in production code
 ```
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## 📚 Documentation
+## 📚 Complete Documentation
 
-Comprehensive documentation is available in the [`/docs`](./docs) directory:
+All documentation is organized in the [`/docs`](./docs/) directory following the [Diátaxis framework](https://diataxis.fr/):
 
-### 🚀 Quick Links
-- **[Getting Started Guide](./docs/guides/getting-started.md)** - Installation, setup, and first crawl
-- **[API Reference](./docs/api/)** - Complete API documentation
-- **[Examples](./docs/examples/)** - Working examples for common use cases
+- **🎓 [Tutorial](./docs/tutorial/)** - Learning-oriented lessons for getting started
+- **📋 [How-to Guides](./docs/how-to/)** - Problem-solving guides for specific tasks
+- **📚 [Reference](./docs/reference/)** - Technical reference and API documentation  
+- **🧠 [Explanation](./docs/explanation/)** - Understanding-oriented documentation
 
-### 📖 Complete Documentation
-- **[Documentation Index](./docs/README.md)** - Overview of all available documentation
-- **[User Guides](./docs/guides/)** - Step-by-step tutorials and best practices
-- **[Feature Documentation](./docs/features/)** - Deep dives into key capabilities
-- **[Advanced Examples](./docs/examples/)** - Real-world usage patterns
+**📖 [Start with the Documentation Index →](./docs/README.md)**
 
 ## Support
 
-- [GitHub Issues](https://github.com/jambudipa/spider/issues)
-- [Complete Documentation](./docs/)
-- [Working Examples](./docs/examples/)
+- [GitHub Issues](https://github.com/jambudipa/spider/issues) - Bug reports and feature requests
+- [Documentation](./docs/) - Comprehensive guides and reference material
+- [Tutorial](./docs/tutorial/getting-started.md) - Step-by-step learning guide
 
 ---
 

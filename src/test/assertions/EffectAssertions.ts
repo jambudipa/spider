@@ -13,3 +13,15 @@ export function expectEffectFailure<A, E>(
     Effect.flip(effect)
   );
 }
+
+export interface EffectAssertions {
+  expectSuccess: typeof expectEffectSuccess;
+  expectFailure: typeof expectEffectFailure;
+}
+
+export const EffectAssertions = {
+  make: (): EffectAssertions => ({
+    expectSuccess: expectEffectSuccess,
+    expectFailure: expectEffectFailure
+  })
+};

@@ -16,7 +16,7 @@ class ExampleBlockPageTest extends AntiBlockScenarioBase {
     blockType: string;
     message: string;
   }> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       const title = document.title.toLowerCase();
       const bodyText = document.body.textContent?.toLowerCase() || '';
       const url = window.location.href;
@@ -53,7 +53,7 @@ class ExampleBlockPageTest extends AntiBlockScenarioBase {
   }
   
   async extractBlockPageDetails(): Promise<any> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       return {
         title: document.title,
         heading: document.querySelector('h1, h2')?.textContent?.trim(),
@@ -79,8 +79,8 @@ class ExampleBlockPageTest extends AntiBlockScenarioBase {
     });
     
     // Reload and check if still blocked
-    await this.page.reload();
-    await this.page.waitForLoadState('networkidle');
+    await this.getPage().reload();
+    await this.getPage().waitForLoadState('networkidle');
     
     const stillBlocked = await this.isBlocked();
     return !stillBlocked;

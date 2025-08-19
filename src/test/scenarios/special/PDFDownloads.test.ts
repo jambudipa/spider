@@ -72,7 +72,7 @@ class FileDownloadTest extends StaticScenarioBase {
 
       try {
         // Use a promise that catches unhandled rejections
-        const downloadResult = await this.context.adapter.downloadFile(url, filename).catch(error => {
+        const downloadResult = await this.getContext().adapter.downloadFile(url, filename).catch(error => {
           // Prevent unhandled promise rejections from escaping
           throw error;
         });
@@ -98,7 +98,7 @@ class FileDownloadTest extends StaticScenarioBase {
 
       try {
         // Use a promise that catches unhandled rejections
-        const downloadResult = await this.context.adapter.downloadFromClick(selector).catch(error => {
+        const downloadResult = await this.getContext().adapter.downloadFromClick(selector).catch(error => {
           // Prevent unhandled promise rejections from escaping
           throw error;
         });
@@ -124,7 +124,7 @@ class FileDownloadTest extends StaticScenarioBase {
   // Getter methods to access protected properties
   get testPage() { return this.page; }
   get testContext() { return this.context; }
-  get testBaseUrl() { return this.baseUrl; }
+  get testBaseUrl() { return this.getBaseUrl(); }
   
   async validateScenario(): Promise<void> {
     await super.validateScenario();

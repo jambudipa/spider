@@ -51,40 +51,43 @@ export const makeLoggingFetch = Effect.gen(function* () {
       controller.abort();
     }, 30000); // 30 second timeout
 
-    // Wrap the actual fetch
-    return Effect.runPromise(logStart)
-      .then(() => fetch(url, { ...options, signal: controller.signal }))
-      .then((response) => {
-        clearTimeout(timeoutId);
-        const duration = Date.now() - startMs;
-
-        // Log successful response
-        Effect.runSync(
-          logger.logEvent({
-            type: 'edge_case',
-            domain,
-            url,
-            message: `[FETCH_SUCCESS] Got response in ${duration}ms`,
-            details: {
-              case: 'fetch_success',
-              url,
-              durationMs: duration,
-              status: response.status,
-              statusText: response.statusText,
-              contentType: response.headers.get('content-type'),
-            },
-          })
-        );
-
-        return response;
-      })
-      .catch((error) => {
-        clearTimeout(timeoutId);
-        const duration = Date.now() - startMs;
-
-        // Log fetch error
-        Effect.runSync(
-          logger.logEvent({
+    // Use Effect composition instead of Promise chains
+    const fetchEffect = Effect.gen(function* () {
+      yield* logStart;
+      
+      const response = yield* Effect.tryPromise({
+        try: () => fetch(url, { ...options, signal: controller.signal }),
+        catch: (error) => error as Error
+      });
+      
+      clearTimeout(timeoutId);
+      const duration = Date.now() - startMs;
+      
+      // Log successful response
+      yield* logger.logEvent({
+        type: 'edge_case',
+        domain,
+        url,
+        message: `[FETCH_SUCCESS] Got response in ${duration}ms`,
+        details: {
+          case: 'fetch_success',
+          url,
+          durationMs: duration,
+          status: response.status,
+          statusText: response.statusText,
+          contentType: response.headers.get('content-type'),
+        },
+      });
+      
+      return response;
+    }).pipe(
+      Effect.catchAll((error) => 
+        Effect.gen(function* () {
+          clearTimeout(timeoutId);
+          const duration = Date.now() - startMs;
+          
+          // Log fetch error
+          yield* logger.logEvent({
             type: 'edge_case',
             domain,
             url,
@@ -97,11 +100,14 @@ export const makeLoggingFetch = Effect.gen(function* () {
               message: error.message,
               isAborted: error.name === 'AbortError',
             },
-          })
-        );
-
-        throw error;
-      });
+          });
+          
+          return yield* Effect.fail(error);
+        })
+      )
+    );
+    
+    return Effect.runPromise(fetchEffect);
   };
 });
 

@@ -13,8 +13,9 @@ export default defineConfig({
       'examples/**/*.test.ts'
     ],
     coverage: {
+      provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json'],
-      reportsDirectory: './test-output/vitest/coverage',
+      reportsDirectory: './coverage',
       exclude: [
         'node_modules/**',
         'dist/**',
@@ -41,6 +42,12 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 10000,
     teardownTimeout: 10000,
+    reporters: process.env.CI 
+      ? ['verbose', 'junit']
+      : ['verbose'],
+    outputFile: {
+      junit: './junit.xml'
+    },
     poolOptions: {
       threads: {
         singleThread: false, // Enable parallel execution for faster tests

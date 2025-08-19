@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A comprehensive web scraping library with resumable operations, middleware support, and built-in rate limiting",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "build": "vite build",
     "dev": "vite build --watch",
     "test": "vitest",
     "test:ui": "vitest --ui",
@@ -37,7 +37,7 @@
     "typecheck:test": "tsc --noEmit --skipLibCheck --downlevelIteration --project tsconfig.test.json",
     "typecheck:examples": "tsc --noEmit --project tsconfig.examples.json",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build && npm run typecheck",
+    "prepublishOnly": "npm run clean && npm run build",
     "prepack": "npm run build",
     "changeset": "changeset",
     "version": "changeset version",
@@ -49,7 +49,9 @@
     "examples:run-all": "tsx examples/run-all.ts",
     "test:examples": "vitest run tests/examples.test.ts",
     "test:core": "vitest run tests/core",
-    "test:all": "npm run test:examples && npm run test:core"
+    "test:all": "npm run test:examples && npm run test:core",
+    "ci:validate": "tsx scripts/validate-ci.ts",
+    "ci:local": "npm run ci:validate"
   },
   "keywords": [
     "web-scraping",

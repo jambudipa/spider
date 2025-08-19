@@ -2,7 +2,7 @@
  * Clean API facades that hide Effect.Service implementation details.
  *
  * These interfaces provide clean documentation without exposing
- * internal Effect.js service machinery.
+ * internal Effect service machinery.
  *
  * @group Services
  */

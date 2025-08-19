@@ -12,7 +12,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
   }
   
   async getBlockingCookies(): Promise<any[]> {
-    const cookies = await this.context.adapter.getCookies();
+    const cookies = await this.getContext().adapter.getCookies();
     return cookies.filter(cookie => 
       cookie.name.toLowerCase().includes('block') ||
       cookie.name.toLowerCase().includes('ban') ||
@@ -22,7 +22,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
   }
   
   async setBlockingCookie(name: string, value: string): Promise<void> {
-    await this.context.adapter.setCookies([{
+    await this.getContext().adapter.setCookies([{
       name,
       value,
       domain: '.web-scraping.dev',
@@ -36,7 +36,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
     
     // Clear each blocking cookie
     for (const cookie of blockingCookies) {
-      await this.context.adapter.setCookies([{
+      await this.getContext().adapter.setCookies([{
         name: cookie.name,
         value: '',
         domain: cookie.domain,
@@ -46,7 +46,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
     }
     
     // Also try clearing all cookies
-    await this.context.adapter.clearCookies();
+    await this.getContext().adapter.clearCookies();
   }
   
   async testPersistence(): Promise<{
@@ -59,8 +59,8 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
     const initialBlocked = await this.isBlocked();
     
     // Reload page
-    await this.page.reload();
-    await this.page.waitForLoadState('networkidle');
+    await this.getPage().reload();
+    await this.getPage().waitForLoadState('networkidle');
     const afterReload = await this.isBlocked();
     
     // Navigate away and back
@@ -81,7 +81,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
   }
   
   async extractBlockingDetails(): Promise<any> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       const params = new URLSearchParams(window.location.search);
       return {
         url: window.location.href,
@@ -216,7 +216,7 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
   it('should test blocking cookie attributes', async () => {
     await test.navigateToScenario('/blocked?persist=true');
     
-    const cookies = await test.context.adapter.getCookies();
+    const cookies = await test.getContext().adapter.getCookies();
     const blockingCookies = cookies.filter(c => 
       c.name.toLowerCase().includes('block') ||
       c.name.toLowerCase().includes('persist')

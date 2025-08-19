@@ -3,7 +3,9 @@
  * Handles browser lifecycle, pooling, and resource management
  */
 
+import { Effect, Either } from 'effect';
 import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
+import { BrowserCleanupError } from '../lib/errors';
 
 export interface BrowserConfig {
   headless?: boolean;
@@ -143,28 +145,50 @@ export class BrowserManager {
   /**
    * Close all resources
    */
-  async close(): Promise<void> {
-    // Close all contexts with error handling
-    for (const [id, context] of this.contexts) {
-      try {
-        await context.close();
-      } catch (error) {
-        console.warn(`Error closing context ${id}:`, error);
-      }
-    }
-    this.contexts.clear();
+  close(): Effect.Effect<void, never, never> {
+    const self = this;
+    return Effect.gen(function* () {
+      // Close all contexts in parallel, collecting errors
+      const contextEntries = Array.from(self.contexts.entries());
+      const contextEffects = contextEntries.map(([id, context]) =>
+        Effect.tryPromise({
+          try: () => context.close(),
+          catch: (error) => BrowserCleanupError.context(id, error)
+        })
+      );
+      
+      const contextResults = yield* Effect.all(contextEffects, { mode: "either" });
 
-    // Close all browsers with error handling
-    for (const browser of this.browsers) {
-      try {
-        await browser.close();
-      } catch (error) {
-        console.warn(`Error closing browser:`, error);
-      }
-    }
-    this.browsers = [];
+      // Log any context cleanup errors
+      contextResults.forEach((result, index) => {
+        if (Either.isLeft(result)) {
+          const [id] = contextEntries[index];
+          console.warn(`Error closing context ${id}:`, result.left);
+        }
+      });
 
-    this.isInitialised = false;
+      self.contexts.clear();
+
+      // Close all browsers in parallel, collecting errors
+      const browserEffects = self.browsers.map((browser, index) =>
+        Effect.tryPromise({
+          try: () => browser.close(),
+          catch: (error) => BrowserCleanupError.browser(`browser-${index}`, error)
+        })
+      );
+      
+      const browserResults = yield* Effect.all(browserEffects, { mode: "either" });
+
+      // Log any browser cleanup errors
+      browserResults.forEach((result, index) => {
+        if (Either.isLeft(result)) {
+          console.warn(`Error closing browser ${index}:`, result.left);
+        }
+      });
+
+      self.browsers = [];
+      self.isInitialised = false;
+    });
   }
 
   /**

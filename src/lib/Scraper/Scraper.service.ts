@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
-import { NetworkError, ResponseError } from '../errors.js';
+import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors.js';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 
 /**
@@ -16,7 +16,7 @@ import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
  * - Content type validation (skips binary files)
  * - Comprehensive error handling with typed errors
  * - Performance monitoring and logging
- * - Effect.js integration for composability
+ * - Effect integration for composability
  * 
  * **Note:** This service focuses solely on fetching and parsing HTML content.
  * Link extraction is handled separately by LinkExtractorService for better
@@ -141,16 +141,18 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                   !contentType.includes('text/') &&
                   contentType !== ''
                 ) {
-                  throw new Error(`Skipping non-HTML content: ${contentType}`);
+                  throw ContentTypeError.create(
+                    url,
+                    contentType,
+                    ['text/html', 'application/xhtml+xml', 'text/*']
+                  );
                 }
 
                 return resp;
               } catch (error) {
                 clearTimeout(timeoutId);
                 if (error instanceof Error && error.name === 'AbortError') {
-                  throw new Error(
-                    `Request aborted after ${Date.now() - startMs}ms`
-                  );
+                  throw RequestAbortError.timeout(url, Date.now() - startMs);
                 }
                 throw error;
               }
@@ -181,7 +183,7 @@ export class ScraperService extends Effect.Service<ScraperService>()(
               try {
                 // Use a readable stream with abort capability
                 const reader = response.body?.getReader();
-                if (!reader) throw new Error('No response body');
+                if (!reader) throw ResponseError.fromCause(url, 'No response body');
 
                 const decoder = new TextDecoder();
                 let html = '';
@@ -194,7 +196,7 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                   // Check if we should abort
                   if (textController.signal.aborted) {
                     reader.cancel();
-                    throw new Error('Response parsing aborted');
+                    throw RequestAbortError.cancelled(url, Date.now() - startMs);
                   }
                 }
 

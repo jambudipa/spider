@@ -28,6 +28,13 @@ export abstract class BaseScenarioTest {
   }
   
   /**
+   * Get the test context
+   */
+  getContext(): TestContext {
+    return this.context;
+  }
+  
+  /**
    * Get the base URL
    */
   getBaseUrl(): string {

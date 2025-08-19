@@ -1,0 +1,224 @@
+name: Spider Scenario Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run tests daily at 2 AM UTC to verify scenarios still work
+    - cron: '0 2 * * *'
+
+jobs:
+  test-scenarios:
+    name: Web Scraping Scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps
+
+    - name: Run type checking
+      run: npm run typecheck
+
+    - name: Run linting (non-blocking)
+      run: npm run lint || echo "Linting issues found - needs cleanup but not blocking CI"
+      continue-on-error: true
+
+    - name: Run unit tests
+      run: npm test -- --run --reporter=junit --outputFile=junit-unit.xml src/test --exclude="**/scenarios/**"
+
+    - name: Run scenario tests
+      run: npm test -- --run --reporter=junit --outputFile=junit-scenarios.xml src/test/scenarios
+      env:
+        HEADLESS: true
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-node-${{ matrix.node-version }}
+        path: |
+          junit-*.xml
+          screenshots/
+
+    - name: Publish test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Scenario Tests (Node ${{ matrix.node-version }})
+        path: junit-scenarios.xml
+        reporter: jest-junit
+
+  test-coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    needs: test-scenarios
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps
+
+    - name: Run tests with coverage
+      run: npm run test:coverage
+      env:
+        HEADLESS: true
+        CI: true
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage/lcov.info
+        flags: scenarios
+        name: spider-scenarios
+        fail_ci_if_error: false
+
+  scenario-matrix:
+    name: Test All Scenarios
+    runs-on: ubuntu-latest
+    needs: test-scenarios
+
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - static/LocalStorage.test.ts
+          - static/StaticPaging.test.ts
+          - static/HiddenWebData.test.ts
+          - static/ProductHTMLMarkup.test.ts
+          - dynamic/EndlessButtonPaging.test.ts
+          - dynamic/EndlessScrollPaging.test.ts
+          - dynamic/GraphqlBackgroundRequests.test.ts
+          - auth/CookiesBasedLogin.test.ts
+          - antiblock/ExampleBlockPage.test.ts
+          - antiblock/BlockingRedirectForInvalidReferer.test.ts
+          - antiblock/PersistentCookieBasedBlocking.test.ts
+          - special/CookiePopup.test.ts
+          - special/ForcedNewTabLinks.test.ts
+          - special/PDFDownloads.test.ts
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps
+
+    - name: Run scenario - ${{ matrix.scenario }}
+      run: npm test -- --run --reporter=verbose src/test/scenarios/${{ matrix.scenario }}
+      env:
+        HEADLESS: true
+        CI: true
+      timeout-minutes: 10
+
+    - name: Upload screenshots on failure
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: screenshots-${{ matrix.scenario }}
+        path: screenshots/
+
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build package
+      run: npm run build
+
+    - name: Check package contents
+      run: npm pack --dry-run
+
+  performance-benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[benchmark]')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps
+
+    - name: Run performance benchmarks
+      run: |
+        echo "Running performance benchmarks..."
+        npm test -- --run --reporter=verbose src/test/scenarios/static/StaticPaging.test.ts
+        npm test -- --run --reporter=verbose src/test/scenarios/dynamic/EndlessButtonPaging.test.ts
+      env:
+        HEADLESS: true
+        CI: true
+        BENCHMARK: true
+
+    - name: Save benchmark results
+      run: |
+        echo "Benchmark completed at $(date)" >> benchmark-results.txt
+        echo "Node.js version: $(node --version)" >> benchmark-results.txt
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark-results.txt

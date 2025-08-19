@@ -218,22 +218,27 @@ export const makeSessionStore = Effect.gen(function* () {
 
     isSessionValid: () =>
       Effect.gen(function* () {
-        const session = yield* Effect.gen(function* () {
+        const sessionOption = yield* Effect.gen(function* () {
           const sessionId = yield* Ref.get(currentSessionId);
-          if (Option.isNone(sessionId)) return null;
+          
+          if (Option.isNone(sessionId)) {
+            return Option.none<Session>();
+          }
 
           const sessionsMap = yield* Ref.get(sessions);
-          return sessionsMap.get(sessionId.value) || null;
+          return Option.fromNullable(sessionsMap.get(sessionId.value));
         });
 
-        if (!session) return false;
-
-        // Check expiration
-        if (session.expiresAt && session.expiresAt < new Date()) {
-          return false;
-        }
-
-        return true;
+        return Option.match(sessionOption, {
+          onNone: () => false,
+          onSome: (session) => {
+            // Check expiration
+            if (session.expiresAt && session.expiresAt < new Date()) {
+              return false;
+            }
+            return true;
+          }
+        });
       }),
 
     updateSessionData: (data: Record<string, any>) =>
@@ -283,11 +288,15 @@ export const makeSessionStore = Effect.gen(function* () {
 
     importSession: (data: string) =>
       Effect.gen(function* () {
-        try {
-          const parsed = JSON.parse(data);
+        // Parse JSON data with proper error handling
+        const parsed = yield* Effect.try({
+          try: () => JSON.parse(data),
+          catch: (error) => new Error(`Invalid session JSON: ${error}`)
+        });
 
-          // Reconstruct session
-          const session: Session = {
+        // Reconstruct session with safe date parsing
+        const session = yield* Effect.try({
+          try: () => ({
             ...parsed,
             tokens: new Map(parsed.tokens || []),
             createdAt: new Date(parsed.createdAt),
@@ -295,21 +304,18 @@ export const makeSessionStore = Effect.gen(function* () {
             expiresAt: parsed.expiresAt
               ? new Date(parsed.expiresAt)
               : undefined,
-          };
+          } as Session),
+          catch: (error) => new Error(`Failed to reconstruct session: ${error}`)
+        });
 
-          // Store session
-          const sessionsMap = yield* Ref.get(sessions);
-          sessionsMap.set(session.id, session);
-          yield* Ref.set(sessions, sessionsMap);
+        // Store session
+        const sessionsMap = yield* Ref.get(sessions);
+        sessionsMap.set(session.id, session);
+        yield* Ref.set(sessions, sessionsMap);
 
-          // Load session
-          yield* Effect.gen(function* () {
-            yield* cookieManager.deserialize(session.cookies);
-            yield* Ref.set(currentSessionId, Option.some(session.id));
-          });
-        } catch (error) {
-          yield* Effect.fail(new Error(`Invalid session data: ${error}`));
-        }
+        // Load session
+        yield* cookieManager.deserialize(session.cookies);
+        yield* Ref.set(currentSessionId, Option.some(session.id));
       }),
   };
 });

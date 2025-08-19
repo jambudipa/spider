@@ -3,8 +3,10 @@
  * Provides high-level browser automation capabilities
  */
 
+import { Effect } from 'effect';
 import { Page, Request, Response, Route } from 'playwright';
 import { BrowserManager } from './BrowserManager';
+import { AdapterNotInitialisedError } from '../lib/errors';
 
 export type RequestHandler = (request: Request) => void;
 export type ResponseHandler = (response: Response) => void;
@@ -35,27 +37,50 @@ export class PlaywrightAdapter {
   /**
    * Initialise the adapter with a new page
    */
-  async initialise(): Promise<Page> {
-    this.page = await this.browserManager.createPage(this.contextId);
-    
-    // Setup request/response interception
-    this.page.on('request', request => {
-      this.requestHandlers.forEach(handler => handler(request));
-    });
+  initialise(): Effect.Effect<Page, AdapterNotInitialisedError, never> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* Effect.tryPromise<Page, AdapterNotInitialisedError>({
+        try: () => self.browserManager.createPage(self.contextId),
+        catch: (error) => AdapterNotInitialisedError.create(
+          self.contextId,
+          `Failed to create page: ${error}`
+        )
+      });
+      
+      self.page = page;
+      
+      // Setup request/response interception
+      page.on('request', (request) => {
+        self.requestHandlers.forEach(handler => handler(request));
+      });
 
-    this.page.on('response', response => {
-      this.responseHandlers.forEach(handler => handler(response));
-    });
+      page.on('response', (response) => {
+        self.responseHandlers.forEach(handler => handler(response));
+      });
 
-    return this.page;
+      return page;
+    });
   }
 
   /**
-   * Get the current page instance
+   * Get the current page instance (Effect)
+   */
+  getPageEffect(): Effect.Effect<Page, AdapterNotInitialisedError, never> {
+    if (!this.page) {
+      return Effect.fail(
+        AdapterNotInitialisedError.create(this.contextId, 'getPage')
+      );
+    }
+    return Effect.succeed(this.page);
+  }
+  
+  /**
+   * Get the current page instance (direct)
    */
   getPage(): Page {
     if (!this.page) {
-      throw new Error('PlaywrightAdapter not initialised. Call initialise() first.');
+      throw new Error('Adapter not initialised');
     }
     return this.page;
   }
@@ -64,8 +89,10 @@ export class PlaywrightAdapter {
    * Navigate to a URL
    */
   async goto(url: string, options?: WaitOptions): Promise<Response | null> {
-    const page = this.getPage();
-    return await page.goto(url, {
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    return await this.page.goto(url, {
       waitUntil: options?.state ?? 'networkidle',
       timeout: options?.timeout
     });
@@ -75,8 +102,10 @@ export class PlaywrightAdapter {
    * Wait for dynamic content to load
    */
   async waitForDynamicContent(selector: string, options?: WaitOptions): Promise<void> {
-    const page = this.getPage();
-    await page.waitForSelector(selector, {
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.waitForSelector(selector, {
       state: 'visible',
       timeout: options?.timeout ?? 10000
     });
@@ -86,30 +115,32 @@ export class PlaywrightAdapter {
    * Scroll to bottom progressively
    */
   async scrollToBottom(options?: ScrollOptions): Promise<void> {
-    const page = this.getPage();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
     const delay = options?.delay ?? 500;
     const maxScrolls = options?.maxScrolls ?? 50;
     const scrollDistance = options?.scrollDistance ?? 500;
 
     let previousHeight = 0;
-    let currentHeight = await page.evaluate(() => document.body.scrollHeight);
+    let currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
     let scrollCount = 0;
 
     while (previousHeight !== currentHeight && scrollCount < maxScrolls) {
       previousHeight = currentHeight;
       
-      await page.evaluate((distance) => {
+      await this.page.evaluate((distance) => {
         window.scrollBy(0, distance);
       }, scrollDistance);
 
-      await page.waitForTimeout(delay);
+      await this.page.waitForTimeout(delay);
       
-      currentHeight = await page.evaluate(() => document.body.scrollHeight);
+      currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
       scrollCount++;
     }
 
     // Final scroll to absolute bottom
-    await page.evaluate(() => {
+    await this.page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight);
     });
   }
@@ -118,23 +149,25 @@ export class PlaywrightAdapter {
    * Click an element and wait for navigation or content
    */
   async clickAndWait(selector: string, waitFor?: string | WaitOptions): Promise<void> {
-    const page = this.getPage();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
     
     // Use force click to bypass event delegation issues
     const clickOptions = { force: true };
     
     if (typeof waitFor === 'string') {
       // Wait for specific selector after click
-      await page.click(selector, clickOptions);
-      await page.waitForSelector(waitFor, { state: 'visible' });
+      await this.page.click(selector, clickOptions);
+      await this.page.waitForSelector(waitFor, { state: 'visible' });
     } else {
       // Click and wait for network/DOM changes
-      await page.click(selector, clickOptions);
-      await page.waitForTimeout(1000); // Allow time for dynamic content
+      await this.page.click(selector, clickOptions);
+      await this.page.waitForTimeout(1000); // Allow time for dynamic content
       
       // Wait for network idle if specified
       if (waitFor?.state === 'networkidle') {
-        await page.waitForLoadState('networkidle', {
+        await this.page.waitForLoadState('networkidle', {
           timeout: waitFor?.timeout ?? 5000
         });
       }
@@ -159,64 +192,80 @@ export class PlaywrightAdapter {
    * Route specific URLs
    */
   async route(pattern: string | RegExp, handler: (route: Route) => void): Promise<void> {
-    const page = this.getPage();
-    await page.route(pattern, handler);
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.route(pattern, handler);
   }
 
   /**
    * Execute JavaScript in page context
    */
   async evaluate<T>(fn: () => T): Promise<T> {
-    const page = this.getPage();
-    return await page.evaluate(fn);
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    return await this.page.evaluate(fn);
   }
 
   /**
    * Take a screenshot
    */
   async screenshot(path: string): Promise<void> {
-    const page = this.getPage();
-    await page.screenshot({ path, fullPage: true });
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.screenshot({ path, fullPage: true });
   }
 
   /**
    * Get page content
    */
   async content(): Promise<string> {
-    const page = this.getPage();
-    return await page.content();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    return await this.page.content();
   }
 
   /**
    * Fill a form field
    */
   async fill(selector: string, value: string): Promise<void> {
-    const page = this.getPage();
-    await page.fill(selector, value);
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.fill(selector, value);
   }
 
   /**
    * Select an option
    */
   async select(selector: string, value: string): Promise<void> {
-    const page = this.getPage();
-    await page.selectOption(selector, value);
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.selectOption(selector, value);
   }
 
   /**
    * Check if element exists
    */
   async exists(selector: string): Promise<boolean> {
-    const page = this.getPage();
-    return await page.locator(selector).count() > 0;
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    return await this.page.locator(selector).count() > 0;
   }
 
   /**
    * Wait for network idle
    */
   async waitForNetworkIdle(options?: WaitOptions): Promise<void> {
-    const page = this.getPage();
-    await page.waitForLoadState('networkidle', {
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.waitForLoadState('networkidle', {
       timeout: options?.timeout
     });
   }
@@ -225,8 +274,10 @@ export class PlaywrightAdapter {
    * Handle new tabs/windows
    */
   async handleNewTab(callback: (newPage: Page) => Promise<void>): Promise<void> {
-    const page = this.getPage();
-    const context = page.context();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    const context = this.page.context();
 
     const newPagePromise = context.waitForEvent('page');
     const newPage = await newPagePromise;
@@ -239,24 +290,30 @@ export class PlaywrightAdapter {
    * Get cookies
    */
   async getCookies(): Promise<any[]> {
-    const page = this.getPage();
-    return await page.context().cookies();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    return await this.page.context().cookies();
   }
 
   /**
    * Set cookies
    */
   async setCookies(cookies: any[]): Promise<void> {
-    const page = this.getPage();
-    await page.context().addCookies(cookies);
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.context().addCookies(cookies);
   }
 
   /**
    * Clear cookies
    */
   async clearCookies(): Promise<void> {
-    const page = this.getPage();
-    await page.context().clearCookies();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
+    await this.page.context().clearCookies();
   }
 
   /**
@@ -267,20 +324,22 @@ export class PlaywrightAdapter {
     filename: string;
     mimeType: string;
   }> {
-    const page = this.getPage();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
     
     // Check if page is closed before proceeding
-    if (page.isClosed()) {
+    if (this.page.isClosed()) {
       throw new Error('Page is already closed');
     }
     
     try {
       // Start waiting for download before navigating
-      const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+      const downloadPromise = this.page.waitForEvent('download', { timeout: 15000 });
       
       // If URL provided, navigate to it, otherwise expect it to be triggered
       if (url.startsWith('http')) {
-        await page.goto(url, { timeout: 10000 });
+        await this.page.goto(url, { timeout: 10000 });
       }
       
       const download = await downloadPromise;
@@ -325,19 +384,21 @@ export class PlaywrightAdapter {
     filename: string;
     mimeType: string;
   }> {
-    const page = this.getPage();
+    if (!this.page) {
+      throw new Error('Adapter not initialised');
+    }
     
     // Check if page is closed before proceeding
-    if (page.isClosed()) {
+    if (this.page.isClosed()) {
       throw new Error('Page is already closed');
     }
     
     try {
       // Start waiting for download before clicking
-      const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+      const downloadPromise = this.page.waitForEvent('download', { timeout: 15000 });
       
       // Click the download trigger
-      await page.click(selector);
+      await this.page.click(selector);
       
       const download = await downloadPromise;
       

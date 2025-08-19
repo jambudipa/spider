@@ -1,0 +1,97 @@
+name: Test Failure Report
+description: Report a failing scenario test
+title: "[TEST FAILURE] Scenario test failing: "
+labels: ["bug", "test-failure", "scenario"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a test failure! This helps us maintain the quality of Spider's web scraping capabilities.
+
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Failing Scenario
+      description: Which scenario test is failing?
+      options:
+        - Static Paging
+        - Endless Scroll
+        - Button Loading  
+        - GraphQL Requests
+        - Hidden Data
+        - Product Markup
+        - Local Storage
+        - Secret API Tokens
+        - CSRF Protection
+        - Cookie Authentication
+        - PDF Downloads
+        - Cookie Popups
+        - New Tab Links
+        - Block Pages
+        - Invalid Referer Blocking
+        - Persistent Cookie Blocking
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: input
+    id: workflow_url
+    attributes:
+      label: GitHub Actions URL
+      description: Link to the failing workflow run
+      placeholder: https://github.com/jambudipa/spider/actions/runs/...
+    validations:
+      required: false
+
+  - type: textarea
+    id: error_details
+    attributes:
+      label: Error Details
+      description: Paste the error message or failure details
+      placeholder: |
+        Error: Timeout waiting for selector...
+        or
+        AssertionError: Expected 5 but received 0
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Failure Frequency
+      description: How often does this test fail?
+      options:
+        - Always fails
+        - Intermittent (sometimes fails)
+        - First time seeing this failure
+        - Fails only on specific Node.js versions
+        - Fails only in CI (works locally)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: environment
+    attributes:
+      label: Environment
+      description: Where is the test failing?
+      options:
+        - label: GitHub Actions (CI)
+        - label: Local development
+        - label: Node.js 18.x
+        - label: Node.js 20.x
+        - label: Headless mode
+        - label: Headed mode
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Any additional information that might help debug the issue
+      placeholder: |
+        - Changes to the target website
+        - Network connectivity issues
+        - Specific timing or race conditions
+        - Related to recent code changes
+    validations:
+      required: false

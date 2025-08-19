@@ -11,7 +11,7 @@ class ForcedNewTabLinksTest extends DynamicScenarioBase {
     await super.validateScenario();
     
     // Verify we're on the reviews page
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('/reviews');
   }
 }
@@ -36,7 +36,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       await test.waitForContent('body');
       
       // Look for the specific review-policy link found in manual validation
-      const reviewPolicyLink = await test.page.locator('a[target="_blank"][href*="review-policy"]');
+      const reviewPolicyLink = await test.getPage().locator('a[target="_blank"][href*="review-policy"]');
       const linkExists = await reviewPolicyLink.count() > 0;
       
       console.log('Review policy link exists:', linkExists);
@@ -66,7 +66,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
 
   it('should handle new tab navigation', async () => {
     try {
-      const reviewPolicyLink = await test.page.locator('a[target="_blank"][href*="review-policy"]');
+      const reviewPolicyLink = await test.getPage().locator('a[target="_blank"][href*="review-policy"]');
       const linkExists = await reviewPolicyLink.count() > 0;
       
       if (!linkExists) {
@@ -76,7 +76,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       }
       
       // Listen for new page/tab creation
-      const newPagePromise = test.context.adapter.getPage().context().waitForEvent('page');
+      const newPagePromise = test.getContext().adapter.getPage().context().waitForEvent('page');
       
       // Click the link
       await reviewPolicyLink.first().click();
@@ -102,7 +102,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
 
   it('should extract content from new tabs', async () => {
     try {
-      const reviewPolicyLink = await test.page.locator('a[target="_blank"][href*="review-policy"]');
+      const reviewPolicyLink = await test.getPage().locator('a[target="_blank"][href*="review-policy"]');
       const linkExists = await reviewPolicyLink.count() > 0;
       
       if (!linkExists) {
@@ -112,7 +112,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       }
       
       // Listen for new page/tab creation
-      const newPagePromise = test.context.adapter.getPage().context().waitForEvent('page');
+      const newPagePromise = test.getContext().adapter.getPage().context().waitForEvent('page');
       
       // Click the link
       await reviewPolicyLink.first().click();
@@ -150,7 +150,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
   it('should manage multiple tabs', async () => {
     try {
       // Find all target="_blank" links on the page
-      const newTabLinks = await test.page.locator('a[target="_blank"]');
+      const newTabLinks = await test.getPage().locator('a[target="_blank"]');
       const linkCount = await newTabLinks.count();
       
       console.log(`Found ${linkCount} target="_blank" links`);
@@ -167,7 +167,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       // Open multiple tabs
       for (let i = 0; i < maxTabs; i++) {
         try {
-          const newPagePromise = test.context.adapter.getPage().context().waitForEvent('page');
+          const newPagePromise = test.getContext().adapter.getPage().context().waitForEvent('page');
           
           // Click the link
           await newTabLinks.nth(i).click({ timeout: 5000 });
@@ -183,7 +183,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
           });
           
         } catch (error) {
-          console.log(`Failed to open tab ${i}:`, error.message);
+          console.log(`Failed to open tab ${i}:`, (error as Error).message);
           // Continue with other tabs
         }
       }

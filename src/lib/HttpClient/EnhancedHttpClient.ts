@@ -3,8 +3,8 @@
  * Provides advanced HTTP capabilities including POST requests, cookie management, and session handling
  */
 
-import { Context, Effect, Layer } from 'effect';
-import { NetworkError, ResponseError } from '../errors.js';
+import { Context, Effect, Layer, Option, Schedule, Duration } from 'effect';
+import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 import { CookieManager } from './CookieManager.js';
 
@@ -15,6 +15,8 @@ export interface HttpRequestOptions {
   timeout?: number;
   followRedirects?: boolean;
   credentials?: 'omit' | 'same-origin' | 'include';
+  retries?: number;
+  retryDelay?: number;
 }
 
 export interface HttpResponse {
@@ -33,7 +35,7 @@ export interface EnhancedHttpClientService {
   get: (
     url: string,
     options?: HttpRequestOptions
-  ) => Effect.Effect<HttpResponse, NetworkError | ResponseError, never>;
+  ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 
   /**
    * Make a POST request
@@ -42,7 +44,7 @@ export interface EnhancedHttpClientService {
     url: string,
     data?: any,
     options?: HttpRequestOptions
-  ) => Effect.Effect<HttpResponse, NetworkError | ResponseError, never>;
+  ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 
   /**
    * Make a request with any method
@@ -50,7 +52,7 @@ export interface EnhancedHttpClientService {
   request: (
     url: string,
     options?: HttpRequestOptions
-  ) => Effect.Effect<HttpResponse, NetworkError | ResponseError, never>;
+  ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 
   /**
    * Submit a form
@@ -59,7 +61,7 @@ export interface EnhancedHttpClientService {
     url: string,
     formData: Record<string, string>,
     options?: HttpRequestOptions
-  ) => Effect.Effect<HttpResponse, NetworkError | ResponseError, never>;
+  ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 }
 
 export class EnhancedHttpClient extends Context.Tag('EnhancedHttpClient')<
@@ -74,8 +76,8 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
   const logger = yield* SpiderLogger;
   const cookieManager = yield* CookieManager;
 
-  const makeRequest = (url: string, options: HttpRequestOptions = {}) =>
-    Effect.gen(function* () {
+  const makeRequest = (url: string, options: HttpRequestOptions = {}): Effect.Effect<HttpResponse, NetworkError | TimeoutError | ParseError> =>
+    Effect.gen(function* (_) {
       const startMs = Date.now();
       const domain = new URL(url).hostname;
 
@@ -99,13 +101,19 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
         !headers['Content-Type']
       ) {
         if (typeof options.body === 'string') {
-          // Try to detect if it's JSON
-          try {
-            JSON.parse(options.body);
-            headers['Content-Type'] = 'application/json';
-          } catch {
-            headers['Content-Type'] = 'application/x-www-form-urlencoded';
-          }
+          // Try to detect if it's JSON using Effect.try
+          const isJson = yield* Effect.succeed((() => {
+            try {
+              JSON.parse(options.body as string);
+              return true;
+            } catch {
+              return false;
+            }
+          })());
+          
+          headers['Content-Type'] = isJson 
+            ? 'application/json' 
+            : 'application/x-www-form-urlencoded';
         } else if (options.body instanceof FormData) {
           // Let fetch set the boundary for multipart/form-data
           // Don't set Content-Type manually
@@ -149,14 +157,40 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
         },
         catch: (error) => {
           clearTimeout(timeoutId);
-          return NetworkError.fromCause(url, error);
+          // Check if it's a timeout
+          if (error instanceof Error && error.name === 'AbortError') {
+            return new TimeoutError({
+              operation: `HTTP ${options.method || 'GET'}`,
+              timeoutMs: timeoutMs,
+              url: url
+            });
+          }
+          return new NetworkError({
+            url,
+            method: options.method || 'GET',
+            cause: error
+          });
         },
       });
+
+      // Check for HTTP errors
+      if (!response.ok) {
+        return yield* Effect.fail(new NetworkError({
+          url: response.url,
+          statusCode: response.status,
+          method: options.method || 'GET',
+          cause: `HTTP ${response.status}: ${response.statusText}`
+        }));
+      }
 
       // Parse response body
       const body = yield* Effect.tryPromise({
         try: () => response.text(),
-        catch: (error) => ResponseError.fromCause(url, error),
+        catch: (error) => new ParseError({
+          input: url,
+          expected: 'text',
+          cause: error
+        }),
       });
 
       // Extract and store cookies from response
@@ -168,7 +202,7 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
         if (cookieString) {
           yield* cookieManager
             .setCookie(cookieString, url)
-            .pipe(Effect.catchAll(() => Effect.void));
+            .pipe(Effect.catchAll(() => Effect.succeed(undefined)));
         }
       }
 
@@ -178,19 +212,62 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
         responseHeaders[key] = value;
       });
 
-      return {
+      const result: HttpResponse = {
         url: response.url,
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,
         body,
-        cookies: setCookieHeaders,
+        cookies: setCookieHeaders.length > 0 ? setCookieHeaders : undefined,
       };
+      return result;
     });
+
+  // Wrap request with retry logic
+  const makeRequestWithRetry = (url: string, options: HttpRequestOptions = {}) => {
+    const retries = options.retries ?? 3;
+    const retryDelay = options.retryDelay ?? 1000;
+
+    // Create retry schedule with exponential backoff
+    const retrySchedule = Schedule.exponential(Duration.millis(retryDelay), 2).pipe(
+      Schedule.compose(Schedule.recurs(retries)),
+      Schedule.tapInput((error) =>
+        Effect.gen(function* () {
+          yield* logger.logEdgeCase(
+            new URL(url).hostname,
+            'http_request_retry',
+            {
+              url,
+              method: options.method || 'GET',
+              error: error instanceof Error ? error.message : String(error),
+              attempt: retries
+            }
+          );
+        })
+      )
+    );
+
+    // Only retry on network errors, not on 4xx client errors
+    return makeRequest(url, options).pipe(
+      Effect.retry({
+        schedule: retrySchedule,
+        while: (error) => {
+          if (error instanceof NetworkError) {
+            // Don't retry 4xx errors (client errors)
+            if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+              return false;
+            }
+            return true;
+          }
+          return error instanceof TimeoutError;
+        }
+      })
+    );
+  };
 
   return {
     get: (url: string, options?: HttpRequestOptions) =>
-      makeRequest(url, { ...options, method: 'GET' }),
+      makeRequestWithRetry(url, { ...options, method: 'GET' }),
 
     post: (url: string, data?: any, options?: HttpRequestOptions) =>
       Effect.gen(function* () {
@@ -209,10 +286,10 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
           }
         }
 
-        return yield* makeRequest(url, { ...options, method: 'POST', body });
+        return yield* makeRequestWithRetry(url, { ...options, method: 'POST', body });
       }),
 
-    request: makeRequest,
+    request: makeRequestWithRetry,
 
     submitForm: (
       url: string,
@@ -225,7 +302,7 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
           params.append(key, value);
         }
 
-        return yield* makeRequest(url, {
+        return yield* makeRequestWithRetry(url, {
           ...options,
           method: 'POST',
           body: params,

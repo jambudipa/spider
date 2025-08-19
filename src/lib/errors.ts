@@ -158,6 +158,102 @@ export class PersistenceError extends Data.TaggedError('PersistenceError')<{
   }
 }
 
+/**
+ * Content type validation errors
+ */
+export class ContentTypeError extends Data.TaggedError('ContentTypeError')<{
+  readonly url: string;
+  readonly contentType: string;
+  readonly expectedTypes: readonly string[];
+  readonly message: string;
+}> {
+  static create(
+    url: string,
+    contentType: string,
+    expectedTypes: readonly string[]
+  ): ContentTypeError {
+    return new ContentTypeError({
+      url,
+      contentType,
+      expectedTypes,
+      message: `Invalid content type '${contentType}' for ${url}. Expected one of: ${expectedTypes.join(', ')}`,
+    });
+  }
+}
+
+/**
+ * Request abort errors
+ */
+export class RequestAbortError extends Data.TaggedError('RequestAbortError')<{
+  readonly url: string;
+  readonly duration: number;
+  readonly reason: 'timeout' | 'cancelled';
+  readonly message: string;
+}> {
+  static timeout(url: string, duration: number): RequestAbortError {
+    return new RequestAbortError({
+      url,
+      duration,
+      reason: 'timeout',
+      message: `Request to ${url} aborted after ${duration}ms due to timeout`,
+    });
+  }
+
+  static cancelled(url: string, duration: number): RequestAbortError {
+    return new RequestAbortError({
+      url,
+      duration,
+      reason: 'cancelled',
+      message: `Request to ${url} cancelled after ${duration}ms`,
+    });
+  }
+}
+
+/**
+ * Adapter initialisation errors
+ */
+export class AdapterNotInitialisedError extends Data.TaggedError('AdapterNotInitialisedError')<{
+  readonly adapterId: string;
+  readonly operation: string;
+  readonly message: string;
+}> {
+  static create(adapterId: string, operation: string): AdapterNotInitialisedError {
+    return new AdapterNotInitialisedError({
+      adapterId,
+      operation,
+      message: `Adapter '${adapterId}' not initialised. Cannot perform operation: ${operation}`,
+    });
+  }
+}
+
+/**
+ * Browser cleanup errors
+ */
+export class BrowserCleanupError extends Data.TaggedError('BrowserCleanupError')<{
+  readonly resourceType: 'context' | 'browser';
+  readonly resourceId: string;
+  readonly cause: unknown;
+  readonly message: string;
+}> {
+  static context(id: string, cause: unknown): BrowserCleanupError {
+    return new BrowserCleanupError({
+      resourceType: 'context',
+      resourceId: id,
+      cause,
+      message: `Failed to close browser context '${id}': ${cause}`,
+    });
+  }
+
+  static browser(id: string, cause: unknown): BrowserCleanupError {
+    return new BrowserCleanupError({
+      resourceType: 'browser',
+      resourceId: id,
+      cause,
+      message: `Failed to close browser '${id}': ${cause}`,
+    });
+  }
+}
+
 // Re-export all error types
 export type SpiderError =
   | NetworkError
@@ -166,4 +262,8 @@ export type SpiderError =
   | ConfigurationError
   | MiddlewareError
   | FileSystemError
-  | PersistenceError;
+  | PersistenceError
+  | ContentTypeError
+  | RequestAbortError
+  | AdapterNotInitialisedError
+  | BrowserCleanupError;

@@ -26,6 +26,8 @@ export class TestHelper {
    * Create a test context with browser setup
    */
   static async createTestContext(scenarioName: string): Promise<TestContext> {
+    const { Effect } = await import('effect');
+    
     const browserManager = new BrowserManager({
       headless: process.env.CI === 'true' || process.env.HEADLESS === 'true',
       timeout: 30000,
@@ -34,7 +36,9 @@ export class TestHelper {
     
     await browserManager.initialise();
     const adapter = new PlaywrightAdapter(browserManager, scenarioName);
-    await adapter.initialise();
+    
+    // Handle Effect-based initialisation
+    const initResult = await Effect.runPromise(adapter.initialise());
     
     return {
       browserManager,
@@ -262,10 +266,10 @@ export class TestHelper {
     selector: string, 
     property: string
   ): Promise<string> {
-    return await page.evaluate((sel: string, prop: string) => {
-      const element = document.querySelector(sel);
+    return await page.evaluate((args: { sel: string; prop: string }) => {
+      const element = document.querySelector(args.sel);
       if (!element) return '';
-      return window.getComputedStyle(element).getPropertyValue(prop);
-    }, selector, property);
+      return window.getComputedStyle(element).getPropertyValue(args.prop);
+    }, { sel: selector, prop: property });
   }
 }

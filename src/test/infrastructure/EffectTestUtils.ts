@@ -1,9 +1,9 @@
 /**
- * Effect Test Utilities - Fixed Version
- * Helper functions for testing with Effect-TS
+ * Effect Test Utilities - Enhanced Version
+ * Comprehensive helper functions and test infrastructure for Effect-based testing
  */
 
-import { Duration, Effect, Exit, Layer, Option, pipe } from 'effect';
+import { Duration, Effect, Exit, Layer, Option, pipe, TestClock, Clock, Ref, Random } from 'effect';
 
 /**
  * Run an Effect and return its result as a Promise
@@ -178,3 +178,186 @@ export const expectEffect = <A>(
     }
   },
 });
+
+/**
+ * Run Effect synchronously with test services
+ */
+export const runSyncWithTestServices = <A, E>(
+  effect: Effect.Effect<A, E, never>,
+  options: {
+    seed?: number;
+    currentTime?: number;
+  } = {}
+): A => {
+  const testEffect = effect;
+  
+  if (options.currentTime) {
+    Effect.runSync(TestClock.setTime(options.currentTime));
+  }
+  
+  return Effect.runSync(testEffect);
+};
+
+/**
+ * Create a mock service layer
+ */
+export const createMockServiceLayer = <T extends Record<string, any>>(
+  tag: any,
+  implementation: T
+): Layer.Layer<any, never, never> => 
+  Layer.succeed(tag, implementation);
+
+/**
+ * Test layer for common services
+ */
+export const commonTestLayers = {
+  clock: TestClock.defaultTestClock,
+  random: Layer.empty,
+  deterministic: TestClock.defaultTestClock,
+};
+
+/**
+ * Helper to test Effect retries
+ */
+export const testWithRetries = <A, E>(
+  effect: Effect.Effect<A, E, never>,
+  maxAttempts: number = 3
+): Effect.Effect<{
+  result: Exit.Exit<A, E>;
+  attempts: number;
+}, never, never> => 
+  Effect.gen(function* () {
+    const attemptsRef = yield* Ref.make(0);
+    
+    const trackedEffect = pipe(
+      effect,
+      Effect.tap(() => Ref.update(attemptsRef, n => n + 1)),
+      Effect.retry({
+        times: maxAttempts - 1
+      })
+    );
+    
+    const result = yield* Effect.exit(trackedEffect);
+    const attempts = yield* Ref.get(attemptsRef);
+    
+    return { result, attempts };
+  });
+
+/**
+ * Test helper for timeout scenarios
+ */
+export const testTimeout = <A, E>(
+  effect: Effect.Effect<A, E, never>,
+  duration: Duration.Duration
+): Effect.Effect<Option.Option<A>, E, never> =>
+  Effect.timeoutOption(effect, duration);
+
+/**
+ * Helper for testing concurrent operations
+ */
+export const testConcurrent = <A, E>(
+  effects: Effect.Effect<A, E, never>[],
+  options: {
+    concurrency?: number;
+  } = {}
+): Effect.Effect<A[], E, never> =>
+  Effect.all(effects, { concurrency: options.concurrency });
+
+/**
+ * Create a test environment with all common test services
+ */
+export const createTestEnvironment = () => {
+  const cleanup: Array<() => void> = [];
+  
+  return {
+    provide: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      layer: Layer.Layer<R, never, never>
+    ) => pipe(effect, Effect.provide(layer)),
+    
+    cleanup: () => {
+      cleanup.forEach(fn => fn());
+    },
+    
+    addCleanup: (fn: () => void) => {
+      cleanup.push(fn);
+    }
+  };
+};
+
+/**
+ * Test data generators
+ */
+export const testData = {
+  randomString: (length: number = 10): Effect.Effect<string, never, never> =>
+    Effect.gen(function* () {
+      const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let result = '';
+      for (let i = 0; i < length; i++) {
+        const index = yield* Random.nextIntBetween(0, chars.length);
+        result += chars[index];
+      }
+      return result;
+    }),
+  
+  randomNumber: (min: number, max: number): Effect.Effect<number, never, never> =>
+    Random.nextIntBetween(min, max),
+  
+  randomBoolean: (): Effect.Effect<boolean, never, never> =>
+    Random.nextBoolean
+};
+
+/**
+ * Matcher for Effect errors
+ */
+export const errorMatchers = {
+  isTaggedError: (error: unknown, tag: string): boolean => {
+    return typeof error === 'object' && 
+           error !== null && 
+           '_tag' in error && 
+           error._tag === tag;
+  },
+  
+  hasMessage: (error: unknown, message: string | RegExp): boolean => {
+    if (typeof error === 'object' && error !== null && 'message' in error) {
+      const errorMessage = String(error.message);
+      return typeof message === 'string' 
+        ? errorMessage.includes(message)
+        : message.test(errorMessage);
+    }
+    return false;
+  },
+  
+  hasProperty: (error: unknown, property: string, value?: any): boolean => {
+    if (typeof error === 'object' && error !== null && property in error) {
+      if (value === undefined) return true;
+      return (error as any)[property] === value;
+    }
+    return false;
+  }
+};
+
+/**
+ * Test fixtures factory
+ */
+export const createFixture = <T>(
+  setup: () => Effect.Effect<T, never, never>,
+  teardown?: (fixture: T) => Effect.Effect<void, never, never>
+) => {
+  let fixture: T | null = null;
+  
+  return {
+    use: async <A>(
+      test: (fixture: T) => Effect.Effect<A, any, never>
+    ): Promise<A> => {
+      try {
+        fixture = await Effect.runPromise(setup());
+        return await Effect.runPromise(test(fixture));
+      } finally {
+        if (fixture && teardown) {
+          await Effect.runPromise(teardown(fixture));
+        }
+      }
+    }
+  };
+};

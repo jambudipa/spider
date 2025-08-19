@@ -8,7 +8,7 @@ import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 class GraphQLTest extends DynamicScenarioBase {
-  private interceptedRequests: Array<{
+  protected interceptedRequests: Array<{
     url: string;
     method: string;
     postData: any;
@@ -16,7 +16,7 @@ class GraphQLTest extends DynamicScenarioBase {
     timestamp: number;
   }> = [];
   
-  private interceptedResponses: Array<{
+  protected interceptedResponses: Array<{
     url: string;
     status: number;
     body: any;
@@ -24,24 +24,32 @@ class GraphQLTest extends DynamicScenarioBase {
     timestamp: number;
   }> = [];
 
+  get getInterceptedRequests() {
+    return this.interceptedRequests;
+  }
+
+  get getInterceptedResponses() {
+    return this.interceptedResponses;
+  }
+
   async setup(): Promise<void> {
     await super.setup();
     
     // Set up request/response interception
-    this.page.on('request', request => {
+    this.getPage().on('request', request => {
       const url = request.url();
-      if (this.isGraphQLRequest(url, request.postData())) {
+      if (this.isGraphQLRequest(url, request.postData() ?? undefined)) {
         this.interceptedRequests.push({
           url,
           method: request.method(),
-          postData: this.parsePostData(request.postData()),
+          postData: this.parsePostData(request.postData() ?? undefined),
           headers: request.headers(),
           timestamp: Date.now()
         });
       }
     });
     
-    this.page.on('response', async response => {
+    this.getPage().on('response', async response => {
       const url = response.url();
       if (this.isGraphQLResponse(url, response.headers())) {
         try {
@@ -63,7 +71,7 @@ class GraphQLTest extends DynamicScenarioBase {
   private isGraphQLRequest(url: string, postData?: string): boolean {
     return url.includes('graphql') || 
            url.includes('/api/graph') ||
-           (postData && (postData.includes('query') || postData.includes('mutation')));
+           (!!postData && (postData.includes('query') || postData.includes('mutation')));
   }
   
   private isGraphQLResponse(url: string, headers: Record<string, string>): boolean {
@@ -93,7 +101,7 @@ class GraphQLTest extends DynamicScenarioBase {
     await super.validateScenario();
     
     // Verify we're on the reviews page
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('/reviews');
   }
 
@@ -144,21 +152,21 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       // Try to trigger dynamic loading to capture GraphQL requests
       try {
         // Look for load more buttons or other interactive elements
-        const loadMoreButton = await test.page.$('button:has-text("Load"), button:has-text("More")');
+        const loadMoreButton = await test.getPage().$('button:has-text("Load"), button:has-text("More")');
         if (loadMoreButton) {
           await loadMoreButton.click();
-          await test.page.waitForTimeout(3000);
+          await test.getPage().waitForTimeout(3000);
         }
       } catch {}
       
       // Also try scrolling to potentially trigger lazy loading
-      await test.page.evaluate(() => {
+      await test.getPage().evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight * 0.8);
       });
-      await test.page.waitForTimeout(2000);
+      await test.getPage().waitForTimeout(2000);
       
       // Check for API requests that might be GraphQL
-      const apiRequests = test.interceptedRequests.filter(req => 
+      const apiRequests = test.getInterceptedRequests.filter(req => 
         req.url.includes('/api') || 
         req.url.includes('graphql') ||
         req.postData && (
@@ -167,7 +175,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         )
       );
       
-      const apiResponses = test.interceptedResponses.filter(res =>
+      const apiResponses = test.getInterceptedResponses.filter(res =>
         res.url.includes('/api') ||
         res.url.includes('graphql') ||
         (res.body && typeof res.body === 'object' && (res.body.data || res.body.errors))
@@ -217,12 +225,12 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       const interactions = [
         // Try clicking load more buttons
         async () => {
-          const buttons = await test.page.$$('button');
+          const buttons = await test.getPage().$$('button');
           for (const button of buttons) {
             const text = await button.textContent();
             if (text && text.toLowerCase().includes('load')) {
               await button.click();
-              await test.page.waitForTimeout(1000);
+              await test.getPage().waitForTimeout(1000);
               break;
             }
           }
@@ -230,10 +238,10 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         
         // Try scrolling to trigger lazy loading
         async () => {
-          await test.page.evaluate(() => {
+          await test.getPage().evaluate(() => {
             window.scrollTo(0, document.body.scrollHeight);
           });
-          await test.page.waitForTimeout(1000);
+          await test.getPage().waitForTimeout(1000);
         }
       ];
       
@@ -245,7 +253,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Check if we captured any structured data responses
-      const structuredResponses = test.interceptedResponses.filter(res =>
+      const structuredResponses = test.getInterceptedResponses.filter(res =>
         res.body && 
         typeof res.body === 'object' &&
         res.status < 400
@@ -277,7 +285,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       const paginationRequests: any[] = [];
       
       // Monitor pagination-related requests
-      test.interceptedRequests.forEach(req => {
+      test.getInterceptedRequests.forEach(req => {
         if (req.postData && typeof req.postData === 'object') {
           const postDataStr = JSON.stringify(req.postData).toLowerCase();
           if (postDataStr.includes('page') || 
@@ -294,7 +302,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       const maxAttempts = 3;
       for (let i = 0; i < maxAttempts; i++) {
         // Look for pagination buttons
-        const paginationButtons = await test.page.$$eval(
+        const paginationButtons = await test.getPage().$$eval(
           'button, a, [role="button"]',
           elements => elements
             .map(el => ({
@@ -313,10 +321,10 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         if (paginationButtons.length > 0) {
           try {
             // Click the first pagination-like button
-            const button = await test.page.$('button:has-text("Load"), button:has-text("More"), button:has-text("Next")');
+            const button = await test.getPage().$('button:has-text("Load"), button:has-text("More"), button:has-text("Next")');
             if (button && await button.isVisible() && await button.isEnabled()) {
               await button.click();
-              await test.page.waitForTimeout(2000);
+              await test.getPage().waitForTimeout(2000);
             }
           } catch {}
         } else {
@@ -327,7 +335,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       // Check for pagination in URL parameters or API calls
       const hasPagination = 
         paginationRequests.length > 0 ||
-        test.interceptedRequests.some(req => 
+        test.getInterceptedRequests.some(req => 
           req.url.includes('page=') || 
           req.url.includes('offset=') ||
           req.url.includes('limit=')
@@ -338,7 +346,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Verify reviews increase with pagination
-      const finalReviews = await DataExtractor.extractReviews(test.page);
+      const finalReviews = await DataExtractor.extractReviews(test.getPage());
       expect(finalReviews.length).toBeGreaterThan(0);
       
     } catch (error) {
@@ -349,25 +357,25 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
   it('should extract nested GraphQL data', async () => {
     try {
       // Interact with page to generate API requests
-      await test.page.evaluate(() => {
+      await test.getPage().evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight * 0.5);
       });
-      await test.page.waitForTimeout(1000);
+      await test.getPage().waitForTimeout(1000);
       
       // Try to click elements that might trigger nested data loading
-      const clickableElements = await test.page.$$('button, [role="button"], a');
+      const clickableElements = await test.getPage().$$('button, [role="button"], a');
       for (let i = 0; i < Math.min(3, clickableElements.length); i++) {
         try {
           const element = clickableElements[i];
           if (await element.isVisible()) {
             await element.click();
-            await test.page.waitForTimeout(1000);
+            await test.getPage().waitForTimeout(1000);
           }
         } catch {}
       }
       
       // Analyze intercepted responses for nested structure
-      const nestedDataResponses = test.interceptedResponses.filter(res => {
+      const nestedDataResponses = test.getInterceptedResponses.filter(res => {
         if (!res.body || typeof res.body !== 'object') return false;
         
         const hasNestedStructure = test.hasNestedObjects(res.body);
@@ -388,7 +396,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Also check if the page itself contains nested review/testimonial data
-      const pageReviews = await DataExtractor.extractReviews(test.page);
+      const pageReviews = await DataExtractor.extractReviews(test.getPage());
       if (pageReviews.length > 0) {
         expect(pageReviews.length).toBeGreaterThan(0);
         
@@ -408,7 +416,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
   it('should handle GraphQL errors', async () => {
     try {
       // Monitor for error responses
-      const errorResponses = test.interceptedResponses.filter(res =>
+      const errorResponses = test.getInterceptedResponses.filter(res =>
         res.status >= 400 ||
         (res.body && 
          typeof res.body === 'object' && 
@@ -420,7 +428,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         // Try accessing non-existent endpoints
         async () => {
           try {
-            await test.page.goto(`${test.baseUrl}/api/reviews/99999`, { 
+            await test.getPage().goto(`${test.getBaseUrl()}/api/reviews/99999`, { 
               waitUntil: 'networkidle',
               timeout: 5000 
             });
@@ -430,7 +438,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         // Try invalid pagination
         async () => {
           try {
-            await test.page.goto(`${test.baseUrl}/reviews?page=-1`, {
+            await test.getPage().goto(`${test.getBaseUrl()}/reviews?page=-1`, {
               waitUntil: 'networkidle',
               timeout: 5000
             });
@@ -442,7 +450,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       for (const trigger of potentialErrorTriggers) {
         try {
           await trigger();
-          await test.page.waitForTimeout(1000);
+          await test.getPage().waitForTimeout(1000);
         } catch {}
       }
       
@@ -463,10 +471,10 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Verify page still functions after error scenarios
-      const finalReviews = await DataExtractor.extractReviews(test.page);
+      const finalReviews = await DataExtractor.extractReviews(test.getPage());
       expect(finalReviews.length).toBeGreaterThanOrEqual(0);
       
-      const pageContent = await test.page.content();
+      const pageContent = await test.getPage().content();
       expect(pageContent.length).toBeGreaterThan(1000);
       
     } catch (error) {
@@ -477,7 +485,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
   it('should support GraphQL mutations', async () => {
     try {
       // Look for mutation-like operations (POST requests to API endpoints)
-      const mutationRequests = test.interceptedRequests.filter(req =>
+      const mutationRequests = test.getInterceptedRequests.filter(req =>
         req.method === 'POST' &&
         (req.url.includes('/api') || req.url.includes('graphql')) &&
         req.postData &&
@@ -486,7 +494,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       );
       
       // Try to trigger mutation-like operations
-      const interactiveElements = await test.page.$$eval(
+      const interactiveElements = await test.getPage().$$eval(
         'button, input[type="submit"], [role="button"]',
         elements => elements
           .map(el => ({
@@ -507,7 +515,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       // If we have interactive elements that might trigger mutations
       if (interactiveElements.length > 0) {
         try {
-          const submitButton = await test.page.$('button:has-text("Submit"), input[type="submit"]');
+          const submitButton = await test.getPage().$('button:has-text("Submit"), input[type="submit"]');
           if (submitButton && await submitButton.isVisible()) {
             // Don't actually submit - just verify the button exists
             expect(submitButton).toBeTruthy();
@@ -516,8 +524,8 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Check for CSRF tokens or other mutation-related data
-      const csrfToken = await DataExtractor.extractCSRFToken(test.page);
-      const hasFormElements = await test.page.evaluate(() => {
+      const csrfToken = await DataExtractor.extractCSRFToken(test.getPage());
+      const hasFormElements = await test.getPage().evaluate(() => {
         return document.querySelectorAll('form, input, textarea').length > 0;
       });
       

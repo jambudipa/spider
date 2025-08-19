@@ -12,7 +12,7 @@ class LocalStorageTest extends DynamicScenarioBase {
   }
   
   async getLocalStorageItems(): Promise<Record<string, string>> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       const items: Record<string, string> = {};
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
@@ -25,25 +25,25 @@ class LocalStorageTest extends DynamicScenarioBase {
   }
   
   async setLocalStorageItem(key: string, value: string): Promise<void> {
-    await this.page.evaluate(({ k, v }) => {
+    await this.getPage().evaluate(({ k, v }) => {
       localStorage.setItem(k, v);
     }, { k: key, v: value });
   }
   
   async removeLocalStorageItem(key: string): Promise<void> {
-    await this.page.evaluate((k) => {
+    await this.getPage().evaluate((k) => {
       localStorage.removeItem(k);
     }, key);
   }
   
   async clearLocalStorage(): Promise<void> {
-    await this.page.evaluate(() => {
+    await this.getPage().evaluate(() => {
       localStorage.clear();
     });
   }
   
   async getSessionStorageItems(): Promise<Record<string, string>> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       const items: Record<string, string> = {};
       for (let i = 0; i < sessionStorage.length; i++) {
         const key = sessionStorage.key(i);
@@ -60,7 +60,7 @@ class LocalStorageTest extends DynamicScenarioBase {
     sessionStorage: boolean;
     cookies: boolean;
   }> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       return {
         localStorage: localStorage.length > 0,
         sessionStorage: sessionStorage.length > 0,
@@ -186,11 +186,11 @@ describe('Local Storage Scenario - /product/1', () => {
     // Monitor changes when clicking "Add to Cart" based on manual validation
     const result = await test.monitorStorageChanges(async () => {
       // Look for Add to Cart button and click it
-      const addToCartButton = await test.page.locator('button:has-text("Add to cart"), .add-to-cart, [data-action="add-to-cart"]');
+      const addToCartButton = await test.getPage().locator('button:has-text("Add to cart"), .add-to-cart, [data-action="add-to-cart"]');
       
       if (await addToCartButton.count() > 0) {
         await addToCartButton.first().click();
-        await test.page.waitForTimeout(1000); // Wait for localStorage update
+        await test.getPage().waitForTimeout(1000); // Wait for localStorage update
       } else {
         console.log('No Add to Cart button found');
       }
@@ -239,7 +239,7 @@ describe('Local Storage Scenario - /product/1', () => {
     expect(typeof sessionItems).toBe('object');
     
     // Test sessionStorage manipulation
-    await test.page.evaluate(() => {
+    await test.getPage().evaluate(() => {
       sessionStorage.setItem('spider_session_test', 'active');
     });
     
@@ -247,7 +247,7 @@ describe('Local Storage Scenario - /product/1', () => {
     expect(afterSet['spider_session_test']).toBe('active');
     
     // Clean up
-    await test.page.evaluate(() => {
+    await test.getPage().evaluate(() => {
       sessionStorage.removeItem('spider_session_test');
     });
   });
@@ -256,11 +256,11 @@ describe('Local Storage Scenario - /product/1', () => {
     await test.navigateToScenario('/product/1');
     
     // Add item to cart first (based on manual validation)
-    const addToCartButton = await test.page.locator('button:has-text("Add to cart"), .add-to-cart');
+    const addToCartButton = await test.getPage().locator('button:has-text("Add to cart"), .add-to-cart');
     
     if (await addToCartButton.count() > 0) {
       await addToCartButton.first().click();
-      await test.page.waitForTimeout(1000);
+      await test.getPage().waitForTimeout(1000);
     }
     
     // Get cart data

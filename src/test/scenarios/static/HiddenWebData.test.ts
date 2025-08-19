@@ -33,7 +33,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       
       // Find elements with display:none or visibility:hidden with performance limits
       const hiddenElements = await Promise.race([
-        test.page.evaluate(() => {
+        test.getPage().evaluate(() => {
           // Only check specific elements likely to be hidden, not all elements
           const specificSelectors = [
             '[hidden]',
@@ -142,7 +142,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       await test.navigateToScenario('/product/1');
       
       const hiddenData = await Promise.race([
-        DataExtractor.extractHiddenData(test.page),
+        DataExtractor.extractHiddenData(test.getPage()),
         new Promise<Record<string, any>>((_, reject) => 
           setTimeout(() => reject(new Error('Data extraction timeout')), 8000)
         )
@@ -162,9 +162,9 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         
         // Verify data attribute values are meaningful
         const hasValues = dataAttrs.some(key => 
-          hiddenData[key] && 
-          typeof hiddenData[key] === 'string' && 
-          hiddenData[key].length > 0
+          (hiddenData as Record<string, any>)[key] && 
+          typeof (hiddenData as Record<string, any>)[key] === 'string' && 
+          (hiddenData as Record<string, any>)[key].length > 0
         );
         expect(hasValues).toBe(true);
       }
@@ -179,7 +179,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       
       // Extract inline script content with timeout protection
       const scriptContent = await Promise.race([
-        test.page.evaluate(() => {
+        test.getPage().evaluate(() => {
           const scripts = Array.from(document.querySelectorAll('script:not([src])')).slice(0, 10); // Limit to first 10 scripts
           return scripts
             .map(script => script.textContent || '')
@@ -248,7 +248,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       
       // Look for base64-encoded data in various places with timeout protection
       const base64Data = await Promise.race([
-        test.page.evaluate(() => {
+        test.getPage().evaluate(() => {
           const base64Pattern = /[A-Za-z0-9+/]{20,100}={0,2}/g; // Limit length to prevent huge strings
           const results: Array<{source: string; decoded: string; original: string}> = [];
           const MAX_RESULTS = 10; // Limit number of results to process
@@ -355,7 +355,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       
       // Extract all JSON-LD structured data with timeout protection
       const structuredData = await Promise.race([
-        test.page.evaluate(() => {
+        test.getPage().evaluate(() => {
           const jsonLdScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 20);
           return jsonLdScripts.map(script => {
             try {
@@ -413,7 +413,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
       
       // Extract HTML comments that might contain data with performance limits
       const commentData = await Promise.race([
-        test.page.evaluate(() => {
+        test.getPage().evaluate(() => {
           const walker = document.createTreeWalker(
             document.documentElement,
             NodeFilter.SHOW_COMMENT

@@ -11,7 +11,7 @@ class CookieAuthTest extends AuthScenarioBase {
     await super.validateScenario();
     
     // For login page, we expect to either be on login page or redirected after auth
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toMatch(/\/(login|dashboard|home|profile)/);
   }
 }
@@ -35,10 +35,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       await test.navigateToScenario('/login');
       
       // First, wait for the page to load completely
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Look for login form elements with more comprehensive search
-      const loginAnalysis = await test.page.evaluate(() => {
+      const loginAnalysis = await test.getPage().evaluate(() => {
         // Check for forms first
         const forms = Array.from(document.querySelectorAll('form'));
         const loginForm = forms.find(form => {
@@ -138,10 +138,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
   it('should handle login submission', async () => {
     try {
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Enhanced form field detection
-      const formElements = await test.page.evaluate(() => {
+      const formElements = await test.getPage().evaluate(() => {
         const usernameField = document.querySelector('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]');
         const passwordField = document.querySelector('input[type="password"]');
         const submitButton = document.querySelector('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]');
@@ -160,8 +160,8 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
 
       if (formElements.hasUsernameField && formElements.hasPasswordField) {
         // Get initial state
-        const initialUrl = test.page.url();
-        const initialCookies = await test.page.context().cookies();
+        const initialUrl = test.getPage().url();
+        const initialCookies = await test.getPage().context().cookies();
         
         // Try common test credentials for demo/test sites
         const testCredentials = [
@@ -177,18 +177,18 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         for (const creds of testCredentials) {
           try {
             // Clear and fill the form
-            await test.page.fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', creds.username);
-            await test.page.fill('input[type="password"]', creds.password);
+            await test.getPage().fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', creds.username);
+            await test.getPage().fill('input[type="password"]', creds.password);
             
             // Prepare to monitor changes
-            const navigationPromise = test.page.waitForNavigation({ timeout: 10000 }).catch(() => null);
+            const navigationPromise = test.getPage().waitForNavigation({ timeout: 10000 }).catch(() => null);
             
             // Submit the form
             if (formElements.hasSubmitButton) {
-              await test.page.click('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]');
+              await test.getPage().click('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]');
             } else {
               // Try pressing Enter on password field
-              await test.page.press('input[type="password"]', 'Enter');
+              await test.getPage().press('input[type="password"]', 'Enter');
             }
             
             loginAttemptMade = true;
@@ -196,12 +196,12 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
             // Wait for potential navigation or response
             await Promise.race([
               navigationPromise,
-              test.page.waitForTimeout(3000)
+              test.getPage().waitForTimeout(3000)
             ]);
             
             // Check the results
-            const currentUrl = test.page.url();
-            const currentCookies = await test.page.context().cookies();
+            const currentUrl = test.getPage().url();
+            const currentCookies = await test.getPage().context().cookies();
             
             // Success indicators
             const urlChanged = currentUrl !== initialUrl;
@@ -232,11 +232,11 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         expect(loginAttemptMade).toBe(true);
         
         // Check final state
-        const finalUrl = test.page.url();
-        const finalCookies = await test.page.context().cookies();
+        const finalUrl = test.getPage().url();
+        const finalCookies = await test.getPage().context().cookies();
         
         // At minimum, verify page is still functional
-        const pageContent = await test.page.content();
+        const pageContent = await test.getPage().content();
         expect(pageContent.length).toBeGreaterThan(500);
         
         // Verify cookies exist (session or auth)
@@ -244,7 +244,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         
       } else {
         // Form elements not found - still verify page loaded
-        const pageContent = await test.page.content();
+        const pageContent = await test.getPage().content();
         expect(pageContent.length).toBeGreaterThan(1000);
         
         // Log what we found instead
@@ -259,15 +259,15 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
   it('should store authentication cookies', async () => {
     try {
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Get initial cookies
-      const initialCookies = await test.page.context().cookies();
+      const initialCookies = await test.getPage().context().cookies();
       console.log('Initial cookies:', initialCookies.map(c => ({ name: c.name, domain: c.domain })));
       
       // Try to perform login (even if unsuccessful, might set session cookies)
       try {
-        const formFields = await test.page.evaluate(() => ({
+        const formFields = await test.getPage().evaluate(() => ({
           hasUsername: !!document.querySelector('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]'),
           hasPassword: !!document.querySelector('input[type="password"]'),
           hasSubmit: !!document.querySelector('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]')
@@ -275,24 +275,24 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         
         if (formFields.hasUsername && formFields.hasPassword) {
           // Fill the form with test credentials
-          await test.page.fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', 'testuser');
-          await test.page.fill('input[type="password"]', 'testpass');
+          await test.getPage().fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', 'testuser');
+          await test.getPage().fill('input[type="password"]', 'testpass');
           
           if (formFields.hasSubmit) {
-            await test.page.click('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]');
+            await test.getPage().click('button[type="submit"], input[type="submit"], button[class*="submit"], button[class*="login"]');
           } else {
-            await test.page.press('input[type="password"]', 'Enter');
+            await test.getPage().press('input[type="password"]', 'Enter');
           }
           
           // Wait for potential response
-          await test.page.waitForTimeout(3000);
+          await test.getPage().waitForTimeout(3000);
         }
       } catch (error) {
         console.log('Login attempt failed, continuing with cookie analysis:', error);
       }
       
       // Get cookies after login attempt
-      const finalCookies = await test.page.context().cookies();
+      const finalCookies = await test.getPage().context().cookies();
       console.log('Final cookies:', finalCookies.map(c => ({ 
         name: c.name, 
         domain: c.domain, 
@@ -352,7 +352,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
       // Always verify the page is functional
-      const pageContent = await test.page.content();
+      const pageContent = await test.getPage().content();
       expect(pageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
@@ -367,17 +367,17 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       
       // Attempt login with test credentials
       try {
-        const usernameField = await test.page.$('input[name*="user"], input[name*="email"], input[type="email"]');
-        const passwordField = await test.page.$('input[type="password"]');
+        const usernameField = await test.getPage().$('input[name*="user"], input[name*="email"], input[type="email"]');
+        const passwordField = await test.getPage().$('input[type="password"]');
         
         if (usernameField && passwordField) {
           await usernameField.fill('admin');
           await passwordField.fill('admin');
           
-          const submitButton = await test.page.$('button[type="submit"], input[type="submit"]');
+          const submitButton = await test.getPage().$('button[type="submit"], input[type="submit"]');
           if (submitButton) {
             await submitButton.click();
-            await test.page.waitForTimeout(2000);
+            await test.getPage().waitForTimeout(2000);
           }
         }
       } catch (error) {
@@ -397,13 +397,13 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       
       for (const url of protectedUrls) {
         try {
-          const response = await test.page.goto(`${test.baseUrl}${url}`);
+          const response = await test.getPage().goto(`${test.getBaseUrl()}${url}`);
           
           if (response && response.status() < 400) {
             accessibleUrls++;
             
             // Check if page content suggests successful access
-            const content = await test.page.content();
+            const content = await test.getPage().content();
             const hasProtectedContent = 
               content.includes('dashboard') ||
               content.includes('profile') ||
@@ -423,7 +423,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       if (accessibleUrls === 0) {
         // Return to main page and verify basic functionality
         await test.navigateToScenario('/');
-        const mainPageContent = await test.page.content();
+        const mainPageContent = await test.getPage().content();
         expect(mainPageContent.length).toBeGreaterThan(1000);
       }
       
@@ -437,18 +437,18 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       await test.navigateToScenario('/login');
       
       // Set up cookies with short expiration
-      await test.page.context().addCookies([
+      await test.getPage().context().addCookies([
         {
           name: 'test_session',
           value: 'expired_token',
-          domain: new URL(test.baseUrl).hostname,
+          domain: new URL(test.getBaseUrl()).hostname,
           path: '/',
           expires: Math.floor(Date.now() / 1000) - 3600 // Expired 1 hour ago
         }
       ]);
       
       // Check current cookies
-      const cookiesBeforeCleanup = await test.page.context().cookies();
+      const cookiesBeforeCleanup = await test.getPage().context().cookies();
       
       // Navigate to a page that might check authentication
       try {
@@ -463,24 +463,24 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
       // Check cookies after navigation
-      const cookiesAfterNavigation = await test.page.context().cookies();
+      const cookiesAfterNavigation = await test.getPage().context().cookies();
       
       // Verify cookie handling
       const expiredCookiesRemoved = cookiesAfterNavigation.length <= cookiesBeforeCleanup.length;
       
       // Test manual cookie expiration
-      await test.page.evaluate(() => {
+      await test.getPage().evaluate(() => {
         // Set a cookie that expires immediately
         document.cookie = 'temp_cookie=test; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
       });
       
-      const finalCookies = await test.page.context().cookies();
+      const finalCookies = await test.getPage().context().cookies();
       const hasTempCookie = finalCookies.some(cookie => cookie.name === 'temp_cookie');
       
       expect(hasTempCookie).toBe(false); // Should be expired and removed
       
       // Verify page is still functional after cookie handling
-      const pageContent = await test.page.content();
+      const pageContent = await test.getPage().content();
       expect(pageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
@@ -493,18 +493,18 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       await test.navigateToScenario('/login');
       
       // First, establish some session (even test session)
-      await test.page.context().addCookies([
+      await test.getPage().context().addCookies([
         {
           name: 'user_session',
           value: 'test_session_value',
-          domain: new URL(test.baseUrl).hostname,
+          domain: new URL(test.getBaseUrl()).hostname,
           path: '/',
           httpOnly: true
         }
       ]);
       
       // Look for logout functionality
-      const logoutElements = await test.page.$$eval(
+      const logoutElements = await test.getPage().$$eval(
         'a, button, [role="button"]',
         elements => elements
           .map(el => ({
@@ -525,14 +525,14 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       if (logoutElements.length > 0) {
         try {
           // Try to click logout
-          const logoutButton = await test.page.$('a:has-text("Logout"), button:has-text("Logout"), a:has-text("Sign Out")');
+          const logoutButton = await test.getPage().$('a:has-text("Logout"), button:has-text("Logout"), a:has-text("Sign Out")');
           
           if (logoutButton && await logoutButton.isVisible()) {
             await logoutButton.click();
-            await test.page.waitForTimeout(2000);
+            await test.getPage().waitForTimeout(2000);
             
             // Check if cookies were cleared
-            const cookiesAfterLogout = await test.page.context().cookies();
+            const cookiesAfterLogout = await test.getPage().context().cookies();
             const sessionCookiesRemaining = cookiesAfterLogout.filter(cookie => 
               cookie.name.includes('session') || 
               cookie.name.includes('auth') ||
@@ -543,8 +543,8 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
             expect(sessionCookiesRemaining.length).toBeLessThanOrEqual(1);
             
             // Should redirect to login or home page
-            const currentUrl = test.page.url();
-            expect(currentUrl.includes('login') || currentUrl.includes('home') || currentUrl === test.baseUrl + '/').toBe(true);
+            const currentUrl = test.getPage().url();
+            expect(currentUrl.includes('login') || currentUrl.includes('home') || currentUrl === test.getBaseUrl() + '/').toBe(true);
           }
         } catch (error) {
           // Logout button not clickable or doesn't exist
@@ -552,15 +552,15 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
       // Test manual logout by clearing cookies
-      await test.page.context().clearCookies();
+      await test.getPage().context().clearCookies();
       
       // Verify cookies were cleared
-      const clearedCookies = await test.page.context().cookies();
+      const clearedCookies = await test.getPage().context().cookies();
       expect(clearedCookies.length).toBe(0);
       
       // Navigate to verify session is cleared
       await test.navigateToScenario('/');
-      const finalCookies = await test.page.context().cookies();
+      const finalCookies = await test.getPage().context().cookies();
       
       // Should either have no cookies or only new session cookies
       const hasOldSessionCookies = finalCookies.some(cookie => 
@@ -578,10 +578,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
   it('should validate login form submission mechanics', async () => {
     try {
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Comprehensive form analysis
-      const formMechanics = await test.page.evaluate(() => {
+      const formMechanics = await test.getPage().evaluate(() => {
         const forms = Array.from(document.forms);
         const primaryForm = forms.find(f => 
           f.action.includes('login') ||
@@ -629,7 +629,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
       // Always verify page functionality
-      const pageTitle = await test.page.title();
+      const pageTitle = await test.getPage().title();
       expect(pageTitle).toBeTruthy();
       
     } catch (error) {
@@ -640,7 +640,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
   it('should handle authentication errors gracefully', async () => {
     try {
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Test with obviously invalid credentials
       const invalidCredentials = [
@@ -655,28 +655,28 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       for (const creds of invalidCredentials) {
         try {
           // Check if form exists
-          const hasForm = await test.page.evaluate(() => 
+          const hasForm = await test.getPage().evaluate(() => 
             !!document.querySelector('input[type="password"]')
           );
           
           if (!hasForm) break;
           
           // Fill form with invalid credentials
-          await test.page.fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', creds.username);
-          await test.page.fill('input[type="password"]', creds.password);
+          await test.getPage().fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', creds.username);
+          await test.getPage().fill('input[type="password"]', creds.password);
           
-          const initialUrl = test.page.url();
+          const initialUrl = test.getPage().url();
           
           // Submit form
-          await test.page.press('input[type="password"]', 'Enter');
-          await test.page.waitForTimeout(2000);
+          await test.getPage().press('input[type="password"]', 'Enter');
+          await test.getPage().waitForTimeout(2000);
           
           // Check for error handling
-          const currentUrl = test.page.url();
-          const pageContent = await test.page.content();
+          const currentUrl = test.getPage().url();
+          const pageContent = await test.getPage().content();
           
           // Look for error indicators
-          const errorIndicators = await test.page.evaluate(() => {
+          const errorIndicators = await test.getPage().evaluate(() => {
             const content = document.body.textContent?.toLowerCase() || '';
             return {
               hasErrorMessage: content.includes('error') || 
@@ -705,7 +705,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
       // Verify page remains functional after error tests
-      const finalContent = await test.page.content();
+      const finalContent = await test.getPage().content();
       expect(finalContent.length).toBeGreaterThan(500);
       
     } catch (error) {
@@ -716,11 +716,11 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
   it('should demonstrate cookie-based session persistence', async () => {
     try {
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Get initial session state
-      const initialCookies = await test.page.context().cookies();
-      const initialSessionData = await test.page.evaluate(() => ({
+      const initialCookies = await test.getPage().context().cookies();
+      const initialSessionData = await test.getPage().evaluate(() => ({
         sessionStorage: Object.keys(sessionStorage).length,
         localStorage: Object.keys(localStorage).length,
         cookieCount: document.cookie.split(';').filter(c => c.trim()).length
@@ -738,10 +738,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       for (const page of testPages) {
         try {
           await test.navigateToScenario(page);
-          await test.page.waitForLoadState('networkidle');
+          await test.getPage().waitForLoadState('networkidle');
           
-          const cookies = await test.page.context().cookies();
-          const sessionInfo = await test.page.evaluate(() => ({
+          const cookies = await test.getPage().context().cookies();
+          const sessionInfo = await test.getPage().evaluate(() => ({
             url: window.location.href,
             cookieCount: document.cookie.split(';').filter(c => c.trim()).length,
             hasSessionCookies: document.cookie.toLowerCase().includes('session') ||
@@ -774,7 +774,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(maxCookies - minCookies).toBeLessThanOrEqual(5);
       
       // Verify final page is functional
-      const finalPageContent = await test.page.content();
+      const finalPageContent = await test.getPage().content();
       expect(finalPageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
@@ -786,10 +786,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
     try {
       // Start at login page
       await test.navigateToScenario('/login');
-      await test.page.waitForLoadState('networkidle');
+      await test.getPage().waitForLoadState('networkidle');
       
       // Attempt login with test credentials
-      const loginAttempted = await test.page.evaluate(async () => {
+      const loginAttempted = await test.getPage().evaluate(async () => {
         const usernameField = document.querySelector('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]') as HTMLInputElement;
         const passwordField = document.querySelector('input[type="password"]') as HTMLInputElement;
         
@@ -811,7 +811,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       });
       
       if (loginAttempted) {
-        await test.page.waitForTimeout(3000);
+        await test.getPage().waitForTimeout(3000);
       }
       
       // Test authentication state across different pages
@@ -826,10 +826,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       
       for (const testCase of authStateTests) {
         try {
-          const response = await test.page.goto(`${test.baseUrl}${testCase.path}`);
-          await test.page.waitForTimeout(1000);
+          const response = await test.getPage().goto(`${test.getBaseUrl()}${testCase.path}`);
+          await test.getPage().waitForTimeout(1000);
           
-          const authState = await test.page.evaluate(() => ({
+          const authState = await test.getPage().evaluate(() => ({
             url: window.location.href,
             title: document.title,
             hasLoginForm: !!document.querySelector('input[type="password"]'),
@@ -849,7 +849,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         } catch (navError) {
           authResults.push({
             ...testCase,
-            error: navError.message,
+            error: navError instanceof Error ? navError.message : String(navError),
             accessible: false
           });
         }
@@ -861,15 +861,15 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(authResults.length).toBeGreaterThan(0);
       
       // Verify that at least some pages are accessible
-      const accessiblePages = authResults.filter(r => !r.error && r.responseStatus < 400);
+      const accessiblePages = authResults.filter(r => !('error' in r) && 'responseStatus' in r && r.responseStatus < 400);
       expect(accessiblePages.length).toBeGreaterThan(0);
       
       // Verify final page state - handle 404 pages gracefully
-      const finalContent = await test.page.content();
-      const currentUrl = test.page.url();
+      const finalContent = await test.getPage().content();
+      const currentUrl = test.getPage().url();
       
       // If we're on a valid page, expect substantial content; if 404, content may be minimal
-      if (!authResults.some(r => r.responseStatus === 404)) {
+      if (!authResults.some(r => 'responseStatus' in r && r.responseStatus === 404)) {
         expect(finalContent.length).toBeGreaterThan(500);
       } else {
         expect(finalContent.length).toBeGreaterThan(50); // Just verify page loaded

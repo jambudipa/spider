@@ -12,11 +12,11 @@ class BlockingRedirectForInvalidRefererTest extends AntiBlockScenarioBase {
   }
   
   async navigateWithReferer(url: string, referer: string): Promise<void> {
-    await this.page.setExtraHTTPHeaders({
+    await this.getPage().setExtraHTTPHeaders({
       'Referer': referer
     });
     
-    await this.page.goto(url, {
+    await this.getPage().goto(url, {
       waitUntil: 'networkidle'
     });
   }
@@ -26,7 +26,7 @@ class BlockingRedirectForInvalidRefererTest extends AntiBlockScenarioBase {
     finalUrl: string;
     isBlocked: boolean;
   }> {
-    const finalUrl = this.page.url();
+    const finalUrl = this.getPage().url();
     const wasRedirected = finalUrl !== originalUrl;
     const isBlocked = finalUrl.includes('blocked') || 
                      await this.isBlocked();
@@ -42,7 +42,7 @@ class BlockingRedirectForInvalidRefererTest extends AntiBlockScenarioBase {
     hasCredentials: boolean;
     content: string;
   }> {
-    return await this.page.evaluate(() => {
+    return await this.getPage().evaluate(() => {
       const bodyText = document.body.textContent || '';
       const hasCredentials = 
         bodyText.includes('username') ||
@@ -63,7 +63,7 @@ class BlockingRedirectForInvalidRefererTest extends AntiBlockScenarioBase {
     allowed: boolean;
     finalUrl: string;
   }> {
-    const targetUrl = `${this.baseUrl}/credentials`;
+    const targetUrl = `${this.getBaseUrl()}/credentials`;
     
     await this.navigateWithReferer(targetUrl, referer);
     

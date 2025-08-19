@@ -11,7 +11,7 @@ class ModalPopupTest extends DynamicScenarioBase {
     await super.validateScenario();
     
     // Verify we can access the page even with modals
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('web-scraping.dev');
   }
 }
@@ -36,11 +36,11 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       await test.navigateToScenario('/login?cookies');
       
       // Wait for page load and potential modals
-      await test.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await test.getPage().waitForTimeout(1500);
       
       // Look for modal/popup indicators
-      const modalElements = await test.page.evaluate(() => {
+      const modalElements = await test.getPage().evaluate(() => {
         const potentialModals = document.querySelectorAll(
           '.modal, .popup, .overlay, .cookie-banner, .cookie-notice, .cookie-consent, ' +
           '[role="dialog"], [aria-modal="true"], .dialog, .lightbox, ' +
@@ -62,8 +62,8 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
             zIndex: computed.zIndex,
             position: computed.position,
             hasOverlay: computed.background.includes('rgba') || 
-                       computed.backgroundColor !== 'rgba(0, 0, 0, 0)' ||
-                       computed.backgroundColor !== 'transparent',
+                       (computed.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+                        computed.backgroundColor !== 'transparent'),
             textContent: modal.textContent?.trim().substring(0, 100) || '',
             dimensions: { width: rect.width, height: rect.height }
           };
@@ -71,7 +71,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       });
       
       // Check for cookie-specific content
-      const cookieContent = await test.page.evaluate(() => {
+      const cookieContent = await test.getPage().evaluate(() => {
         const text = document.body.textContent?.toLowerCase() || '';
         
         // Helper function to find buttons by text content
@@ -114,7 +114,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         expect(hasCookieContent).toBe(true);
       } else {
         // If no modals detected, the page should still be accessible
-        const pageTitle = await test.page.title();
+        const pageTitle = await test.getPage().title();
         expect(pageTitle.length).toBeGreaterThan(0);
       }
       
@@ -126,11 +126,11 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
   it('should extract content from modals', async () => {
     try {
       await test.navigateToScenario('/login?cookies');
-      await test.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await test.getPage().waitForTimeout(1500);
       
       // Extract modal content
-      const modalContent = await test.page.evaluate(() => {
+      const modalContent = await test.getPage().evaluate(() => {
         const modals = document.querySelectorAll(
           '.modal, .popup, .cookie-banner, .cookie-consent, .cookie-notice, ' +
           '[role="dialog"], [aria-modal="true"], .overlay, .dialog, ' +
@@ -173,30 +173,30 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         
         modalContent.forEach((modal, index) => {
           // Modal should have some content, be relevant to cookie/popup functionality, or have reasonable size
-          const hasContent = modal.text.length > 2 || modal.hasRelevantContent || modal.dimensions.width > 100;
+          const hasContent = (modal?.text?.length ?? 0) > 2 || modal?.hasRelevantContent || (modal?.dimensions?.width ?? 0) > 100;
           if (!hasContent) {
-            console.warn(`Modal ${index} lacks content: text="${modal.text}", relevant=${modal.hasRelevantContent}, size=${modal.dimensions.width}x${modal.dimensions.height}`);
+            console.warn(`Modal ${index} lacks content: text="${modal?.text}", relevant=${modal?.hasRelevantContent}, size=${modal?.dimensions?.width}x${modal?.dimensions?.height}`);
           }
           
           // Be more lenient - at least one indicator of modal-ness should be present
           const hasModalIndicators = hasContent || 
-                                    modal.dimensions.width > 50 || 
-                                    modal.hasButtons > 0 ||
-                                    modal.hasLinks > 0 ||
-                                    modal.hasInputs > 0 ||
-                                    modal.htmlLength > 50;
+                                    (modal?.dimensions?.width ?? 0) > 50 || 
+                                    (modal?.hasButtons ?? 0) > 0 ||
+                                    (modal?.hasLinks ?? 0) > 0 ||
+                                    (modal?.hasInputs ?? 0) > 0 ||
+                                    (modal?.htmlLength ?? 0) > 50;
           expect(hasModalIndicators).toBe(true);
           
           // Modal should have reasonable dimensions (very permissive)
-          expect(modal.dimensions.width).toBeGreaterThanOrEqual(0);
-          expect(modal.dimensions.height).toBeGreaterThanOrEqual(0);
+          expect(modal?.dimensions?.width).toBeGreaterThanOrEqual(0);
+          expect(modal?.dimensions?.height).toBeGreaterThanOrEqual(0);
           
           // HTML content should exist (very basic check)
-          expect(modal.htmlLength).toBeGreaterThanOrEqual(0);
+          expect(modal?.htmlLength).toBeGreaterThanOrEqual(0);
         });
       } else {
         // Check for any popup-like content even without modal containers
-        const pageHasPopupContent = await test.page.evaluate(() => {
+        const pageHasPopupContent = await test.getPage().evaluate(() => {
           const text = document.body.textContent?.toLowerCase() || '';
           const hasPopupKeywords = text.includes('accept') || 
                                   text.includes('cookie') || 
@@ -219,7 +219,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           expect(pageHasPopupContent).toBe(true);
         } else {
           // Ensure the page loaded properly even without modals
-          const pageTitle = await test.page.title();
+          const pageTitle = await test.getPage().title();
           expect(pageTitle.length).toBeGreaterThan(0);
         }
       }
@@ -232,10 +232,10 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
   it('should handle modal close buttons', async () => {
     try {
       await test.navigateToScenario('/login?cookies');
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForTimeout(1500);
       
       // Find close buttons
-      const closeButtons = await test.page.$$eval(
+      const closeButtons = await test.getPage().$$eval(
         'button, a, [role="button"], .close, [aria-label*="close"]',
         elements => elements
           .map(el => {
@@ -266,15 +266,15 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         // Try to click the first close button using Playwright's text selector
         let firstCloseButton = null;
         try {
-          firstCloseButton = await test.page.getByRole('button', { name: /close|accept|ok|×|got it/i }).first();
+          firstCloseButton = await test.getPage().getByRole('button', { name: /close|accept|ok|×|got it/i }).first();
         } catch {
           // Fallback to CSS selectors
           try {
-            firstCloseButton = await test.page.$('.close, [aria-label*="close"], [aria-label*="Close"]');
+            firstCloseButton = await test.getPage().$('.close, [aria-label*="close"], [aria-label*="Close"]');
           } catch {
             // Final fallback using custom evaluation
             try {
-              const handle = await test.page.evaluateHandle(() => {
+              const handle = await test.getPage().evaluateHandle(() => {
                 const buttons = Array.from(document.querySelectorAll('button'));
                 const closeButton = buttons.find(btn => {
                   const text = btn.textContent?.toLowerCase().trim() || '';
@@ -296,10 +296,10 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
             const isVisible = await firstCloseButton.isVisible();
             if (isVisible) {
               await firstCloseButton.click();
-              await test.page.waitForTimeout(1000);
+              await test.getPage().waitForTimeout(1000);
               
               // Verify modal was dismissed or page still functions
-              const modalsAfterClose = await test.page.evaluate(() => {
+              const modalsAfterClose = await test.getPage().evaluate(() => {
                 const modals = document.querySelectorAll('.modal, .popup, .overlay, [role="dialog"], [aria-modal="true"]');
                 return Array.from(modals).filter(modal => {
                   const computed = window.getComputedStyle(modal as Element);
@@ -322,7 +322,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
       // Verify page is still functional after close attempt
-      const pageContent = await test.page.content();
+      const pageContent = await test.getPage().content();
       expect(pageContent.length).toBeGreaterThan(1000);
       
     } catch (error) {
@@ -333,10 +333,10 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
   it('should detect overlay backgrounds', async () => {
     try {
       await test.navigateToScenario('/login?cookies');
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForTimeout(1500);
       
       // Look for overlay elements
-      const overlayInfo = await test.page.evaluate(() => {
+      const overlayInfo = await test.getPage().evaluate(() => {
         const potentialOverlays = document.querySelectorAll(
           '.overlay, .backdrop, .modal-backdrop, [class*="overlay"], ' +
           '[class*="backdrop"], [style*="rgba"], [style*="fixed"]'
@@ -397,16 +397,16 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
   it('should handle nested modals', async () => {
     try {
       await test.navigateToScenario('/login?cookies');
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForTimeout(1500);
       
       // Look for nested modal structure
-      const nestedModalInfo = await test.page.evaluate(() => {
+      const nestedModalInfo = await test.getPage().evaluate(() => {
         const modals = document.querySelectorAll(
           '.modal, .popup, [role="dialog"], [aria-modal="true"], ' +
           '[class*="modal"], [class*="popup"]'
         );
         
-        let nestedModals = [];
+        let nestedModals: any[] = [];
         
         modals.forEach((modal, index) => {
           const childModals = modal.querySelectorAll(
@@ -442,7 +442,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         }
         
         // Try to interact with nested modals
-        const visibleModals = await test.page.$$('.modal, .popup, [role="dialog"]');
+        const visibleModals = await test.getPage().$$('.modal, .popup, [role="dialog"]');
         
         for (let i = 0; i < Math.min(2, visibleModals.length); i++) {
           const modal = visibleModals[i];
@@ -471,15 +471,15 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
   it('should extract form data from modals', async () => {
     try {
       await test.navigateToScenario('/login?cookies');
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForTimeout(1500);
       
       // Look for forms within modals
-      const modalForms = await test.page.evaluate(() => {
+      const modalForms = await test.getPage().evaluate(() => {
         const modals = document.querySelectorAll(
           '.modal, .popup, .cookie-banner, [role="dialog"], [aria-modal="true"]'
         );
         
-        const formsInModals = [];
+        const formsInModals: any[] = [];
         
         modals.forEach(modal => {
           const computed = window.getComputedStyle(modal as Element);
@@ -529,14 +529,14 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           expect(form.inputs.length + form.buttons.length).toBeGreaterThan(0);
           
           if (form.inputs.length > 0) {
-            form.inputs.forEach(input => {
+            form.inputs.forEach((input: any) => {
               expect(typeof input.type).toBe('string');
             });
           }
         });
       } else {
         // Check for form-like elements even outside modals
-        const hasFormElements = await test.page.evaluate(() => {
+        const hasFormElements = await test.getPage().evaluate(() => {
           const inputs = document.querySelectorAll('input, button, select, textarea');
           return inputs.length > 0;
         });

@@ -12,7 +12,7 @@ class EndlessScrollTest extends DynamicScenarioBase {
     await super.validateScenario();
     
     // Verify we're on the testimonials page
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('/testimonials');
   }
 }
@@ -38,7 +38,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       await test.waitForContent('body');
       
       // Check for indicators of infinite scroll
-      const scrollIndicators = await test.page.evaluate(() => {
+      const scrollIndicators = await test.getPage().evaluate(() => {
         // Look for common infinite scroll patterns
         const indicators = {
           hasLoadingSpinner: !!document.querySelector('.loading, .spinner, [data-loading]'),
@@ -66,27 +66,27 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
   it('should load content on scroll', async () => {
     try {
       // Get initial testimonials count
-      const initialTestimonials = await DataExtractor.extractTestimonials(test.page);
+      const initialTestimonials = await DataExtractor.extractTestimonials(test.getPage());
       const initialCount = initialTestimonials.length;
       
       expect(initialCount).toBeGreaterThan(0);
       console.log(`Initial testimonials: ${initialCount}`);
       
       // Record initial page height
-      const initialHeight = await test.page.evaluate(() => document.body.scrollHeight);
+      const initialHeight = await test.getPage().evaluate(() => document.body.scrollHeight);
       
       // Scroll to bottom to trigger loading
-      await test.page.evaluate(() => {
+      await test.getPage().evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight);
       });
       
       // Wait for content to load
-      await test.page.waitForTimeout(1500);
+      await test.getPage().waitForTimeout(1500);
       
       // Check if new content loaded
-      const afterScrollTestimonials = await DataExtractor.extractTestimonials(test.page);
+      const afterScrollTestimonials = await DataExtractor.extractTestimonials(test.getPage());
       const afterScrollCount = afterScrollTestimonials.length;
-      const afterScrollHeight = await test.page.evaluate(() => document.body.scrollHeight);
+      const afterScrollHeight = await test.getPage().evaluate(() => document.body.scrollHeight);
       
       console.log(`After scroll testimonials: ${afterScrollCount}`);
       console.log(`Height change: ${initialHeight} -> ${afterScrollHeight}`);
@@ -121,26 +121,26 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       const maxScrolls = 5;
       
       // Get initial count
-      let currentTestimonials = await DataExtractor.extractTestimonials(test.page);
+      let currentTestimonials = await DataExtractor.extractTestimonials(test.getPage());
       testimonialCounts.push(currentTestimonials.length);
-      pageHeights.push(await test.page.evaluate(() => document.body.scrollHeight));
+      pageHeights.push(await test.getPage().evaluate(() => document.body.scrollHeight));
       
       console.log(`Starting with ${currentTestimonials.length} testimonials`);
       
       // Perform multiple scroll events
       for (let i = 0; i < maxScrolls; i++) {
         // Scroll to bottom each time to trigger more loading
-        await test.page.evaluate(() => {
+        await test.getPage().evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
         });
         
         // Wait for content to potentially load
-        await test.page.waitForTimeout(1000);
+        await test.getPage().waitForTimeout(1000);
         
         // Count testimonials after scroll
-        currentTestimonials = await DataExtractor.extractTestimonials(test.page);
+        currentTestimonials = await DataExtractor.extractTestimonials(test.getPage());
         const currentCount = currentTestimonials.length;
-        const currentHeight = await test.page.evaluate(() => document.body.scrollHeight);
+        const currentHeight = await test.getPage().evaluate(() => document.body.scrollHeight);
         
         testimonialCounts.push(currentCount);
         pageHeights.push(currentHeight);
@@ -188,7 +188,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
     try {
       // Track page height changes to detect when content stops loading
       let previousHeight = 0;
-      let currentHeight = await test.page.evaluate(() => document.body.scrollHeight);
+      let currentHeight = await test.getPage().evaluate(() => document.body.scrollHeight);
       let stableHeightCount = 0;
       let testimonialCount = 0;
       
@@ -197,20 +197,20 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       for (let i = 0; i < maxScrollAttempts; i++) {
         // Record heights before scroll
         previousHeight = currentHeight;
-        const previousTestimonials = await DataExtractor.extractTestimonials(test.page);
+        const previousTestimonials = await DataExtractor.extractTestimonials(test.getPage());
         const previousCount = previousTestimonials.length;
         
         // Scroll down
-        await test.page.evaluate(() => {
+        await test.getPage().evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
         });
         
         // Wait for potential content loading
-        await test.page.waitForTimeout(1000);
+        await test.getPage().waitForTimeout(1000);
         
         // Check new height and testimonial count
-        currentHeight = await test.page.evaluate(() => document.body.scrollHeight);
-        const currentTestimonials = await DataExtractor.extractTestimonials(test.page);
+        currentHeight = await test.getPage().evaluate(() => document.body.scrollHeight);
+        const currentTestimonials = await DataExtractor.extractTestimonials(test.getPage());
         testimonialCount = currentTestimonials.length;
         
         // If height and content haven't changed, we've likely reached the end
@@ -226,7 +226,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       }
       
       // Verify we've reached a stable state (end of content)
-      const finalInfo = await test.page.evaluate(() => {
+      const finalInfo = await test.getPage().evaluate(() => {
         const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
         const scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight;
         const clientHeight = document.documentElement.clientHeight || window.innerHeight;
@@ -256,20 +256,20 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
   it('should extract all dynamically loaded items', async () => {
     try {
       // Load content gradually and track progress
-      let allTestimonials = [];
+      let allTestimonials: any[] = [];
       let attempts = 0;
       const maxAttempts = 8;
       
       while (attempts < maxAttempts) {
         // Extract current testimonials
-        allTestimonials = await DataExtractor.extractTestimonials(test.page);
+        allTestimonials = await DataExtractor.extractTestimonials(test.getPage());
         
         // Scroll down to load more
-        await test.page.evaluate(() => {
+        await test.getPage().evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
         });
         
-        await test.page.waitForTimeout(1000);
+        await test.getPage().waitForTimeout(1000);
         attempts++;
         
         // If we have a good number of testimonials, we can stop
@@ -324,11 +324,11 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       // Monitor network requests for errors
       const networkErrors: string[] = [];
       
-      test.page.on('requestfailed', request => {
+      test.getPage().on('requestfailed', request => {
         networkErrors.push(request.url());
       });
       
-      test.page.on('response', response => {
+      test.getPage().on('response', response => {
         if (response.status() >= 400) {
           networkErrors.push(response.url());
         }
@@ -337,15 +337,15 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       // Perform aggressive scrolling to potentially trigger errors
       const maxScrolls = 5;
       for (let i = 0; i < maxScrolls; i++) {
-        await test.page.evaluate(() => {
+        await test.getPage().evaluate(() => {
           // Rapid scrolling to stress test
           window.scrollTo(0, document.body.scrollHeight);
         });
         
-        await test.page.waitForTimeout(500); // Short delay
+        await test.getPage().waitForTimeout(500); // Short delay
         
         // Check if page is still responsive
-        const isResponsive = await test.page.evaluate(() => {
+        const isResponsive = await test.getPage().evaluate(() => {
           return document.readyState === 'complete' && window.location.href.includes('testimonials');
         });
         
@@ -353,17 +353,17 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       }
       
       // Verify the page didn't crash completely
-      const finalUrl = test.page.url();
+      const finalUrl = test.getPage().url();
       expect(finalUrl).toContain('/testimonials');
       
       // Check if we can still extract content
-      const finalTestimonials = await DataExtractor.extractTestimonials(test.page);
+      const finalTestimonials = await DataExtractor.extractTestimonials(test.getPage());
       expect(finalTestimonials.length).toBeGreaterThan(0);
       
       // If there were network errors, make sure they didn't break the page
       if (networkErrors.length > 0) {
         // Page should still be functional despite network errors
-        const pageContent = await test.page.content();
+        const pageContent = await test.getPage().content();
         expect(pageContent).toBeTruthy();
         expect(pageContent.length).toBeGreaterThan(1000);
       }

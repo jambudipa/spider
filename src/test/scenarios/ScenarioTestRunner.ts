@@ -4,6 +4,7 @@
  */
 
 import { Effect } from 'effect';
+import { AssertionCollector, createAssertionCollector } from './AssertionCollector.js';
 
 export interface ScenarioDefinition {
   id: string;
@@ -13,7 +14,7 @@ export interface ScenarioDefinition {
   description: string;
   requiresBrowser: boolean;
   execute: () => Effect.Effect<ScenarioResult, Error, any>;
-  validate: (result: any) => boolean;
+  validate: (result: any, collector: AssertionCollector) => Effect.Effect<boolean>;
 }
 
 export interface ScenarioResult {
@@ -49,7 +50,7 @@ export class ScenarioTestRunner {
       description: 'HTML-based server-side item paging',
       requiresBrowser: false,
       execute: () => this.executeStaticPagination(),
-      validate: (result) => this.validateStaticPagination(result),
+      validate: (result, collector) => this.validateStaticPagination(result, collector),
     });
 
     this.register({
@@ -60,7 +61,7 @@ export class ScenarioTestRunner {
       description: 'Basic e-commerce product structure',
       requiresBrowser: false,
       execute: () => this.executeProductMarkup(),
-      validate: (result) => this.validateProductMarkup(result),
+      validate: (result, collector) => this.validateProductMarkup(result, collector),
     });
 
     this.register({
@@ -71,7 +72,7 @@ export class ScenarioTestRunner {
       description: 'Product review data hidden in JSON',
       requiresBrowser: false,
       execute: () => this.executeHiddenData(),
-      validate: (result) => this.validateHiddenData(result),
+      validate: (result, collector) => this.validateHiddenData(result, collector),
     });
 
     // Dynamic scenarios
@@ -83,7 +84,7 @@ export class ScenarioTestRunner {
       description: 'Dynamic client side paging on scroll',
       requiresBrowser: true,
       execute: () => this.executeInfiniteScroll(),
-      validate: (result) => this.validateInfiniteScroll(result),
+      validate: (result, collector) => this.validateInfiniteScroll(result, collector),
     });
 
     this.register({
@@ -94,7 +95,7 @@ export class ScenarioTestRunner {
       description: 'Dynamic paging with Load More button',
       requiresBrowser: true,
       execute: () => this.executeLoadMoreButton(),
-      validate: (result) => this.validateLoadMoreButton(result),
+      validate: (result, collector) => this.validateLoadMoreButton(result, collector),
     });
 
     this.register({
@@ -105,7 +106,7 @@ export class ScenarioTestRunner {
       description: 'Data loaded through GraphQL API',
       requiresBrowser: true,
       execute: () => this.executeGraphQL(),
-      validate: (result) => this.validateGraphQL(result),
+      validate: (result, collector) => this.validateGraphQL(result, collector),
     });
 
     // Authentication scenarios
@@ -117,7 +118,7 @@ export class ScenarioTestRunner {
       description: 'Form authentication with cookies',
       requiresBrowser: false,
       execute: () => this.executeCookieLogin(),
-      validate: (result) => this.validateCookieLogin(result),
+      validate: (result, collector) => this.validateCookieLogin(result, collector),
     });
 
     this.register({
@@ -128,7 +129,7 @@ export class ScenarioTestRunner {
       description: 'X-CSRF-Token header protection',
       requiresBrowser: false,
       execute: () => this.executeCSRFToken(),
-      validate: (result) => this.validateCSRFToken(result),
+      validate: (result, collector) => this.validateCSRFToken(result, collector),
     });
 
     this.register({
@@ -139,7 +140,7 @@ export class ScenarioTestRunner {
       description: 'X-Secret-Token for API access',
       requiresBrowser: true,
       execute: () => this.executeSecretAPIToken(),
-      validate: (result) => this.validateSecretAPIToken(result),
+      validate: (result, collector) => this.validateSecretAPIToken(result, collector),
     });
 
     // Special scenarios
@@ -151,7 +152,7 @@ export class ScenarioTestRunner {
       description: 'File download triggers',
       requiresBrowser: false,
       execute: () => this.executePDFDownload(),
-      validate: (result) => this.validatePDFDownload(result),
+      validate: (result, collector) => this.validatePDFDownload(result, collector),
     });
 
     this.register({
@@ -162,7 +163,7 @@ export class ScenarioTestRunner {
       description: 'Modal popup handling',
       requiresBrowser: true,
       execute: () => this.executeCookiePopup(),
-      validate: (result) => this.validateCookiePopup(result),
+      validate: (result, collector) => this.validateCookiePopup(result, collector),
     });
 
     this.register({
@@ -173,7 +174,7 @@ export class ScenarioTestRunner {
       description: 'Client-side storage for cart',
       requiresBrowser: true,
       execute: () => this.executeLocalStorage(),
-      validate: (result) => this.validateLocalStorage(result),
+      validate: (result, collector) => this.validateLocalStorage(result, collector),
     });
 
     this.register({
@@ -184,7 +185,7 @@ export class ScenarioTestRunner {
       description: 'Links that force new tabs',
       requiresBrowser: false,
       execute: () => this.executeForcedNewTab(),
-      validate: (result) => this.validateForcedNewTab(result),
+      validate: (result, collector) => this.validateForcedNewTab(result, collector),
     });
 
     this.register({
@@ -195,7 +196,7 @@ export class ScenarioTestRunner {
       description: 'Block detection with 200 status',
       requiresBrowser: false,
       execute: () => this.executeBlockPage(),
-      validate: (result) => this.validateBlockPage(result),
+      validate: (result, collector) => this.validateBlockPage(result, collector),
     });
   }
 
@@ -207,52 +208,54 @@ export class ScenarioTestRunner {
    * Run a specific scenario
    */
   runScenario(id: string): Effect.Effect<ScenarioResult, Error, any> {
-    return Effect.gen(
-      function* () {
-        const scenario = this.scenarios.get(id);
-        if (!scenario) {
-          return yield* Effect.fail(new Error(`Scenario ${id} not found`));
-        }
+    const self = this;
+    return Effect.gen(function* () {
+      const scenario = self.scenarios.get(id);
+      if (!scenario) {
+        return yield* Effect.fail(new Error(`Scenario ${id} not found`));
+      }
 
-        const startTime = Date.now();
-        const result = yield* scenario.execute();
-        const duration = Date.now() - startTime;
+      const startTime = Date.now();
+      const result = yield* scenario.execute();
+      const duration = Date.now() - startTime;
 
-        const success = scenario.validate(result);
+      // Create assertion collector for validation
+      const collector = createAssertionCollector();
+      const success = yield* scenario.validate(result, collector);
+      const assertions = yield* collector.getAssertions();
 
-        return {
-          scenario: scenario.name,
-          success,
-          data: result,
-          duration,
-          assertions: [], // TODO: Collect assertions
-        };
-      }.bind(this)
-    );
+      return {
+        scenario: scenario.name,
+        success,
+        data: result,
+        duration,
+        assertions,
+      };
+    });
   }
 
   /**
    * Run all scenarios
    */
   runAll(): Effect.Effect<Map<string, ScenarioResult>, never, any> {
-    return Effect.gen(
-      function* () {
-        const results = new Map<string, ScenarioResult>();
+    const self = this;
+    return Effect.gen(function* () {
+      const results = new Map<string, ScenarioResult>();
 
-        for (const [id, scenario] of this.scenarios) {
-          try {
-            const result = yield* this.runScenario(id);
-            results.set(id, result);
-          } catch (error) {
-            results.set(id, {
-              scenario: scenario.name,
-              success: false,
-              errors: [error as Error],
-              duration: 0,
-              assertions: [],
-            });
-          }
+      for (const [id, scenario] of self.scenarios) {
+        const result = yield* Effect.either(self.runScenario(id));
+        if (result._tag === 'Right') {
+          results.set(id, result.right);
+        } else {
+          results.set(id, {
+            scenario: scenario.name,
+            success: false,
+            errors: [result.left],
+            duration: 0,
+            assertions: [],
+          });
         }
+      }
 
         return results;
       }.bind(this)
@@ -266,111 +269,171 @@ export class ScenarioTestRunner {
     return Effect.fail(new Error('Not implemented - Task 4.4'));
   }
 
-  private validateStaticPagination(result: any): boolean {
-    return false;
+  private validateStaticPagination(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      // Example assertions for static pagination
+      yield* collector.assertTruthy('Result exists', result);
+      yield* collector.assertHasProperty('Has pages', result, 'pages');
+      
+      // Return overall validation status
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeProductMarkup() {
     return Effect.fail(new Error('Not implemented - Task 4.5'));
   }
 
-  private validateProductMarkup(result: any): boolean {
-    return false;
+  private validateProductMarkup(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeHiddenData() {
     return Effect.fail(new Error('Not implemented - Task 4.6'));
   }
 
-  private validateHiddenData(result: any): boolean {
-    return false;
+  private validateHiddenData(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeInfiniteScroll() {
     return Effect.fail(new Error('Not implemented - Task 4.7'));
   }
 
-  private validateInfiniteScroll(result: any): boolean {
-    return false;
+  private validateInfiniteScroll(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeLoadMoreButton() {
     return Effect.fail(new Error('Not implemented - Task 4.8'));
   }
 
-  private validateLoadMoreButton(result: any): boolean {
-    return false;
+  private validateLoadMoreButton(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeGraphQL() {
     return Effect.fail(new Error('Not implemented - Task 4.9'));
   }
 
-  private validateGraphQL(result: any): boolean {
-    return false;
+  private validateGraphQL(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeCookieLogin() {
     return Effect.fail(new Error('Not implemented - Task 4.10'));
   }
 
-  private validateCookieLogin(result: any): boolean {
-    return false;
+  private validateCookieLogin(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeCSRFToken() {
     return Effect.fail(new Error('Not implemented - Task 4.11'));
   }
 
-  private validateCSRFToken(result: any): boolean {
-    return false;
+  private validateCSRFToken(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeSecretAPIToken() {
     return Effect.fail(new Error('Not implemented - Task 4.12'));
   }
 
-  private validateSecretAPIToken(result: any): boolean {
-    return false;
+  private validateSecretAPIToken(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executePDFDownload() {
     return Effect.fail(new Error('Not implemented - Task 4.13'));
   }
 
-  private validatePDFDownload(result: any): boolean {
-    return false;
+  private validatePDFDownload(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeCookiePopup() {
     return Effect.fail(new Error('Not implemented - Task 4.14'));
   }
 
-  private validateCookiePopup(result: any): boolean {
-    return false;
+  private validateCookiePopup(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeLocalStorage() {
     return Effect.fail(new Error('Not implemented - Task 4.15'));
   }
 
-  private validateLocalStorage(result: any): boolean {
-    return false;
+  private validateLocalStorage(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeForcedNewTab() {
     return Effect.fail(new Error('Not implemented - Task 4.16'));
   }
 
-  private validateForcedNewTab(result: any): boolean {
-    return false;
+  private validateForcedNewTab(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 
   private executeBlockPage() {
     return Effect.fail(new Error('Not implemented - Task 4.17'));
   }
 
-  private validateBlockPage(result: any): boolean {
-    return false;
+  private validateBlockPage(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+    return Effect.gen(function* () {
+      yield* collector.assertTruthy('Result exists', result);
+      const summary = yield* collector.getSummary();
+      return summary.failed === 0;
+    });
   }
 }

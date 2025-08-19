@@ -12,7 +12,7 @@ class ButtonLoadingTest extends DynamicScenarioBase {
     await super.validateScenario();
     
     // Verify we're on the reviews page
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('/reviews');
   }
 }
@@ -38,7 +38,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       await test.waitForContent('body');
       
       // Look for load more button patterns
-      const loadMoreButtons = await test.page.$$eval(
+      const loadMoreButtons = await test.getPage().$$eval(
         'button, [role="button"], a, input[type="button"], input[type="submit"]',
         elements => elements
           .map(el => {
@@ -63,7 +63,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
               id,
               tagName: el.tagName,
               isLoadMore,
-              isVisible: el.offsetParent !== null,
+              isVisible: 'offsetParent' in el ? (el as HTMLElement).offsetParent !== null : true,
               isEnabled: !el.hasAttribute('disabled')
             };
           })
@@ -85,7 +85,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
   it('should load content on button click', async () => {
     try {
       // Get initial reviews count
-      const initialReviews = await DataExtractor.extractReviews(test.page);
+      const initialReviews = await DataExtractor.extractReviews(test.getPage());
       const initialCount = initialReviews.length;
       
       expect(initialCount).toBeGreaterThan(0);
@@ -95,16 +95,16 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       
       try {
         // Try to find and click the load more button with Bootstrap.js workaround
-        const button = await test.page.locator(loadMoreSelector);
+        const button = await test.getPage().locator(loadMoreSelector);
         
         if (await button.isVisible()) {
           try {
             // Try native click first
             await button.click({ timeout: 5000 });
           } catch (error) {
-            console.log('Native click failed, trying JS click:', error.message);
+            console.log('Native click failed, trying JS click:', error instanceof Error ? error.message : String(error));
             // Fallback to JavaScript click to bypass Bootstrap.js issues
-            await test.page.evaluate(() => {
+            await test.getPage().evaluate(() => {
               const btn = document.getElementById('page-load-more');
               if (btn) {
                 btn.click();
@@ -116,17 +116,17 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         }
         
         // Wait for new content to load
-        await test.page.waitForTimeout(3000);
+        await test.getPage().waitForTimeout(3000);
         
         // Check if new content loaded
-        const afterClickReviews = await DataExtractor.extractReviews(test.page);
+        const afterClickReviews = await DataExtractor.extractReviews(test.getPage());
         const afterClickCount = afterClickReviews.length;
         
         if (afterClickCount > initialCount) {
           expect(afterClickCount).toBeGreaterThan(initialCount);
         } else {
           // If no new content, check if button disappeared or was disabled
-          const buttonStillExists = await test.page.$(loadMoreSelector);
+          const buttonStillExists = await test.getPage().$(loadMoreSelector);
           if (!buttonStillExists) {
             // Button disappeared - likely reached end of content
             expect(afterClickCount).toEqual(initialCount);
@@ -135,7 +135,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         
       } catch (clickError) {
         // If we can't find the button, check if pagination exists in another form
-        const paginationExists = await test.page.evaluate(() => {
+        const paginationExists = await test.getPage().evaluate(() => {
           const paginationSelectors = [
             '.pagination', '.pager', '[data-pagination]',
             'button[disabled]:has-text("Load")', 
@@ -162,7 +162,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       const maxClicks = 3;
       
       // Get initial count
-      let currentReviews = await DataExtractor.extractReviews(test.page);
+      let currentReviews = await DataExtractor.extractReviews(test.getPage());
       reviewCounts.push(currentReviews.length);
       
       // Try multiple button clicks
@@ -175,7 +175,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         
         for (const selector of loadMoreSelectors) {
           try {
-            const button = await test.page.$(selector);
+            const button = await test.getPage().$(selector);
             if (button) {
               const isVisible = await button.isVisible();
               const isEnabled = await button.isEnabled();
@@ -195,10 +195,10 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         }
         
         // Wait for content to load
-        await test.page.waitForTimeout(2000);
+        await test.getPage().waitForTimeout(2000);
         
         // Count reviews after click
-        currentReviews = await DataExtractor.extractReviews(test.page);
+        currentReviews = await DataExtractor.extractReviews(test.getPage());
         reviewCounts.push(currentReviews.length);
       }
       
@@ -224,14 +224,14 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       
       while (clickCount < maxAttempts) {
         // Look for active load more buttons
-        const activeButton = await test.page.evaluate(() => {
+        const activeButton = await test.getPage().evaluate(() => {
           // Use DOM-compatible selectors (not Playwright-specific)
           const buttons = document.querySelectorAll('button:not([disabled]), [class*="load-more"]:not([disabled]), [id*="load-more"]:not([disabled])');
           
-          for (const button of buttons) {
+          for (const button of Array.from(buttons)) {
             const text = button.textContent?.toLowerCase() || '';
             if (text.includes('load') || text.includes('more')) {
-              if (button.offsetParent !== null) {
+              if ((button as HTMLElement).offsetParent !== null) {
                 return true;
               }
             }
@@ -243,7 +243,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         
         if (!activeButton) {
           // No active button found - check for end indicators
-          const endIndicators = await test.page.evaluate(() => {
+          const endIndicators = await test.getPage().evaluate(() => {
             const indicators = {
               hasDisabledButton: !!document.querySelector('button[disabled]:has-text("Load"), button[disabled]:has-text("More")'),
               hasEndMessage: !!document.querySelector('.end-of-content, .no-more-content, .all-loaded'),
@@ -270,7 +270,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           // Use the specific selector from manual validation
           const loadMoreButton = document.getElementById('page-load-more');
           
-          if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+          if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
             loadMoreButton.click();
             return true;
           }
@@ -278,7 +278,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           // Handled above
           
           clickCount++;
-          await test.page.waitForTimeout(2000);
+          await test.getPage().waitForTimeout(2000);
           
         } catch {
           // Button click failed - likely reached end
@@ -287,7 +287,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       }
       
       // Get final review count
-      const finalReviews = await DataExtractor.extractReviews(test.page);
+      const finalReviews = await DataExtractor.extractReviews(test.getPage());
       expect(finalReviews.length).toBeGreaterThan(0);
       
     } catch (error) {
@@ -310,25 +310,25 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         try {
           const loadMoreButton = document.getElementById('page-load-more');
           
-          if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+          if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
             try {
               loadMoreButton.click();
               return true;
             } catch (error) {
-              console.log('Click failed:', error.message);
+              console.log('Click failed:', error instanceof Error ? error.message : String(error));
               return false;
             }
           }
           
-          const clickResult = await test.page.evaluate(() => {
+          const clickResult = await test.getPage().evaluate(() => {
             const loadMoreButton = document.getElementById('page-load-more');
             
-            if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+            if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
               try {
                 loadMoreButton.click();
                 return true;
               } catch (error) {
-                console.log('Click failed:', error.message);
+                console.log('Click failed:', error instanceof Error ? error.message : String(error));
                 return false;
               }
             }
@@ -337,21 +337,21 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           
           if (!clickResult) break;
           
-          await test.page.waitForTimeout(2000);
+          await test.getPage().waitForTimeout(2000);
           
         } catch {
           break;
         }
         
         // Count current reviews
-        const reviews = await DataExtractor.extractReviews(test.page);
+        const reviews = await DataExtractor.extractReviews(test.getPage());
         currentCount = reviews.length;
         attempts++;
         
       } while (currentCount > previousCount && attempts < maxAttempts);
       
       // Extract all final reviews
-      const allReviews = await DataExtractor.extractReviews(test.page);
+      const allReviews = await DataExtractor.extractReviews(test.getPage());
       
       expect(allReviews.length).toBeGreaterThan(0);
       
@@ -386,10 +386,10 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
   it('should handle button state changes', async () => {
     try {
       // Monitor button state changes
-      const buttonStates = [];
+      const buttonStates: any[] = [];
       
       // Get initial button state
-      const initialState = await test.page.evaluate(() => {
+      const initialState = await test.getPage().evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
         return buttons.map(btn => ({
           text: btn.textContent?.trim() || '',
@@ -406,15 +406,15 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       
       // Try to click a load more button
       try {
-        const loadMoreButton = await test.page.$('button:has-text("Load"), button:has-text("More")');
+        const loadMoreButton = await test.getPage().$('button:has-text("Load"), button:has-text("More")');
         
         if (loadMoreButton && await loadMoreButton.isVisible() && await loadMoreButton.isEnabled()) {
           // Click and monitor state change
           await loadMoreButton.click();
           
           // Check state during loading
-          await test.page.waitForTimeout(500);
-          const loadingState = await test.page.evaluate(() => {
+          await test.getPage().waitForTimeout(500);
+          const loadingState = await test.getPage().evaluate(() => {
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             return buttons.map(btn => ({
               text: btn.textContent?.trim() || '',
@@ -432,10 +432,10 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           buttonStates.push({ phase: 'loading', buttons: loadingState });
           
           // Wait for loading to complete
-          await test.page.waitForTimeout(2000);
+          await test.getPage().waitForTimeout(2000);
           
           // Check final state
-          const finalState = await test.page.evaluate(() => {
+          const finalState = await test.getPage().evaluate(() => {
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             return buttons.map(btn => ({
               text: btn.textContent?.trim() || '',

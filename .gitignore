@@ -69,3 +69,6 @@ CLAUDE.md
 
 /specs
 /scripts
+fix-all-type-errors-loop.sh
+
+/tools

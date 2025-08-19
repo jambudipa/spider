@@ -12,7 +12,7 @@ class ProductMarkupTest extends StaticScenarioBase {
     await super.validateScenario();
     
     // Verify we're on the correct product page
-    const url = this.page.url();
+    const url = this.getPage().url();
     expect(url).toContain('/product/1');
   }
 }
@@ -35,7 +35,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
   it('should extract product schema markup', async () => {
     try {
       // Extract JSON-LD structured data
-      const structuredData = await test.page.evaluate(() => {
+      const structuredData = await test.getPage().evaluate(() => {
         const jsonLdScript = document.querySelector('script[type="application/ld+json"]');
         if (jsonLdScript?.textContent) {
           try {
@@ -77,7 +77,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
   it('should find microdata markup', async () => {
     try {
       // Check for microdata attributes
-      const microdataElements = await test.page.$$eval('[itemtype*="Product"], [itemtype*="product"]', elements =>
+      const microdataElements = await test.getPage().$$eval('[itemtype*="Product"], [itemtype*="product"]', elements =>
         elements.map(el => ({
           itemtype: el.getAttribute('itemtype'),
           itemprops: Array.from(el.querySelectorAll('[itemprop]')).map(prop => ({
@@ -106,7 +106,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
   it('should extract RDFa markup', async () => {
     try {
       // Check for RDFa attributes
-      const rdfaElements = await test.page.$$eval('[typeof*="Product"], [property]', elements =>
+      const rdfaElements = await test.getPage().$$eval('[typeof*="Product"], [property]', elements =>
         elements.map(el => ({
           typeof: el.getAttribute('typeof'),
           properties: Array.from(el.querySelectorAll('[property]')).map(prop => ({
@@ -150,7 +150,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
 
   it('should handle Open Graph tags', async () => {
     try {
-      const ogTags = await test.page.$$eval('meta[property^="og:"]', metas =>
+      const ogTags = await test.getPage().$$eval('meta[property^="og:"]', metas =>
         metas.reduce((acc: Record<string, string>, meta) => {
           const property = meta.getAttribute('property');
           const content = meta.getAttribute('content');
@@ -181,7 +181,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
 
   it('should extract Twitter Card data', async () => {
     try {
-      const twitterCards = await test.page.$$eval('meta[name^="twitter:"]', metas =>
+      const twitterCards = await test.getPage().$$eval('meta[name^="twitter:"]', metas =>
         metas.reduce((acc: Record<string, string>, meta) => {
           const name = meta.getAttribute('name');
           const content = meta.getAttribute('content');
@@ -211,7 +211,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
   it('should validate structured data', async () => {
     try {
       // Extract product details using DataExtractor
-      const productDetails = await DataExtractor.extractProductDetails(test.page);
+      const productDetails = await DataExtractor.extractProductDetails(test.getPage());
       
       expect(productDetails).toBeTruthy();
       expect(productDetails.title).toBeTruthy();

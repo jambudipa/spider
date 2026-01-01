@@ -14,10 +14,10 @@ class LocalStorageTest extends DynamicScenarioBase {
   async getLocalStorageItems(): Promise<Record<string, string>> {
     return await this.getPage().evaluate(() => {
       const items: Record<string, string> = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
         if (key) {
-          items[key] = localStorage.getItem(key) || '';
+          items[key] = window.localStorage.getItem(key) || '';
         }
       }
       return items;
@@ -26,29 +26,29 @@ class LocalStorageTest extends DynamicScenarioBase {
   
   async setLocalStorageItem(key: string, value: string): Promise<void> {
     await this.getPage().evaluate(({ k, v }) => {
-      localStorage.setItem(k, v);
+      window.localStorage.setItem(k, v);
     }, { k: key, v: value });
   }
   
   async removeLocalStorageItem(key: string): Promise<void> {
     await this.getPage().evaluate((k) => {
-      localStorage.removeItem(k);
+      window.localStorage.removeItem(k);
     }, key);
   }
   
   async clearLocalStorage(): Promise<void> {
     await this.getPage().evaluate(() => {
-      localStorage.clear();
+      window.localStorage.clear();
     });
   }
   
   async getSessionStorageItems(): Promise<Record<string, string>> {
     return await this.getPage().evaluate(() => {
       const items: Record<string, string> = {};
-      for (let i = 0; i < sessionStorage.length; i++) {
-        const key = sessionStorage.key(i);
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
         if (key) {
-          items[key] = sessionStorage.getItem(key) || '';
+          items[key] = window.sessionStorage.getItem(key) || '';
         }
       }
       return items;
@@ -62,8 +62,8 @@ class LocalStorageTest extends DynamicScenarioBase {
   }> {
     return await this.getPage().evaluate(() => {
       return {
-        localStorage: localStorage.length > 0,
-        sessionStorage: sessionStorage.length > 0,
+        localStorage: window.localStorage.length > 0,
+        sessionStorage: window.sessionStorage.length > 0,
         cookies: document.cookie.length > 0
       };
     });
@@ -240,7 +240,7 @@ describe('Local Storage Scenario - /product/1', () => {
     
     // Test sessionStorage manipulation
     await test.getPage().evaluate(() => {
-      sessionStorage.setItem('spider_session_test', 'active');
+      window.sessionStorage.setItem('spider_session_test', 'active');
     });
     
     const afterSet = await test.getSessionStorageItems();
@@ -248,7 +248,7 @@ describe('Local Storage Scenario - /product/1', () => {
     
     // Clean up
     await test.getPage().evaluate(() => {
-      sessionStorage.removeItem('spider_session_test');
+      window.sessionStorage.removeItem('spider_session_test');
     });
   });
   

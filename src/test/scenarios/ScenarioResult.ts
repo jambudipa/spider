@@ -3,7 +3,7 @@
  * Result types for test scenario execution
  */
 
-import { Duration } from 'effect';
+import { Duration, HashSet } from 'effect';
 
 /**
  * Base result for all scenarios
@@ -17,7 +17,7 @@ export interface BaseScenarioResult {
   readonly requestCount: number;
   readonly errors?: ScenarioError[];
   readonly warnings?: string[];
-  readonly metadata?: Record<string, any>;
+  readonly metadata?: Record<string, unknown>;
 }
 
 /**
@@ -27,14 +27,14 @@ export interface ScenarioError {
   readonly type: string;
   readonly message: string;
   readonly timestamp: Date;
-  readonly details?: any;
+  readonly details?: unknown;
   readonly stack?: string;
 }
 
 /**
  * Extracted data result
  */
-export interface ExtractedData<T = any> {
+export interface ExtractedData<T = unknown> {
   readonly url: string;
   readonly timestamp: Date;
   readonly data: T;
@@ -103,12 +103,12 @@ export interface APIScenarioResult extends BaseScenarioResult {
     readonly statusCode: number;
     readonly responseTime: number;
     readonly headers: Record<string, string>;
-    readonly body?: any;
+    readonly body?: unknown;
   }[];
   readonly graphqlQueries?: {
     readonly query: string;
-    readonly variables?: Record<string, any>;
-    readonly response: any;
+    readonly variables?: Record<string, unknown>;
+    readonly response: unknown;
   }[];
 }
 
@@ -222,7 +222,9 @@ export const createTestSummary = (
   const averageRequestTime =
     totalRequests > 0 ? Duration.toMillis(totalDuration) / totalRequests : 0;
 
-  const scenarios = [...new Set(results.map((r) => r.scenario))];
+  const scenarios = HashSet.toValues(
+    HashSet.fromIterable(results.map((r) => r.scenario))
+  );
   const coverage = (passedScenarios / totalScenarios) * 100;
 
   return {

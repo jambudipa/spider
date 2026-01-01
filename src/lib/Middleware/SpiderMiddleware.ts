@@ -1,7 +1,7 @@
-import { Effect, MutableHashMap, Option } from 'effect';
+import { DateTime, Effect, MutableHashMap, Option } from 'effect';
 import { MiddlewareError } from '../errors.js';
-// Import the Data types from the new types file
 import { SpiderRequest, SpiderResponse } from './types.js';
+
 export { SpiderRequest, SpiderResponse } from './types.js';
 
 /**
@@ -40,7 +40,7 @@ export interface SpiderMiddleware {
    * Can modify headers, metadata, or reject the request entirely.
    */
   processRequest?: (
-    request: SpiderRequest
+    _request: SpiderRequest
   ) => Effect.Effect<SpiderRequest, MiddlewareError>;
 
   /**
@@ -48,18 +48,18 @@ export interface SpiderMiddleware {
    * Can modify the response data or metadata.
    */
   processResponse?: (
-    response: SpiderResponse,
-    request: SpiderRequest
+    _response: SpiderResponse,
+    _request: SpiderRequest
   ) => Effect.Effect<SpiderResponse, MiddlewareError>;
 
   /**
    * Handle exceptions that occur during request processing.
-   * Can attempt recovery by returning a SpiderResponse, or return null to propagate the error.
+   * Can attempt recovery by returning a SpiderResponse, or return Option.none() to propagate the error.
    */
   processException?: (
-    error: Error,
-    request: SpiderRequest
-  ) => Effect.Effect<SpiderResponse | null, MiddlewareError>;
+    _error: Error,
+    _request: SpiderRequest
+  ) => Effect.Effect<Option.Option<SpiderResponse>, MiddlewareError>;
 }
 
 /**
@@ -147,13 +147,13 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
        * Processes an exception through the middleware pipeline in reverse order.
        *
        * Middleware are given a chance to handle or recover from exceptions.
-       * If a middleware returns a SpiderResponse, it indicates successful recovery.
-       * If it returns null, the exception continues to propagate.
+       * If a middleware returns Option.some(SpiderResponse), it indicates successful recovery.
+       * If it returns Option.none(), the exception continues to propagate.
        *
        * @param error - The error that occurred
        * @param request - The request that caused the error
        * @param middlewares - Array of middleware to apply
-       * @returns Effect containing a recovered response or null
+       * @returns Effect containing a recovered response wrapped in Option
        */
       processException: (
         error: Error,
@@ -162,7 +162,7 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
       ) =>
         Effect.reduce(
           middlewares.slice().reverse(),
-          null as SpiderResponse | null,
+          Option.none<SpiderResponse>(),
           (res, middleware) =>
             middleware.processException
               ? middleware.processException(error, request)
@@ -209,7 +209,7 @@ export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
             Effect.gen(function* () {
               const url = new URL(request.task.url);
               const domain = url.hostname;
-              const now = Date.now();
+              const now = DateTime.toEpochMillis(yield* DateTime.now);
 
               // Apply general request delay if configured
               if (config.requestDelayMs) {
@@ -235,7 +235,8 @@ export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
                 // Wait until window resets
                 const waitTime = windowDuration - (now - windowStart);
                 yield* Effect.sleep(`${waitTime} millis`);
-                MutableHashMap.set(domainWindowStart, domain, Date.now());
+                const currentTime = DateTime.toEpochMillis(yield* DateTime.now);
+                MutableHashMap.set(domainWindowStart, domain, currentTime);
                 MutableHashMap.set(domainRequestCount, domain, 0);
               }
 
@@ -246,7 +247,8 @@ export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
                   () => 0
                 ) + 1;
               MutableHashMap.set(domainRequestCount, domain, newCount);
-              MutableHashMap.set(domainLastRequest, domain, Date.now());
+              const updateTime = DateTime.toEpochMillis(yield* DateTime.now);
+              MutableHashMap.set(domainLastRequest, domain, updateTime);
 
               yield* Effect.logDebug(
                 `Rate limit: ${domain} - ${newCount}/${config.maxRequestsPerSecondPerDomain} requests in window`
@@ -349,7 +351,7 @@ export class LoggingMiddleware extends Effect.Service<LoggingMiddleware>()(
                 const logMessage = `Error processing request: ${request.task.url} - ${error.message}`;
                 yield* Effect.logError(logMessage);
               }
-              return null;
+              return Option.none<SpiderResponse>();
             }),
         };
       },
@@ -409,64 +411,70 @@ export class UserAgentMiddleware extends Effect.Service<UserAgentMiddleware>()(
 export class StatsMiddleware extends Effect.Service<StatsMiddleware>()(
   '@jambudipa.io/StatsMiddleware',
   {
-    effect: Effect.sync(() => ({
-      create: (): {
-        middleware: SpiderMiddleware;
-        getStats: () => Effect.Effect<Record<string, number>>;
-      } => {
-        const stats = MutableHashMap.empty<string, number>();
-        const startTime = Date.now();
+    effect: Effect.gen(function* () {
+      const startTime = DateTime.toEpochMillis(yield* DateTime.now);
 
-        const incr = (key: string, count = 1) => {
-          const current = Option.getOrElse(
-            MutableHashMap.get(stats, key),
-            () => 0
-          );
-          MutableHashMap.set(stats, key, current + count);
-        };
+      return {
+        create: (): {
+          middleware: SpiderMiddleware;
+          getStats: () => Effect.Effect<Record<string, number>>;
+        } => {
+          const stats = MutableHashMap.empty<string, number>();
 
-        return {
-          middleware: {
-            processRequest: (request: SpiderRequest) =>
-              Effect.sync(() => {
-                incr('requests_processed');
-                incr(`requests_depth_${request.task.depth}`);
-                return request;
+          const incr = (key: string, count = 1) => {
+            const current = Option.getOrElse(
+              MutableHashMap.get(stats, key),
+              () => 0
+            );
+            MutableHashMap.set(stats, key, current + count);
+          };
+
+          return {
+            middleware: {
+              processRequest: (request: SpiderRequest) =>
+                Effect.sync(() => {
+                  incr('requests_processed');
+                  incr(`requests_depth_${request.task.depth}`);
+                  return request;
+                }),
+
+              processResponse: (response: SpiderResponse) =>
+                Effect.sync(() => {
+                  incr('responses_received');
+                  Option.match(response.statusCode, {
+                    onNone: () => {},
+                    onSome: (statusCode) => {
+                      incr(`status_${statusCode}`);
+                      if (statusCode >= 200 && statusCode < 300) {
+                        incr('responses_success');
+                      } else if (statusCode >= 400) {
+                        incr('responses_error');
+                      }
+                    },
+                  });
+                  incr('bytes_downloaded', response.pageData.html.length);
+                  return response;
+                }),
+
+              processException: (error: Error) =>
+                Effect.sync(() => {
+                  incr('exceptions');
+                  incr(`exception_${error.constructor.name}`);
+                  return Option.none<SpiderResponse>();
+                }),
+            },
+
+            getStats: () =>
+              Effect.gen(function* () {
+                const currentTime = DateTime.toEpochMillis(yield* DateTime.now);
+                return {
+                  ...Object.fromEntries(Array.from(stats)),
+                  runtime_seconds: (currentTime - startTime) / 1000,
+                };
               }),
-
-            processResponse: (response: SpiderResponse) =>
-              Effect.sync(() => {
-                incr('responses_received');
-                Option.match(response.statusCode, {
-                  onNone: () => {},
-                  onSome: (statusCode) => {
-                    incr(`status_${statusCode}`);
-                    if (statusCode >= 200 && statusCode < 300) {
-                      incr('responses_success');
-                    } else if (statusCode >= 400) {
-                      incr('responses_error');
-                    }
-                  }
-                })
-                incr('bytes_downloaded', response.pageData.html.length);
-                return response;
-              }),
-
-            processException: (error: Error) =>
-              Effect.sync(() => {
-                incr('exceptions');
-                incr(`exception_${error.constructor.name}`);
-                return null;
-              }),
-          },
-
-          getStats: () =>
-            Effect.sync(() => ({
-              ...Object.fromEntries(Array.from(stats)),
-              runtime_seconds: (Date.now() - startTime) / 1000,
-            })),
-        };
-      },
-    })),
+          };
+        },
+      };
+    }),
   }
 ) {}

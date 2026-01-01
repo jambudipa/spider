@@ -17,7 +17,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com/test';
+      const _baseUrl = 'https://example.com/test';
 
       const config: LinkExtractorConfig = {
         tags: ['a'],
@@ -55,7 +55,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com/complex';
+      const _baseUrl = 'https://example.com/complex';
 
       const config: LinkExtractorConfig = {
         tags: ['a', 'area', 'form', 'iframe', 'frame', 'link'],
@@ -89,7 +89,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com/path/to/page';
+      const _baseUrl = 'https://example.com/path/to/page';
 
       const config: LinkExtractorConfig = {
         tags: ['a'],
@@ -126,7 +126,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com';
+      const _baseUrl = 'https://example.com';
 
       const config: LinkExtractorConfig = {
         tags: ['a'],
@@ -162,7 +162,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com';
+      const _baseUrl = 'https://example.com';
 
       const config: LinkExtractorConfig = {
         tags: ['a'],
@@ -198,7 +198,7 @@ describe('LinkExtractor Service', () => {
           </body>
         </html>
       `;
-      const baseUrl = 'https://example.com';
+      const _baseUrl = 'https://example.com';
 
       const config: LinkExtractorConfig = {
         tags: ['form'],

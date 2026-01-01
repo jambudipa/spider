@@ -4,12 +4,13 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { StaticScenarioBase } from '../../helpers/BaseScenarioTest';
+import { Effect } from 'effect';
+import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 class HiddenDataTest extends StaticScenarioBase {
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    return super.validateScenario();
   }
 }
 
@@ -27,7 +28,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     }
   });
 
-  it('should detect hidden elements', async () => {
+  it('should detect hidden elements', { timeout: 12000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
       
@@ -85,7 +86,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
               if (results.length >= 50) break;
               
               try {
-                const computed = window.getComputedStyle(el as Element);
+                const computed = window.getComputedStyle(el);
                 const isHidden = computed.display === 'none' || 
                                computed.visibility === 'hidden' ||
                                computed.opacity === '0';
@@ -114,7 +115,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
           return results;
         }),
         // Timeout after 8 seconds
-        new Promise<any[]>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Hidden elements detection timeout')), 8000)
         )
       ]).catch(() => []); // Return empty array if timeout
@@ -135,45 +136,44 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     } catch (error) {
       await test.handleFailure('detect-hidden-elements', error as Error);
     }
-  }, { timeout: 12000 });
+  });
 
-  it('should extract data from data attributes', async () => {
+  it('should extract data from data attributes', { timeout: 10000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
-      
+
       const hiddenData = await Promise.race([
-        DataExtractor.extractHiddenData(test.getPage()),
-        new Promise<Record<string, any>>((_, reject) => 
+        Effect.runPromise(DataExtractor.extractHiddenData(test.getPage())),
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Data extraction timeout')), 8000)
         )
-      ]).catch(() => ({})); // Return empty object if timeout
-      
+      ]).catch((): Record<string, string | string[]> => ({})); // Return empty object if timeout
+
       expect(hiddenData).toBeTruthy();
       expect(typeof hiddenData).toBe('object');
-      
+
       // Check for data attributes
       const dataAttrs = Object.keys(hiddenData).filter(key => key.startsWith('data-'));
-      
+
       // Test should pass even if no data attributes found
       expect(Array.isArray(dataAttrs)).toBe(true);
-      
+
       if (dataAttrs.length > 0) {
         expect(dataAttrs.length).toBeGreaterThan(0);
-        
+
         // Verify data attribute values are meaningful
-        const hasValues = dataAttrs.some(key => 
-          (hiddenData as Record<string, any>)[key] && 
-          typeof (hiddenData as Record<string, any>)[key] === 'string' && 
-          (hiddenData as Record<string, any>)[key].length > 0
-        );
+        const hasValues = dataAttrs.some(key => {
+          const value = hiddenData[key];
+          return value && typeof value === 'string' && value.length > 0;
+        });
         expect(hasValues).toBe(true);
       }
     } catch (error) {
       await test.handleFailure('extract-data-attributes', error as Error);
     }
-  }, { timeout: 10000 });
+  });
 
-  it('should find content in script tags', async () => {
+  it('should find content in script tags', { timeout: 12000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
       
@@ -214,7 +214,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
             .slice(0, 5); // Limit final results
         }),
         // Timeout after 8 seconds
-        new Promise<any[]>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Script extraction timeout')), 8000)
         )
       ]).catch(() => []); // Return empty array if timeout
@@ -240,9 +240,9 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     } catch (error) {
       await test.handleFailure('find-script-content', error as Error);
     }
-  }, { timeout: 12000 });
+  });
 
-  it('should decode base64 encoded data', async () => {
+  it('should decode base64 encoded data', { timeout: 15000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
       
@@ -291,7 +291,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
               const scriptContent = script.textContent;
               if (!scriptContent || scriptContent.length > 50000) continue; // Skip huge scripts
               
-              const matches = scriptContent.match(base64Pattern) || [];
+              const matches = scriptContent.match(base64Pattern) ?? [];
               const limitedMatches = matches.slice(0, 10); // Limit matches per script
               
               for (const match of limitedMatches) {
@@ -347,37 +347,44 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     } catch (error) {
       await test.handleFailure('decode-base64', error as Error);
     }
-  }, { timeout: 15000 });
+  });
 
-  it('should extract JSON-LD structured data', async () => {
+  it('should extract JSON-LD structured data', { timeout: 10000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
       
       // Extract all JSON-LD structured data with timeout protection
+      interface JsonLdItem {
+        type: string;
+        context: string;
+        data: Record<string, unknown>;
+      }
       const structuredData = await Promise.race([
         test.getPage().evaluate(() => {
           const jsonLdScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 20);
-          return jsonLdScripts.map(script => {
+          const results: Array<{ type: string; context: string; data: Record<string, unknown> }> = [];
+          for (const script of jsonLdScripts) {
             try {
-              const scriptContent = script.textContent || '{}';
+              const scriptContent = script.textContent ?? '{}';
               // Skip huge JSON-LD scripts to prevent timeout
-              if (scriptContent.length > 100000) return null;
-              
-              const data = JSON.parse(scriptContent);
-              return {
-                type: data['@type'] || 'unknown',
-                context: data['@context'] || 'unknown',
+              if (scriptContent.length > 100000) continue;
+
+              const data = JSON.parse(scriptContent) as Record<string, unknown>;
+              results.push({
+                type: (data['@type'] as string) ?? 'unknown',
+                context: (data['@context'] as string) ?? 'unknown',
                 data: data
-              };
+              });
             } catch {
-              return null;
+              // Skip invalid JSON-LD scripts
             }
-          }).filter(Boolean);
+          }
+          return results;
         }),
-        new Promise<any[]>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('JSON-LD extraction timeout')), 8000)
         )
-      ]).catch(() => []); // Return empty array if timeout
+      ]).catch((): JsonLdItem[] => []); // Return empty array if timeout
 
       // Test should pass even if no JSON-LD found
       expect(Array.isArray(structuredData)).toBe(true);
@@ -405,9 +412,9 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     } catch (error) {
       await test.handleFailure('extract-json-ld', error as Error);
     }
-  }, { timeout: 10000 });
+  });
 
-  it('should find data in HTML comments', async () => {
+  it('should find data in HTML comments', { timeout: 12000 }, async () => {
     try {
       await test.navigateToScenario('/product/1');
       
@@ -420,12 +427,12 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
           );
           
           const comments = [];
-          let node;
+          let node: Node | null = null;
           let nodeCount = 0;
           const MAX_NODES = 1000; // Limit tree walking
           const MAX_COMMENTS = 50; // Limit results
-          
-          while (node = walker.nextNode()) {
+
+          while ((node = walker.nextNode()) !== null) {
             nodeCount++;
             if (nodeCount > MAX_NODES || comments.length >= MAX_COMMENTS) break;
             
@@ -444,7 +451,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
           return comments;
         }),
         // Timeout after 8 seconds
-        new Promise<any[]>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Comment extraction timeout')), 8000)
         )
       ]).catch(() => []); // Return empty array if timeout
@@ -476,5 +483,5 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
     } catch (error) {
       await test.handleFailure('find-html-comments', error as Error);
     }
-  }, { timeout: 12000 });
+  });
 });

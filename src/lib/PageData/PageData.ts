@@ -2,19 +2,9 @@ import { Schema } from 'effect';
 
 export const PageDataSchema = Schema.Struct({
   url: Schema.String.pipe(
-    Schema.filter(
-      (s) => {
-        try {
-          new URL(s);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      {
-        message: () => 'Invalid URL format',
-      }
-    )
+    Schema.filter((s) => URL.canParse(s), {
+      message: () => 'Invalid URL format',
+    })
   ),
   html: Schema.String,
   title: Schema.optional(Schema.String),

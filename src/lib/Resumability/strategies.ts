@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Chunk, Effect, Option } from 'effect';
 import {
   SpiderState,
   SpiderStateKey,
@@ -47,7 +47,7 @@ export class FullStatePersistence implements PersistenceStrategy {
 
   restore = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.loadState) {
@@ -119,7 +119,7 @@ export class DeltaPersistence implements PersistenceStrategy {
 
   restore = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.loadDeltas) {
@@ -133,11 +133,12 @@ export class DeltaPersistence implements PersistenceStrategy {
 
       const deltas = yield* self.backend.loadDeltas(key);
       if (deltas.length === 0) {
-        return null;
+        return Option.none<SpiderState>();
       }
 
       // Reconstruct state by replaying deltas in sequence order
-      return yield* self.reconstructStateFromDeltas(key, deltas);
+      const state = yield* self.reconstructStateFromDeltas(key, deltas);
+      return Option.some(state);
     });
   };
 
@@ -166,31 +167,37 @@ export class DeltaPersistence implements PersistenceStrategy {
     key: SpiderStateKey,
     deltas: ReadonlyArray<import('./types.js').StateDelta>
   ): Effect.Effect<SpiderState, PersistenceError> =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       // Sort deltas by sequence number to ensure correct order
       const sortedDeltas = [...deltas].sort((a, b) => a.sequence - b.sequence);
 
-      // Start with empty state
-      const pendingRequests: import('../Scheduler/SpiderScheduler.service.js').PriorityRequest[] =
-        [];
-      const visitedFingerprints: string[] = [];
+      // Start with empty state using Chunk for immutable operations
+      let pendingRequests: Chunk.Chunk<import('../Scheduler/SpiderScheduler.service.js').PriorityRequest> =
+        Chunk.empty();
+      let visitedFingerprints: Chunk.Chunk<string> = Chunk.empty();
       let totalProcessed = 0;
 
       // Replay each delta
       for (const delta of sortedDeltas) {
         switch (delta.operation.type) {
           case 'enqueue':
-            pendingRequests.push(delta.operation.request);
+            pendingRequests = Chunk.append(
+              pendingRequests,
+              delta.operation.request
+            );
             break;
 
           case 'dequeue': {
             const operation = delta.operation;
             if (operation.type === 'dequeue') {
-              const dequeueIndex = pendingRequests.findIndex(
+              const pendingArray = Chunk.toReadonlyArray(pendingRequests);
+              const dequeueIndex = pendingArray.findIndex(
                 (req) => req.fingerprint === operation.fingerprint
               );
               if (dequeueIndex >= 0) {
-                pendingRequests.splice(dequeueIndex, 1);
+                pendingRequests = Chunk.fromIterable(
+                  pendingArray.filter((_, idx) => idx !== dequeueIndex)
+                );
                 totalProcessed++;
               }
             }
@@ -200,8 +207,12 @@ export class DeltaPersistence implements PersistenceStrategy {
           case 'mark_visited': {
             const operation = delta.operation;
             if (operation.type === 'mark_visited') {
-              if (!visitedFingerprints.includes(operation.fingerprint)) {
-                visitedFingerprints.push(operation.fingerprint);
+              const visitedArray = Chunk.toReadonlyArray(visitedFingerprints);
+              if (!visitedArray.includes(operation.fingerprint)) {
+                visitedFingerprints = Chunk.append(
+                  visitedFingerprints,
+                  operation.fingerprint
+                );
               }
             }
             break;
@@ -209,24 +220,11 @@ export class DeltaPersistence implements PersistenceStrategy {
         }
       }
 
-      return yield* Effect.tryPromise({
-        try: async () => {
-          const { SpiderState } = await import(
-            '../Scheduler/SpiderScheduler.service.js'
-          );
-          return new SpiderState({
-            key,
-            pendingRequests,
-            visitedFingerprints,
-            totalProcessed,
-          });
-        },
-        catch: (error) =>
-          new PersistenceError({
-            message: 'Failed to import SpiderState',
-            cause: error,
-            operation: 'reconstructStateFromDeltas',
-          }),
+      return new SpiderState({
+        key,
+        pendingRequests: [...Chunk.toReadonlyArray(pendingRequests)],
+        visitedFingerprints: [...Chunk.toReadonlyArray(visitedFingerprints)],
+        totalProcessed,
       });
     });
 
@@ -377,24 +375,24 @@ export class HybridPersistence implements PersistenceStrategy {
 
   restore = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       // Try to load latest snapshot first
-      let baseState: SpiderState | null = null;
+      let baseState: Option.Option<SpiderState> = Option.none();
       let fromSequence = 0;
 
       if (self.backend.loadLatestSnapshot) {
         const snapshot = yield* self.backend.loadLatestSnapshot(key);
-        if (snapshot) {
-          baseState = snapshot.state;
-          fromSequence = snapshot.sequence + 1;
+        if (Option.isSome(snapshot)) {
+          baseState = Option.some(snapshot.value.state);
+          fromSequence = snapshot.value.sequence + 1;
         }
       }
 
       // Load deltas since snapshot (or all deltas if no snapshot)
       if (!self.backend.loadDeltas) {
-        if (baseState) {
+        if (Option.isSome(baseState)) {
           return baseState; // Return snapshot if no delta support
         }
         return yield* Effect.fail(
@@ -407,8 +405,8 @@ export class HybridPersistence implements PersistenceStrategy {
 
       const deltas = yield* self.backend.loadDeltas(key, fromSequence);
 
-      if (!baseState && deltas.length === 0) {
-        return null; // No state found
+      if (Option.isNone(baseState) && deltas.length === 0) {
+        return Option.none<SpiderState>(); // No state found
       }
 
       if (deltas.length === 0) {
@@ -416,44 +414,56 @@ export class HybridPersistence implements PersistenceStrategy {
       }
 
       // Apply deltas to base state (or reconstruct from scratch if no base)
-      return yield* self.applyDeltasToState(key, baseState, deltas);
+      const reconstructed = yield* self.applyDeltasToState(key, baseState, deltas);
+      return Option.some(reconstructed);
     });
   };
 
   private applyDeltasToState = (
     key: SpiderStateKey,
-    baseState: SpiderState | null,
+    baseState: Option.Option<SpiderState>,
     deltas: ReadonlyArray<import('./types.js').StateDelta>
   ): Effect.Effect<SpiderState, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       // Use delta strategy to reconstruct if no base state
-      if (!baseState) {
+      if (Option.isNone(baseState)) {
         const deltaStrategy = new DeltaPersistence(self.backend);
         return yield* deltaStrategy.reconstructStateFromDeltas(key, deltas);
       }
 
+      const state = baseState.value;
+
       // Apply deltas to base state
       const sortedDeltas = [...deltas].sort((a, b) => a.sequence - b.sequence);
 
-      const pendingRequests = [...baseState.pendingRequests];
-      const visitedFingerprints = [...baseState.visitedFingerprints];
-      let totalProcessed = baseState.totalProcessed;
+      let pendingRequests: Chunk.Chunk<import('../Scheduler/SpiderScheduler.service.js').PriorityRequest> =
+        Chunk.fromIterable(state.pendingRequests);
+      let visitedFingerprints: Chunk.Chunk<string> = Chunk.fromIterable(
+        state.visitedFingerprints
+      );
+      let totalProcessed = state.totalProcessed;
 
       for (const delta of sortedDeltas) {
         switch (delta.operation.type) {
           case 'enqueue':
-            pendingRequests.push(delta.operation.request);
+            pendingRequests = Chunk.append(
+              pendingRequests,
+              delta.operation.request
+            );
             break;
 
           case 'dequeue': {
             const operation = delta.operation;
             if (operation.type === 'dequeue') {
-              const dequeueIndex = pendingRequests.findIndex(
+              const pendingArray = Chunk.toReadonlyArray(pendingRequests);
+              const dequeueIndex = pendingArray.findIndex(
                 (req) => req.fingerprint === operation.fingerprint
               );
               if (dequeueIndex >= 0) {
-                pendingRequests.splice(dequeueIndex, 1);
+                pendingRequests = Chunk.fromIterable(
+                  pendingArray.filter((_, idx) => idx !== dequeueIndex)
+                );
                 totalProcessed++;
               }
             }
@@ -463,8 +473,12 @@ export class HybridPersistence implements PersistenceStrategy {
           case 'mark_visited': {
             const operation = delta.operation;
             if (operation.type === 'mark_visited') {
-              if (!visitedFingerprints.includes(operation.fingerprint)) {
-                visitedFingerprints.push(operation.fingerprint);
+              const visitedArray = Chunk.toReadonlyArray(visitedFingerprints);
+              if (!visitedArray.includes(operation.fingerprint)) {
+                visitedFingerprints = Chunk.append(
+                  visitedFingerprints,
+                  operation.fingerprint
+                );
               }
             }
             break;
@@ -472,24 +486,11 @@ export class HybridPersistence implements PersistenceStrategy {
         }
       }
 
-      return yield* Effect.tryPromise({
-        try: async () => {
-          const { SpiderState } = await import(
-            '../Scheduler/SpiderScheduler.service.js'
-          );
-          return new SpiderState({
-            key,
-            pendingRequests,
-            visitedFingerprints,
-            totalProcessed,
-          });
-        },
-        catch: (error) =>
-          new PersistenceError({
-            message: 'Failed to import SpiderState',
-            cause: error,
-            operation: 'applyDeltasToState',
-          }),
+      return new SpiderState({
+        key,
+        pendingRequests: [...Chunk.toReadonlyArray(pendingRequests)],
+        visitedFingerprints: [...Chunk.toReadonlyArray(visitedFingerprints)],
+        totalProcessed,
       });
     });
   };

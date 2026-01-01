@@ -3,7 +3,7 @@
  * Helper functions for migrating to idiomatic Effect patterns
  */
 
-import { Option, Effect } from 'effect';
+import { Option, Effect, Schema } from 'effect';
 
 /**
  * Safely parse JSON with typed error handling
@@ -11,26 +11,28 @@ import { Option, Effect } from 'effect';
 export const safeJsonParse = <E>(
   data: string,
   onError: (error: unknown) => E
-) => 
-  Effect.try({
-    try: () => JSON.parse(data),
-    catch: onError
-  });
+) =>
+  Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(data).pipe(
+    Effect.mapError(onError)
+  );
 
 /**
  * Convert nullable value to Option with logging
+ * Returns an Effect when logging is needed, otherwise returns the Option directly
  */
 export const toOption = <T>(
   value: T | null | undefined,
   logContext?: string
-): Option.Option<T> => {
+): Effect.Effect<Option.Option<T>> => {
   const result = Option.fromNullable(value);
-  
+
   if (logContext && Option.isNone(result)) {
-    console.debug(`[Migration] Null value encountered: ${logContext}`);
+    return Effect.logDebug(`[Migration] Null value encountered: ${logContext}`).pipe(
+      Effect.map(() => result)
+    );
   }
-  
-  return result;
+
+  return Effect.succeed(result);
 };
 
 /**
@@ -62,7 +64,7 @@ export const cleanupResources = <E>(
         catch: (error) => onError(id, error)
       })
     ),
-    { mode: "either" }
+    { mode: 'either' }
   );
 
 /**

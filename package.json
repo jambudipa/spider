@@ -36,7 +36,6 @@
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit --skipLibCheck --downlevelIteration --project tsconfig.test.json",
     "typecheck:examples": "tsc --noEmit --project tsconfig.examples.json",
-    "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "prepack": "npm run build",
     "changeset": "changeset",
@@ -51,7 +50,9 @@
     "test:core": "vitest run tests/core",
     "test:all": "npm run test:examples && npm run test:core",
     "ci:validate": "tsx scripts/validate-ci.ts",
-    "ci:local": "npm run ci:validate"
+    "ci:local": "npm run ci:validate",
+    "clean": "npx tsx ./scripts/clean.ts",
+    "clean:verbose": "npx tsx ./scripts/clean.ts --verbose"
   },
   "keywords": [
     "web-scraping",
@@ -86,15 +87,19 @@
     "@playwright/test": "^1.54.2",
     "@types/node": "^20.19.11",
     "@types/tough-cookie": "^4.0.5",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.51.0",
+    "@typescript-eslint/parser": "^8.51.0",
     "@typescript-eslint/typescript-estree": "^8.38.0",
     "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/eslint-plugin": "^1.6.4",
     "@vitest/ui": "^1.6.0",
     "cheerio": "^1.1.2",
     "domhandler": "^5.0.3",
     "effect": "^3.16.16",
-    "eslint": "^8.57.0",
+    "eslint": "^9.39.2",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsonc": "^2.21.0",
+    "jsonc-eslint-parser": "^2.4.2",
     "pdf-parse": "^1.1.1",
     "playwright": "^1.54.2",
     "prettier": "^3.6.2",
@@ -104,10 +109,17 @@
     "typedoc": "^0.28.9",
     "typedoc-plugin-markdown": "^4.8.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.51.0",
     "vite": "^5.0.0",
     "vitest": "^1.6.0"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
+    "@types/cli-progress": "^3.11.6",
+    "cli-progress": "^3.12.0",
+    "commander": "^14.0.2"
   }
 }

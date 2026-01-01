@@ -4,25 +4,44 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { Effect } from 'effect';
 import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
+interface InterceptedRequest {
+  url: string;
+  method: string;
+  postData: Record<string, unknown> | null;
+  headers: Record<string, string>;
+  timestamp: number;
+}
+
+interface InterceptedResponse {
+  url: string;
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+  timestamp: number;
+}
+
+interface GraphQLDataItem {
+  url: string;
+  data: Record<string, unknown>;
+  timestamp: number;
+}
+
+interface PaginationRequest {
+  url: string;
+  method: string;
+  postData: Record<string, unknown> | null;
+  headers: Record<string, string>;
+  timestamp: number;
+}
+
 class GraphQLTest extends DynamicScenarioBase {
-  protected interceptedRequests: Array<{
-    url: string;
-    method: string;
-    postData: any;
-    headers: any;
-    timestamp: number;
-  }> = [];
-  
-  protected interceptedResponses: Array<{
-    url: string;
-    status: number;
-    body: any;
-    headers: any;
-    timestamp: number;
-  }> = [];
+  protected interceptedRequests: InterceptedRequest[] = [];
+
+  protected interceptedResponses: InterceptedResponse[] = [];
 
   get getInterceptedRequests() {
     return this.interceptedRequests;
@@ -32,9 +51,9 @@ class GraphQLTest extends DynamicScenarioBase {
     return this.interceptedResponses;
   }
 
-  async setup(): Promise<void> {
-    await super.setup();
-    
+  async setupAsync(): Promise<void> {
+    await Effect.runPromise(super.setup());
+
     // Set up request/response interception
     this.getPage().on('request', request => {
       const url = request.url();
@@ -48,7 +67,7 @@ class GraphQLTest extends DynamicScenarioBase {
         });
       }
     });
-    
+
     this.getPage().on('response', async response => {
       const url = response.url();
       if (this.isGraphQLResponse(url, response.headers())) {
@@ -81,15 +100,15 @@ class GraphQLTest extends DynamicScenarioBase {
            contentType.includes('application/json') && url.includes('api');
   }
   
-  private parsePostData(postData?: string): any {
+  private parsePostData(postData?: string): Record<string, unknown> | null {
     if (!postData) return null;
-    
+
     try {
-      return JSON.parse(postData);
+      return JSON.parse(postData) as Record<string, unknown>;
     } catch {
       // Try to parse as URL-encoded
       const params = new URLSearchParams(postData);
-      const result: Record<string, any> = {};
+      const result: Record<string, unknown> = {};
       params.forEach((value, key) => {
         result[key] = value;
       });
@@ -97,19 +116,42 @@ class GraphQLTest extends DynamicScenarioBase {
     }
   }
 
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
-    
+  async validateScenarioAsync(): Promise<void> {
+    await Effect.runPromise(super.validateScenario());
+
     // Verify we're on the reviews page
     const url = this.getPage().url();
     expect(url).toContain('/reviews');
   }
 
-  hasNestedObjects(obj: any, depth: number = 0): boolean {
+  async cleanupAsync(): Promise<void> {
+    await Effect.runPromise(super.cleanup());
+  }
+
+  async navigateToScenarioAsync(path: string): Promise<void> {
+    await Effect.runPromise(super.navigateToScenario(path));
+  }
+
+  async waitForContentAsync(selector: string, timeout?: number): Promise<void> {
+    await Effect.runPromise(super.waitForContent(selector, timeout));
+  }
+
+  async interceptRequestsAsync(
+    pattern: string | RegExp,
+    handler: (url: string, body: unknown) => void
+  ): Promise<void> {
+    await Effect.runPromise(super.interceptRequests(pattern, handler));
+  }
+
+  async handleFailureAsync(testName: string, error: Error): Promise<never> {
+    return Effect.runPromise(super.handleFailure(testName, error));
+  }
+
+  hasNestedObjects(obj: Record<string, unknown>, depth: number = 0): boolean {
     if (depth > 3) return false; // Prevent infinite recursion
-    
+
     if (typeof obj !== 'object' || obj === null) return false;
-    
+
     for (const key in obj) {
       const value = obj[key];
       if (typeof value === 'object' && value !== null) {
@@ -124,7 +166,7 @@ class GraphQLTest extends DynamicScenarioBase {
         }
       }
     }
-    
+
     return false;
   }
 }
@@ -134,20 +176,20 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
   
   beforeEach(async () => {
     test = new GraphQLTest('GraphqlBackgroundRequests');
-    await test.setup();
-    await test.navigateToScenario('/reviews');
+    await test.setupAsync();
+    await test.navigateToScenarioAsync('/reviews');
   });
-  
+
   afterEach(async () => {
     if (test) {
-      await test.cleanup();
+      await test.cleanupAsync();
     }
   });
 
   it('should detect GraphQL endpoint', async () => {
     try {
       // Wait for page to load and interact with it to trigger requests
-      await test.waitForContent('body');
+      await test.waitForContentAsync('body');
       
       // Try to trigger dynamic loading to capture GraphQL requests
       try {
@@ -157,8 +199,10 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
           await loadMoreButton.click();
           await test.getPage().waitForTimeout(3000);
         }
-      } catch {}
-      
+      } catch {
+          // Interaction may fail if element not found - continue test
+        }
+
       // Also try scrolling to potentially trigger lazy loading
       await test.getPage().evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight * 0.8);
@@ -189,10 +233,10 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         apiResponses.forEach(response => {
           if (response.body && typeof response.body === 'object') {
             // GraphQL responses typically have 'data' or 'errors' fields
-            const hasGraphQLStructure = 
-              response.body.hasOwnProperty('data') ||
-              response.body.hasOwnProperty('errors') ||
-              response.body.hasOwnProperty('extensions');
+            const hasGraphQLStructure =
+              Object.prototype.hasOwnProperty.call(response.body, 'data') ||
+              Object.prototype.hasOwnProperty.call(response.body, 'errors') ||
+              Object.prototype.hasOwnProperty.call(response.body, 'extensions');
               
             if (hasGraphQLStructure) {
               expect(hasGraphQLStructure).toBe(true);
@@ -202,20 +246,21 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('detect-graphql-endpoint', error as Error);
+      await test.handleFailureAsync('detect-graphql-endpoint', error as Error);
     }
   });
 
   it('should query GraphQL for data', async () => {
     try {
       // Set up response interception for GraphQL-like data
-      const graphqlData: any[] = [];
+      const graphqlData: GraphQLDataItem[] = [];
       
-      await test.interceptRequests('/api', (url, body) => {
-        if (body && (body.data || body.reviews || body.items)) {
+      await test.interceptRequestsAsync('/api', (url, body) => {
+        const typedBody = body as Record<string, unknown> | null;
+        if (typedBody && (typedBody.data || typedBody.reviews || typedBody.items)) {
           graphqlData.push({
             url,
-            data: body,
+            data: typedBody,
             timestamp: Date.now()
           });
         }
@@ -228,7 +273,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
           const buttons = await test.getPage().$$('button');
           for (const button of buttons) {
             const text = await button.textContent();
-            if (text && text.toLowerCase().includes('load')) {
+            if (text?.toLowerCase().includes('load')) {
               await button.click();
               await test.getPage().waitForTimeout(1000);
               break;
@@ -249,7 +294,9 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       for (const interaction of interactions) {
         try {
           await interaction();
-        } catch {}
+        } catch {
+          // Interaction may fail - continue with next interaction
+        }
       }
       
       // Check if we captured any structured data responses
@@ -276,13 +323,13 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('query-graphql-data', error as Error);
+      await test.handleFailureAsync('query-graphql-data', error as Error);
     }
   });
 
   it('should handle GraphQL pagination', async () => {
     try {
-      const paginationRequests: any[] = [];
+      const paginationRequests: PaginationRequest[] = [];
       
       // Monitor pagination-related requests
       test.getInterceptedRequests.forEach(req => {
@@ -308,13 +355,13 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
             .map(el => ({
               text: el.textContent?.toLowerCase() || '',
               href: (el as HTMLAnchorElement).href || '',
-              className: el.className
+              classNames: el.getAttribute('class') || ''
             }))
-            .filter(btn => 
+            .filter(btn =>
               btn.text.includes('next') ||
               btn.text.includes('more') ||
               btn.text.includes('load') ||
-              btn.className.includes('pagination')
+              btn.classNames.includes('pagination')
             )
         );
         
@@ -326,7 +373,9 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
               await button.click();
               await test.getPage().waitForTimeout(2000);
             }
-          } catch {}
+          } catch {
+            // Button click may fail - continue test
+          }
         } else {
           break;
         }
@@ -346,11 +395,11 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Verify reviews increase with pagination
-      const finalReviews = await DataExtractor.extractReviews(test.getPage());
+      const finalReviews = await Effect.runPromise(DataExtractor.extractReviews(test.getPage()));
       expect(finalReviews.length).toBeGreaterThan(0);
       
     } catch (error) {
-      await test.handleFailure('handle-graphql-pagination', error as Error);
+      await test.handleFailureAsync('handle-graphql-pagination', error as Error);
     }
   });
 
@@ -371,7 +420,9 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
             await element.click();
             await test.getPage().waitForTimeout(1000);
           }
-        } catch {}
+        } catch {
+          // Element interaction may fail - continue with next element
+        }
       }
       
       // Analyze intercepted responses for nested structure
@@ -396,12 +447,12 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Also check if the page itself contains nested review/testimonial data
-      const pageReviews = await DataExtractor.extractReviews(test.getPage());
+      const pageReviews = await Effect.runPromise(DataExtractor.extractReviews(test.getPage()));
       if (pageReviews.length > 0) {
         expect(pageReviews.length).toBeGreaterThan(0);
-        
+
         // Verify nested review structure
-        pageReviews.forEach(review => {
+        pageReviews.forEach((review) => {
           expect(review).toHaveProperty('author');
           expect(review).toHaveProperty('content');
           expect(typeof review.rating).toBe('number');
@@ -409,7 +460,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('extract-nested-graphql-data', error as Error);
+      await test.handleFailureAsync('extract-nested-graphql-data', error as Error);
     }
   });
 
@@ -428,11 +479,13 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         // Try accessing non-existent endpoints
         async () => {
           try {
-            await test.getPage().goto(`${test.getBaseUrl()}/api/reviews/99999`, { 
+            await test.getPage().goto(`${test.getBaseUrl()}/api/reviews/99999`, {
               waitUntil: 'networkidle',
-              timeout: 5000 
+              timeout: 5000
             });
-          } catch {}
+          } catch {
+            // Expected to fail or timeout - this is intentional
+          }
         },
         
         // Try invalid pagination
@@ -442,7 +495,9 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
               waitUntil: 'networkidle',
               timeout: 5000
             });
-          } catch {}
+          } catch {
+            // Expected to fail or timeout - this is intentional
+          }
         }
       ];
       
@@ -451,11 +506,13 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
         try {
           await trigger();
           await test.getPage().waitForTimeout(1000);
-        } catch {}
+        } catch {
+          // Error trigger may fail - continue with next trigger
+        }
       }
       
       // Return to original page
-      await test.navigateToScenario('/reviews');
+      await test.navigateToScenarioAsync('/reviews');
       
       // Verify error handling
       if (errorResponses.length > 0) {
@@ -471,14 +528,14 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
       // Verify page still functions after error scenarios
-      const finalReviews = await DataExtractor.extractReviews(test.getPage());
+      const finalReviews = await Effect.runPromise(DataExtractor.extractReviews(test.getPage()));
       expect(finalReviews.length).toBeGreaterThanOrEqual(0);
       
       const pageContent = await test.getPage().content();
       expect(pageContent.length).toBeGreaterThan(1000);
       
     } catch (error) {
-      await test.handleFailure('handle-graphql-errors', error as Error);
+      await test.handleFailureAsync('handle-graphql-errors', error as Error);
     }
   });
 
@@ -500,15 +557,15 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
           .map(el => ({
             text: el.textContent?.toLowerCase() || '',
             type: (el as HTMLInputElement).type || 'button',
-            className: el.className
+            classNames: el.getAttribute('class') || ''
           }))
-          .filter(el => 
+          .filter(el =>
             el.text.includes('submit') ||
             el.text.includes('save') ||
             el.text.includes('update') ||
             el.text.includes('delete') ||
             el.type === 'submit' ||
-            el.className.includes('submit')
+            el.classNames.includes('submit')
           )
       );
       
@@ -520,20 +577,22 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
             // Don't actually submit - just verify the button exists
             expect(submitButton).toBeTruthy();
           }
-        } catch {}
+        } catch {
+          // Submit button interaction may fail - continue test
+        }
       }
       
       // Check for CSRF tokens or other mutation-related data
-      const csrfToken = await DataExtractor.extractCSRFToken(test.getPage());
+      const csrfToken = await Effect.runPromise(DataExtractor.extractCSRFToken(test.getPage()));
       const hasFormElements = await test.getPage().evaluate(() => {
         return document.querySelectorAll('form, input, textarea').length > 0;
       });
-      
+
       // Verify mutation support indicators
       if (mutationRequests.length > 0) {
         expect(mutationRequests.length).toBeGreaterThan(0);
-        
-        mutationRequests.forEach(request => {
+
+        mutationRequests.forEach((request) => {
           expect(request.method).toBe('POST');
           expect(request.postData).toBeTruthy();
         });
@@ -543,7 +602,7 @@ describe('GraphqlBackgroundRequests Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('support-graphql-mutations', error as Error);
+      await test.handleFailureAsync('support-graphql-mutations', error as Error);
     }
   });
 });

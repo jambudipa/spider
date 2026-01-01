@@ -3,13 +3,14 @@
  * Provides high-level browser automation capabilities
  */
 
-import { Effect } from 'effect';
-import { Page, Request, Response, Route } from 'playwright';
+import { Chunk, Data, Effect, Option, Stream } from 'effect';
+import type { Readable } from 'node:stream';
+import { Page, Response as PlaywrightResponse, Route, Cookie, Request as PlaywrightRequest } from 'playwright';
 import { BrowserManager } from './BrowserManager';
 import { AdapterNotInitialisedError } from '../lib/errors';
 
-export type RequestHandler = (request: Request) => void;
-export type ResponseHandler = (response: Response) => void;
+export type RequestHandler = (request: PlaywrightRequest) => void;
+export type ResponseHandler = (response: PlaywrightResponse) => void;
 
 export interface WaitOptions {
   timeout?: number;
@@ -22,12 +23,42 @@ export interface ScrollOptions {
   scrollDistance?: number;
 }
 
+/**
+ * Error thrown when page is closed during an operation
+ */
+export class PageClosedError extends Data.TaggedError('PageClosedError')<{
+  readonly operation: string;
+  readonly message: string;
+}> {
+  static create(operation: string): PageClosedError {
+    return new PageClosedError({
+      operation,
+      message: `Page was closed during ${operation}`
+    });
+  }
+}
+
+/**
+ * Error thrown when stream reading fails
+ */
+export class StreamReadError extends Data.TaggedError('StreamReadError')<{
+  readonly cause: unknown;
+  readonly message: string;
+}> {
+  static fromCause(cause: unknown): StreamReadError {
+    return new StreamReadError({
+      cause,
+      message: `Stream read failed: ${cause}`
+    });
+  }
+}
+
 export class PlaywrightAdapter {
   private browserManager: BrowserManager;
-  private page: Page | null = null;
+  private page: Option.Option<Page> = Option.none();
   private contextId: string;
-  private requestHandlers: RequestHandler[] = [];
-  private responseHandlers: ResponseHandler[] = [];
+  private requestHandlers: Chunk.Chunk<RequestHandler> = Chunk.empty();
+  private responseHandlers: Chunk.Chunk<ResponseHandler> = Chunk.empty();
 
   constructor(browserManager: BrowserManager, contextId: string) {
     this.browserManager = browserManager;
@@ -37,26 +68,25 @@ export class PlaywrightAdapter {
   /**
    * Initialise the adapter with a new page
    */
-  initialise(): Effect.Effect<Page, AdapterNotInitialisedError, never> {
+  initialise(): Effect.Effect<Page, AdapterNotInitialisedError> {
     const self = this;
     return Effect.gen(function* () {
-      const page = yield* Effect.tryPromise<Page, AdapterNotInitialisedError>({
-        try: () => self.browserManager.createPage(self.contextId),
-        catch: (error) => AdapterNotInitialisedError.create(
+      const page = yield* self.browserManager.createPage(self.contextId).pipe(
+        Effect.mapError((error) => AdapterNotInitialisedError.create(
           self.contextId,
-          `Failed to create page: ${error}`
-        )
-      });
-      
-      self.page = page;
-      
+          `Failed to create page: ${String(error)}`
+        ))
+      );
+
+      self.page = Option.some(page);
+
       // Setup request/response interception
-      page.on('request', (request) => {
-        self.requestHandlers.forEach(handler => handler(request));
+      page.on('request', (request: PlaywrightRequest) => {
+        Chunk.forEach(self.requestHandlers, (handler) => handler(request));
       });
 
-      page.on('response', (response) => {
-        self.responseHandlers.forEach(handler => handler(response));
+      page.on('response', (response: PlaywrightResponse) => {
+        Chunk.forEach(self.responseHandlers, (handler) => handler(response));
       });
 
       return page;
@@ -66,385 +96,536 @@ export class PlaywrightAdapter {
   /**
    * Get the current page instance (Effect)
    */
-  getPageEffect(): Effect.Effect<Page, AdapterNotInitialisedError, never> {
-    if (!this.page) {
+  getPageEffect(): Effect.Effect<Page, AdapterNotInitialisedError> {
+    if (Option.isNone(this.page)) {
       return Effect.fail(
         AdapterNotInitialisedError.create(this.contextId, 'getPage')
       );
     }
-    return Effect.succeed(this.page);
+    return Effect.succeed(this.page.value);
   }
-  
+
   /**
    * Get the current page instance (direct)
+   * Returns Option for type-safe handling
    */
-  getPage(): Page {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
+  getPage(): Option.Option<Page> {
     return this.page;
+  }
+
+  /**
+   * Internal helper to get page or fail
+   */
+  private requirePage(operation: string): Effect.Effect<Page, AdapterNotInitialisedError> {
+    if (Option.isNone(this.page)) {
+      return Effect.fail(AdapterNotInitialisedError.create(this.contextId, operation));
+    }
+    return Effect.succeed(this.page.value);
   }
 
   /**
    * Navigate to a URL
    */
-  async goto(url: string, options?: WaitOptions): Promise<Response | null> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    return await this.page.goto(url, {
-      waitUntil: options?.state ?? 'networkidle',
-      timeout: options?.timeout
+  goto(url: string, options?: WaitOptions): Effect.Effect<Option.Option<PlaywrightResponse>, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('goto');
+      const response = yield* Effect.tryPromise({
+        try: () => page.goto(url, {
+          waitUntil: options?.state ?? 'networkidle',
+          timeout: options?.timeout
+        }),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `goto failed: ${error}`)
+      });
+      return Option.fromNullable(response);
     });
   }
 
   /**
    * Wait for dynamic content to load
    */
-  async waitForDynamicContent(selector: string, options?: WaitOptions): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.waitForSelector(selector, {
-      state: 'visible',
-      timeout: options?.timeout ?? 10000
+  waitForDynamicContent(selector: string, options?: WaitOptions): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('waitForDynamicContent');
+      yield* Effect.tryPromise({
+        try: () => page.waitForSelector(selector, {
+          state: 'visible',
+          timeout: options?.timeout ?? 10000
+        }),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `waitForDynamicContent failed: ${error}`)
+      });
     });
   }
 
   /**
    * Scroll to bottom progressively
    */
-  async scrollToBottom(options?: ScrollOptions): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    const delay = options?.delay ?? 500;
-    const maxScrolls = options?.maxScrolls ?? 50;
-    const scrollDistance = options?.scrollDistance ?? 500;
+  scrollToBottom(options?: ScrollOptions): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('scrollToBottom');
+      const delay = options?.delay ?? 500;
+      const maxScrolls = options?.maxScrolls ?? 50;
+      const scrollDistance = options?.scrollDistance ?? 500;
 
-    let previousHeight = 0;
-    let currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
-    let scrollCount = 0;
+      let previousHeight = 0;
+      let currentHeight = yield* Effect.tryPromise({
+        try: () => page.evaluate(() => document.body.scrollHeight),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `scrollToBottom failed: ${error}`)
+      });
+      let scrollCount = 0;
 
-    while (previousHeight !== currentHeight && scrollCount < maxScrolls) {
-      previousHeight = currentHeight;
-      
-      await this.page.evaluate((distance) => {
-        window.scrollBy(0, distance);
-      }, scrollDistance);
+      while (previousHeight !== currentHeight && scrollCount < maxScrolls) {
+        previousHeight = currentHeight;
 
-      await this.page.waitForTimeout(delay);
-      
-      currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
-      scrollCount++;
-    }
+        yield* Effect.tryPromise({
+          try: () => page.evaluate((distance) => {
+            window.scrollBy(0, distance);
+          }, scrollDistance),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `scrollToBottom failed: ${error}`)
+        });
 
-    // Final scroll to absolute bottom
-    await this.page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
+        yield* Effect.tryPromise({
+          try: () => page.waitForTimeout(delay),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `scrollToBottom failed: ${error}`)
+        });
+
+        currentHeight = yield* Effect.tryPromise({
+          try: () => page.evaluate(() => document.body.scrollHeight),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `scrollToBottom failed: ${error}`)
+        });
+        scrollCount++;
+      }
+
+      // Final scroll to absolute bottom
+      yield* Effect.tryPromise({
+        try: () => page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+        }),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `scrollToBottom failed: ${error}`)
+      });
     });
   }
 
   /**
    * Click an element and wait for navigation or content
    */
-  async clickAndWait(selector: string, waitFor?: string | WaitOptions): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    
-    // Use force click to bypass event delegation issues
-    const clickOptions = { force: true };
-    
-    if (typeof waitFor === 'string') {
-      // Wait for specific selector after click
-      await this.page.click(selector, clickOptions);
-      await this.page.waitForSelector(waitFor, { state: 'visible' });
-    } else {
-      // Click and wait for network/DOM changes
-      await this.page.click(selector, clickOptions);
-      await this.page.waitForTimeout(1000); // Allow time for dynamic content
-      
-      // Wait for network idle if specified
-      if (waitFor?.state === 'networkidle') {
-        await this.page.waitForLoadState('networkidle', {
-          timeout: waitFor?.timeout ?? 5000
+  clickAndWait(selector: string, waitFor?: string | WaitOptions): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('clickAndWait');
+
+      // Use force click to bypass event delegation issues
+      const clickOptions = { force: true };
+
+      if (typeof waitFor === 'string') {
+        // Wait for specific selector after click
+        yield* Effect.tryPromise({
+          try: () => page.click(selector, clickOptions),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clickAndWait failed: ${error}`)
         });
+        yield* Effect.tryPromise({
+          try: () => page.waitForSelector(waitFor, { state: 'visible' }),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clickAndWait failed: ${error}`)
+        });
+      } else {
+        // Click and wait for network/DOM changes
+        yield* Effect.tryPromise({
+          try: () => page.click(selector, clickOptions),
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clickAndWait failed: ${error}`)
+        });
+        yield* Effect.tryPromise({
+          try: () => page.waitForTimeout(1000), // Allow time for dynamic content
+          catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clickAndWait failed: ${error}`)
+        });
+
+        // Wait for network idle if specified
+        if (waitFor?.state === 'networkidle') {
+          yield* Effect.tryPromise({
+            try: () => page.waitForLoadState('networkidle', {
+              timeout: waitFor?.timeout ?? 5000
+            }),
+            catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clickAndWait failed: ${error}`)
+          });
+        }
       }
-    }
+    });
   }
 
   /**
    * Intercept requests
    */
-  async interceptRequests(handler: RequestHandler): Promise<void> {
-    this.requestHandlers.push(handler);
+  interceptRequests(handler: RequestHandler): Effect.Effect<void> {
+    return Effect.sync(() => {
+      this.requestHandlers = Chunk.append(this.requestHandlers, handler);
+    });
   }
 
   /**
    * Intercept responses
    */
-  async interceptResponses(handler: ResponseHandler): Promise<void> {
-    this.responseHandlers.push(handler);
+  interceptResponses(handler: ResponseHandler): Effect.Effect<void> {
+    return Effect.sync(() => {
+      this.responseHandlers = Chunk.append(this.responseHandlers, handler);
+    });
   }
 
   /**
    * Route specific URLs
    */
-  async route(pattern: string | RegExp, handler: (route: Route) => void): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.route(pattern, handler);
+  route(pattern: string | RegExp, handler: (route: Route) => void): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('route');
+      yield* Effect.tryPromise({
+        try: () => page.route(pattern, handler),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `route failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Execute JavaScript in page context
    */
-  async evaluate<T>(fn: () => T): Promise<T> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    return await this.page.evaluate(fn);
+  evaluate<T>(fn: () => T): Effect.Effect<T, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('evaluate');
+      return yield* Effect.tryPromise({
+        try: () => page.evaluate(fn),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `evaluate failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Take a screenshot
    */
-  async screenshot(path: string): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.screenshot({ path, fullPage: true });
+  screenshot(path: string): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('screenshot');
+      yield* Effect.tryPromise({
+        try: () => page.screenshot({ path, fullPage: true }),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `screenshot failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Get page content
    */
-  async content(): Promise<string> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    return await this.page.content();
+  content(): Effect.Effect<string, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('content');
+      return yield* Effect.tryPromise({
+        try: () => page.content(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `content failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Fill a form field
    */
-  async fill(selector: string, value: string): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.fill(selector, value);
+  fill(selector: string, value: string): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('fill');
+      yield* Effect.tryPromise({
+        try: () => page.fill(selector, value),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `fill failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Select an option
    */
-  async select(selector: string, value: string): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.selectOption(selector, value);
+  select(selector: string, value: string): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('select');
+      yield* Effect.tryPromise({
+        try: () => page.selectOption(selector, value),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `select failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Check if element exists
    */
-  async exists(selector: string): Promise<boolean> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    return await this.page.locator(selector).count() > 0;
+  exists(selector: string): Effect.Effect<boolean, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('exists');
+      const count = yield* Effect.tryPromise({
+        try: () => page.locator(selector).count(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `exists failed: ${error}`)
+      });
+      return count > 0;
+    });
   }
 
   /**
    * Wait for network idle
    */
-  async waitForNetworkIdle(options?: WaitOptions): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.waitForLoadState('networkidle', {
-      timeout: options?.timeout
+  waitForNetworkIdle(options?: WaitOptions): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('waitForNetworkIdle');
+      yield* Effect.tryPromise({
+        try: () => page.waitForLoadState('networkidle', {
+          timeout: options?.timeout
+        }),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `waitForNetworkIdle failed: ${error}`)
+      });
     });
   }
 
   /**
    * Handle new tabs/windows
    */
-  async handleNewTab(callback: (newPage: Page) => Promise<void>): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    const context = this.page.context();
+  handleNewTab(callback: (page: Page) => Effect.Effect<void>): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('handleNewTab');
+      const context = page.context();
 
-    const newPagePromise = context.waitForEvent('page');
-    const newPage = await newPagePromise;
-    
-    await callback(newPage);
-    await newPage.close();
+      const newPage = yield* Effect.tryPromise({
+        try: () => context.waitForEvent('page'),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `handleNewTab failed: ${error}`)
+      });
+
+      yield* callback(newPage);
+      yield* Effect.tryPromise({
+        try: () => newPage.close(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `handleNewTab close failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Get cookies
    */
-  async getCookies(): Promise<any[]> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    return await this.page.context().cookies();
+  getCookies(): Effect.Effect<readonly Cookie[], AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('getCookies');
+      return yield* Effect.tryPromise({
+        try: () => page.context().cookies(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `getCookies failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Set cookies
    */
-  async setCookies(cookies: any[]): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.context().addCookies(cookies);
+  setCookies(cookies: readonly Cookie[]): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('setCookies');
+      yield* Effect.tryPromise({
+        try: () => page.context().addCookies([...cookies]),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `setCookies failed: ${error}`)
+      });
+    });
   }
 
   /**
    * Clear cookies
    */
-  async clearCookies(): Promise<void> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    await this.page.context().clearCookies();
+  clearCookies(): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('clearCookies');
+      yield* Effect.tryPromise({
+        try: () => page.context().clearCookies(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `clearCookies failed: ${error}`)
+      });
+    });
+  }
+
+  /**
+   * Helper to read a Node stream as a Buffer using Effect Stream
+   */
+  private readStreamAsBuffer(nodeStream: Readable): Effect.Effect<Buffer, StreamReadError> {
+    return Effect.gen(function* () {
+      const chunks = yield* Stream.fromAsyncIterable<Buffer, StreamReadError>(
+        nodeStream,
+        (error) => StreamReadError.fromCause(error)
+      ).pipe(
+        Stream.runCollect
+      );
+      return Buffer.concat(Chunk.toReadonlyArray(chunks));
+    });
   }
 
   /**
    * Download file from URL
    */
-  async downloadFile(url: string, filename?: string): Promise<{
+  downloadFile(url: string, filename?: string): Effect.Effect<{
     buffer: Buffer;
     filename: string;
     mimeType: string;
-  }> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    
-    // Check if page is closed before proceeding
-    if (this.page.isClosed()) {
-      throw new Error('Page is already closed');
-    }
-    
-    try {
+  }, AdapterNotInitialisedError | PageClosedError | StreamReadError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('downloadFile');
+
+      // Check if page is closed before proceeding
+      if (page.isClosed()) {
+        return yield* Effect.fail(PageClosedError.create('downloadFile'));
+      }
+
       // Start waiting for download before navigating
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 15000 });
-      
+      const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+
       // If URL provided, navigate to it, otherwise expect it to be triggered
       if (url.startsWith('http')) {
-        await this.page.goto(url, { timeout: 10000 });
+        yield* Effect.tryPromise({
+          try: () => page.goto(url, { timeout: 10000 }),
+          catch: (error) => {
+            if (error instanceof Error && (
+              error.message.includes('closed') ||
+              error.message.includes('Target page') ||
+              error.message.includes('browser has been closed')
+            )) {
+              return PageClosedError.create('downloadFile');
+            }
+            return AdapterNotInitialisedError.create(self.contextId, `downloadFile navigation failed: ${error}`);
+          }
+        });
       }
-      
-      const download = await downloadPromise;
-      
+
+      const download = yield* Effect.tryPromise({
+        try: () => downloadPromise,
+        catch: (error) => {
+          if (error instanceof Error && (
+            error.message.includes('closed') ||
+            error.message.includes('Target page') ||
+            error.message.includes('browser has been closed')
+          )) {
+            return PageClosedError.create('downloadFile');
+          }
+          return AdapterNotInitialisedError.create(self.contextId, `downloadFile failed: ${error}`);
+        }
+      });
+
       // Get download info
       const suggestedFilename = download.suggestedFilename();
-      const finalFilename = filename || suggestedFilename;
-      
-      // Get the download as buffer
-      const buffer = await download.createReadStream().then(stream => {
-        return new Promise<Buffer>((resolve, reject) => {
-          const chunks: Buffer[] = [];
-          stream.on('data', chunk => chunks.push(chunk));
-          stream.on('end', () => resolve(Buffer.concat(chunks)));
-          stream.on('error', reject);
-        });
+      const finalFilename = filename ?? suggestedFilename;
+
+      // Get the download stream
+      const readableStream = yield* Effect.tryPromise({
+        try: () => download.createReadStream(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `downloadFile stream failed: ${error}`)
       });
-      
+
+      // Read the stream as buffer
+      const buffer = yield* self.readStreamAsBuffer(readableStream);
+
       return {
         buffer,
         filename: finalFilename,
         mimeType: 'application/octet-stream' // Default, could be detected
       };
-    } catch (error) {
-      // Handle page closure errors gracefully
-      if (error instanceof Error && (
-        error.message.includes('closed') ||
-        error.message.includes('Target page') ||
-        error.message.includes('browser has been closed')
-      )) {
-        throw new Error('Page was closed during download attempt');
-      }
-      throw error;
-    }
+    });
   }
 
   /**
    * Trigger download by clicking element
    */
-  async downloadFromClick(selector: string): Promise<{
+  downloadFromClick(selector: string): Effect.Effect<{
     buffer: Buffer;
     filename: string;
     mimeType: string;
-  }> {
-    if (!this.page) {
-      throw new Error('Adapter not initialised');
-    }
-    
-    // Check if page is closed before proceeding
-    if (this.page.isClosed()) {
-      throw new Error('Page is already closed');
-    }
-    
-    try {
+  }, AdapterNotInitialisedError | PageClosedError | StreamReadError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const page = yield* self.requirePage('downloadFromClick');
+
+      // Check if page is closed before proceeding
+      if (page.isClosed()) {
+        return yield* Effect.fail(PageClosedError.create('downloadFromClick'));
+      }
+
       // Start waiting for download before clicking
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 15000 });
-      
+      const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+
       // Click the download trigger
-      await this.page.click(selector);
-      
-      const download = await downloadPromise;
-      
-      // Get the download as buffer
-      const buffer = await download.createReadStream().then(stream => {
-        return new Promise<Buffer>((resolve, reject) => {
-          const chunks: Buffer[] = [];
-          stream.on('data', chunk => chunks.push(chunk));
-          stream.on('end', () => resolve(Buffer.concat(chunks)));
-          stream.on('error', reject);
-        });
+      yield* Effect.tryPromise({
+        try: () => page.click(selector),
+        catch: (error) => {
+          if (error instanceof Error && (
+            error.message.includes('closed') ||
+            error.message.includes('Target page') ||
+            error.message.includes('browser has been closed')
+          )) {
+            return PageClosedError.create('downloadFromClick');
+          }
+          return AdapterNotInitialisedError.create(self.contextId, `downloadFromClick click failed: ${error}`);
+        }
       });
-      
+
+      const download = yield* Effect.tryPromise({
+        try: () => downloadPromise,
+        catch: (error) => {
+          if (error instanceof Error && (
+            error.message.includes('closed') ||
+            error.message.includes('Target page') ||
+            error.message.includes('browser has been closed')
+          )) {
+            return PageClosedError.create('downloadFromClick');
+          }
+          return AdapterNotInitialisedError.create(self.contextId, `downloadFromClick failed: ${error}`);
+        }
+      });
+
+      // Get the download stream
+      const readableStream = yield* Effect.tryPromise({
+        try: () => download.createReadStream(),
+        catch: (error) => AdapterNotInitialisedError.create(self.contextId, `downloadFromClick stream failed: ${error}`)
+      });
+
+      // Read the stream as buffer
+      const buffer = yield* self.readStreamAsBuffer(readableStream);
+
       return {
         buffer,
         filename: download.suggestedFilename(),
         mimeType: 'application/octet-stream'
       };
-    } catch (error) {
-      // Handle page closure errors gracefully
-      if (error instanceof Error && (
-        error.message.includes('closed') ||
-        error.message.includes('Target page') ||
-        error.message.includes('browser has been closed')
-      )) {
-        throw new Error('Page was closed during download attempt');
-      }
-      throw error;
-    }
+    });
   }
 
   /**
    * Close the page
    */
-  async close(): Promise<void> {
-    if (this.page) {
-      try {
-        if (!this.page.isClosed()) {
-          await this.page.close();
-        }
-      } catch (error) {
-        // Page may already be closed, ignore errors
-        console.warn('Error closing page:', error);
-      } finally {
-        this.page = null;
+  close(): Effect.Effect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (Option.isSome(self.page)) {
+        const currentPage = self.page.value;
+        yield* Effect.tryPromise({
+          try: () => {
+            if (!currentPage.isClosed()) {
+              return currentPage.close();
+            }
+            return Effect.runPromise(Effect.void);
+          },
+          catch: (error) => error
+        }).pipe(
+          Effect.catchAll((error) =>
+            Effect.logWarning('Error closing page:', error)
+          )
+        );
+        self.page = Option.none();
       }
-    }
+    });
   }
 }

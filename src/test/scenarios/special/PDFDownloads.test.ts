@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { StaticScenarioBase } from '../../helpers/BaseScenarioTest';
+import { Effect } from 'effect';
+import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError } from '../../helpers/BaseScenarioTest';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -39,86 +40,87 @@ class FileDownloadTest extends StaticScenarioBase {
     this.downloadPath = path.join(os.tmpdir(), 'spider-test-downloads');
   }
   
-  async setup(): Promise<void> {
-    await super.setup();
-    
-    // Create download directory
-    try {
-      await fs.mkdir(this.downloadPath, { recursive: true });
-    } catch {}
+  setup(): Effect.Effect<void, PageInitError> {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* Effect.suspend(() => StaticScenarioBase.prototype.setup.call(self));
+
+      // Create download directory
+      yield* Effect.tryPromise({
+        try: () => fs.mkdir(self.downloadPath, { recursive: true }),
+        catch: () => undefined // Directory may already exist, which is fine
+      }).pipe(Effect.catchAll(() => Effect.void));
+    });
   }
   
-  async cleanup(): Promise<void> {
-    // Clean up downloaded files
-    try {
-      const files = await fs.readdir(this.downloadPath);
-      await Promise.all(files.map(file => 
-        fs.unlink(path.join(this.downloadPath, file)).catch(() => {})
-      ));
-      await fs.rmdir(this.downloadPath).catch(() => {});
-    } catch {}
-    
-    await super.cleanup();
+  cleanup(): Effect.Effect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      // Clean up downloaded files
+      yield* Effect.tryPromise({
+        try: async () => {
+          const files = await fs.readdir(self.downloadPath);
+          await Promise.all(files.map(file =>
+            fs.unlink(path.join(self.downloadPath, file)).catch(() => {})
+          ));
+          await fs.rmdir(self.downloadPath).catch(() => {});
+        },
+        catch: () => undefined // Ignore cleanup errors - directory may not exist or files may be locked
+      }).pipe(Effect.catchAll(() => Effect.void));
+
+      yield* Effect.suspend(() => StaticScenarioBase.prototype.cleanup.call(self));
+    });
   }
   
   /**
    * Download file using PlaywrightAdapter and save to disk
    */
   async downloadAndSave(url: string, filename?: string, timeoutMs: number = 10000): Promise<string> {
-    return new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
         reject(new Error(`Download timeout after ${timeoutMs}ms`));
       }, timeoutMs);
-
-      try {
-        // Use a promise that catches unhandled rejections
-        const downloadResult = await this.getContext().adapter.downloadFile(url, filename).catch(error => {
-          // Prevent unhandled promise rejections from escaping
-          throw error;
-        });
-        const filePath = path.join(this.downloadPath, downloadResult.filename);
-        await fs.writeFile(filePath, downloadResult.buffer);
-        clearTimeout(timeout);
-        resolve(filePath);
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
     });
+
+    const downloadPromise = (async () => {
+      const downloadResult = await Effect.runPromise(this.getContext().adapter.downloadFile(url, filename));
+      const filePath = path.join(this.downloadPath, downloadResult.filename);
+      await fs.writeFile(filePath, downloadResult.buffer);
+      return filePath;
+    })();
+
+    return Promise.race([downloadPromise, timeoutPromise]);
   }
   
   /**
    * Download file by clicking element using PlaywrightAdapter
    */
   async downloadByClick(selector: string, timeoutMs: number = 10000): Promise<string> {
-    return new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
         reject(new Error(`Click download timeout after ${timeoutMs}ms`));
       }, timeoutMs);
+    });
 
+    const downloadPromise = (async () => {
       try {
-        // Use a promise that catches unhandled rejections
-        const downloadResult = await this.getContext().adapter.downloadFromClick(selector).catch(error => {
-          // Prevent unhandled promise rejections from escaping
-          throw error;
-        });
+        const downloadResult = await Effect.runPromise(this.getContext().adapter.downloadFromClick(selector));
         const filePath = path.join(this.downloadPath, downloadResult.filename);
         await fs.writeFile(filePath, downloadResult.buffer);
-        clearTimeout(timeout);
-        resolve(filePath);
+        return filePath;
       } catch (error) {
-        clearTimeout(timeout);
         // Handle page closed errors gracefully
         if (error instanceof Error && (
           error.message.includes('closed') ||
           error.message.includes('Target page')
         )) {
-          reject(new Error('Page was closed during download attempt'));
-        } else {
-          reject(error);
+          throw new Error('Page was closed during download attempt');
         }
+        throw error;
       }
-    });
+    })();
+
+    return Promise.race([downloadPromise, timeoutPromise]);
   }
   
   // Getter methods to access protected properties
@@ -126,28 +128,28 @@ class FileDownloadTest extends StaticScenarioBase {
   get testContext() { return this.context; }
   get testBaseUrl() { return this.getBaseUrl(); }
   
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    return Effect.suspend(() => StaticScenarioBase.prototype.validateScenario.call(this));
   }
 }
 
 describe('PDFDownloads Scenario Tests - Real Site', () => {
   let test: FileDownloadTest;
-  
+
   beforeEach(async () => {
     test = new FileDownloadTest('PDFDownloads');
-    await test.setup();
+    await Effect.runPromise(test.setup());
   });
-  
+
   afterEach(async () => {
     if (test) {
-      await test.cleanup();
+      await Effect.runPromise(test.cleanup());
     }
   });
 
   it('should detect downloadable files', async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Look for downloadable file links
       const downloadableFiles = await test.testPage.$$eval('a[href]', links =>
@@ -185,13 +187,13 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('detect-downloadable-files', error as Error);
+      await Effect.runPromise(test.handleFailure('detect-downloadable-files', error as Error));
     }
   });
 
   it('should download PDF files', async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Look for PDF links
       const pdfLinks = await test.testPage.$$eval('a[href*=".pdf"], a[href*="pdf"]', links =>
@@ -229,7 +231,6 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
           
           // Try to parse PDF content using pdf-parse
           try {
-            // @ts-ignore
             const pdfParse = (await import('pdf-parse')).default;
             const pdfData = await pdfParse(buffer);
             expect(pdfData).toBeTruthy();
@@ -261,13 +262,13 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         expect(true).toBe(true); // Pass the test if no PDF links are found
       }
     } catch (error) {
-      await test.handleFailure('download-pdf-files', error as Error);
+      await Effect.runPromise(test.handleFailure('download-pdf-files', error as Error));
     }
   });
 
   it('should download CSV files', async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Look for CSV or data export links
       const csvLinks = await test.testPage.$$eval('a[href]', links =>
@@ -321,11 +322,11 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
             expect(firstLine.length).toBeGreaterThan(0);
           }
           
-        } catch (downloadError) {
+        } catch (_downloadError) {
           // If no download, check if we can access the CSV URL
           const response = await test.testPage.goto(csvLink.href);
           expect(response?.status()).toBeLessThan(400);
-          
+
           // Check if response looks like CSV data
           const contentType = response?.headers()['content-type'];
           if (contentType) {
@@ -337,13 +338,13 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         expect(true).toBe(true); // Pass the test if no CSV links are found
       }
     } catch (error) {
-      await test.handleFailure('download-csv-files', error as Error);
+      await Effect.runPromise(test.handleFailure('download-csv-files', error as Error));
     }
   });
 
   it('should handle large file downloads', { timeout: 15000 }, async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Look for any downloadable files
       const allLinks = await test.testPage.$$eval('a[href]', links =>
@@ -396,10 +397,10 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
           
           // Verify file integrity by checking it's not corrupted
           const buffer = await fs.readFile(filePath);
-          expect(buffer.length).toBe(stats.size);
+          expect(buffer).toHaveLength(stats.size);
           expect(buffer.length).toBeGreaterThan(0);
-          
-        } catch (downloadError) {
+
+        } catch (_downloadError) {
           // If download fails, verify URL is accessible
           const response = await test.testPage.goto(testLink.href);
           expect(response?.status()).toBeLessThan(400);
@@ -424,13 +425,13 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         expect(true).toBe(true); // Pass the test if no links are found
       }
     } catch (error) {
-      await test.handleFailure('handle-large-downloads', error as Error);
+      await Effect.runPromise(test.handleFailure('handle-large-downloads', error as Error));
     }
   });
 
   it('should extract file metadata', async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Extract metadata about downloadable files
       const fileMetadata = await test.testPage.$$eval('a[href]', links =>
@@ -485,13 +486,13 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('extract-file-metadata', error as Error);
+      await Effect.runPromise(test.handleFailure('extract-file-metadata', error as Error));
     }
   });
 
   it('should handle download errors', { timeout: 15000 }, async () => {
     try {
-      await test.navigateToScenario('/product/1');
+      await Effect.runPromise(test.navigateToScenario('/product/1'));
       
       // Test various error conditions
       const testUrls = [
@@ -541,7 +542,7 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
         expect((timeoutError as Error).message.toLowerCase()).toContain('timeout');
       }
     } catch (error) {
-      await test.handleFailure('handle-download-errors', error as Error);
+      await Effect.runPromise(test.handleFailure('handle-download-errors', error as Error));
     }
   });
 });

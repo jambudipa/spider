@@ -3,7 +3,7 @@
  * Collects and manages test assertions during scenario execution
  */
 
-import { Effect, Ref, Option } from 'effect';
+import { Effect, Ref } from 'effect';
 import { AssertionResult } from './ScenarioTestRunner.js';
 
 /**
@@ -29,8 +29,8 @@ export class AssertionCollector {
   assert(
     name: string,
     condition: boolean,
-    expected?: any,
-    actual?: any,
+    expected?: unknown,
+    actual?: unknown,
     message?: string
   ): Effect.Effect<void> {
     const assertion: AssertionResult = {
@@ -86,7 +86,7 @@ export class AssertionCollector {
    */
   assertTruthy(
     name: string,
-    value: any,
+    value: unknown,
     message?: string
   ): Effect.Effect<void> {
     const passed = !!value;
@@ -104,7 +104,7 @@ export class AssertionCollector {
    */
   assertFalsy(
     name: string,
-    value: any,
+    value: unknown,
     message?: string
   ): Effect.Effect<void> {
     const passed = !value;
@@ -160,22 +160,24 @@ export class AssertionCollector {
    */
   assertHasProperty(
     name: string,
-    obj: any,
+    obj: Record<string, unknown>,
     property: string,
-    value?: any,
+    expectedValue?: unknown,
     message?: string
   ): Effect.Effect<void> {
     const hasProperty = property in obj;
-    const passed = value === undefined ? hasProperty : hasProperty && obj[property] === value;
-    
+    const actualValue = obj[property];
+    const checkValueOnly = arguments.length >= 4;
+    const passed = checkValueOnly ? hasProperty && actualValue === expectedValue : hasProperty;
+
     return this.assert(
       name,
       passed,
-      value === undefined ? `has property ${property}` : `${property} = ${value}`,
-      value === undefined ? hasProperty : obj[property],
-      message ?? (value === undefined 
-        ? `Object does not have property ${property}`
-        : `Property ${property} expected ${value}, got ${obj[property]}`)
+      checkValueOnly ? `${property} = ${String(expectedValue)}` : `has property ${property}`,
+      checkValueOnly ? actualValue : hasProperty,
+      message ?? (checkValueOnly
+        ? `Property ${property} expected ${String(expectedValue)}, got ${String(actualValue)}`
+        : `Object does not have property ${property}`)
     );
   }
 
@@ -203,7 +205,7 @@ export class AssertionCollector {
    */
   assertNoErrors(
     name: string,
-    errors: any[] | undefined,
+    errors: unknown[] | null | undefined,
     message?: string
   ): Effect.Effect<void> {
     const passed = !errors || errors.length === 0;

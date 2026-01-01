@@ -3,7 +3,7 @@
  * Effect-based URL normalization and deduplication with configurable strategies
  */
 
-import { Effect, Option, pipe, Ref } from 'effect';
+import { Effect, HashMap, HashSet, Option, pipe, Ref } from 'effect';
 import { ValidationError } from '../errors/effect-errors.js';
 
 /**
@@ -159,9 +159,9 @@ export const deduplicateUrls = (
     duplicates: number;
     invalid: number;
   };
-}, never> =>
+}> =>
   Effect.gen(function* () {
-    const domainMap = yield* Ref.make(new Map<string, UrlWithMetadata>());
+    const domainMap = yield* Ref.make(HashMap.empty<string, UrlWithMetadata>());
     const skipped = yield* Ref.make<Array<{ url: string; reason: string }>>([]);
     let invalidCount = 0;
     
@@ -173,18 +173,19 @@ export const deduplicateUrls = (
           Effect.tap((normalized) =>
             Effect.gen(function* () {
               const currentMap = yield* Ref.get(domainMap);
-              const key = strategy.wwwHandling === 'preserve' 
-                ? normalized.normalized 
+              const key = strategy.wwwHandling === 'preserve'
+                ? normalized.normalized
                 : normalized.domain;
-              
-              if (!currentMap.has(key)) {
+
+              const existingOption = HashMap.get(currentMap, key);
+
+              if (Option.isNone(existingOption)) {
                 // First URL for this domain/normalized URL
-                currentMap.set(key, urlObj);
-                yield* Ref.set(domainMap, currentMap);
+                yield* Ref.set(domainMap, HashMap.set(currentMap, key, urlObj));
               } else {
                 // Duplicate found
-                const existing = currentMap.get(key)!;
-                
+                const existing = existingOption.value;
+
                 // Apply preference rules
                 let shouldReplace = false;
                 if (strategy.wwwHandling === 'prefer-www') {
@@ -196,10 +197,9 @@ export const deduplicateUrls = (
                   const newHasWww = urlObj.url.includes('://www.');
                   shouldReplace = existingHasWww && !newHasWww;
                 }
-                
+
                 if (shouldReplace) {
-                  currentMap.set(key, urlObj);
-                  yield* Ref.set(domainMap, currentMap);
+                  yield* Ref.set(domainMap, HashMap.set(currentMap, key, urlObj));
                   yield* Ref.update(skipped, (arr) => [
                     ...arr,
                     { url: existing.url, reason: `Replaced by preferred variant: ${urlObj.url}` }
@@ -230,7 +230,7 @@ export const deduplicateUrls = (
     
     const finalMap = yield* Ref.get(domainMap);
     const finalSkipped = yield* Ref.get(skipped);
-    const deduplicated = Array.from(finalMap.values());
+    const deduplicated = Array.from(HashMap.values(finalMap));
     
     return {
       deduplicated,
@@ -250,13 +250,13 @@ export const deduplicateUrls = (
 export const createUrlDeduplicator = (
   strategy: DeduplicationStrategy = DEFAULT_DEDUPLICATION_STRATEGY
 ) => Effect.gen(function* () {
-  const seenUrls = yield* Ref.make(new Set<string>());
+  const seenUrls = yield* Ref.make(HashSet.empty<string>());
   const urlStats = yield* Ref.make({
     processed: 0,
     unique: 0,
     duplicates: 0
   });
-  
+
   return {
     /**
      * Check if a URL has been seen (after normalization)
@@ -265,9 +265,9 @@ export const createUrlDeduplicator = (
       Effect.gen(function* () {
         const normalized = yield* normalizeUrl(url, strategy);
         const seen = yield* Ref.get(seenUrls);
-        return seen.has(normalized.normalized);
+        return HashSet.has(seen, normalized.normalized);
       }),
-    
+
     /**
      * Add a URL to the seen set
      */
@@ -275,8 +275,8 @@ export const createUrlDeduplicator = (
       Effect.gen(function* () {
         const normalized = yield* normalizeUrl(url, strategy);
         const seen = yield* Ref.get(seenUrls);
-        
-        if (seen.has(normalized.normalized)) {
+
+        if (HashSet.has(seen, normalized.normalized)) {
           yield* Ref.update(urlStats, stats => ({
             ...stats,
             processed: stats.processed + 1,
@@ -284,8 +284,7 @@ export const createUrlDeduplicator = (
           }));
           return false; // Was duplicate
         } else {
-          seen.add(normalized.normalized);
-          yield* Ref.set(seenUrls, seen);
+          yield* Ref.set(seenUrls, HashSet.add(seen, normalized.normalized));
           yield* Ref.update(urlStats, stats => ({
             ...stats,
             processed: stats.processed + 1,
@@ -294,18 +293,18 @@ export const createUrlDeduplicator = (
           return true; // Was unique
         }
       }),
-    
+
     /**
      * Get deduplication statistics
      */
     getStats: () => Ref.get(urlStats),
-    
+
     /**
      * Reset the deduplicator
      */
     reset: () =>
       Effect.gen(function* () {
-        yield* Ref.set(seenUrls, new Set());
+        yield* Ref.set(seenUrls, HashSet.empty<string>());
         yield* Ref.set(urlStats, {
           processed: 0,
           unique: 0,

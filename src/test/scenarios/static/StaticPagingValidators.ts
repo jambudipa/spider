@@ -29,26 +29,26 @@ export interface ProductData {
  * Stub validator functions
  */
 export const validateProductList = (
-  products: any[]
-): Effect.Effect<ValidationResult, never, never> =>
+  _products: ProductData[]
+): Effect.Effect<ValidationResult> =>
   Effect.succeed({ isValid: true });
 
 export const validatePaginationLinks = (
-  links: any[]
-): Effect.Effect<ValidationResult, never, never> =>
+  _links: string[]
+): Effect.Effect<ValidationResult> =>
   Effect.succeed({ isValid: true });
 
 export const validateProductData = (
-  product: any
-): Effect.Effect<ValidationResult, never, never> =>
+  _product: ProductData
+): Effect.Effect<ValidationResult> =>
   Effect.succeed({ isValid: true });
 
 export const validateHTML = (
-  html: string
-): Effect.Effect<ValidationResult, never, never> =>
+  _html: string
+): Effect.Effect<ValidationResult> =>
   Effect.succeed({ isValid: true });
 
 export const validateExtractedData = (
-  data: any
-): Effect.Effect<ValidationResult, never, never> =>
+  _data: Record<string, unknown>
+): Effect.Effect<ValidationResult> =>
   Effect.succeed({ isValid: true });

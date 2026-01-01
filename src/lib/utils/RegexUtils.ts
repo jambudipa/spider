@@ -3,7 +3,7 @@
  * Effect-based regex operations with proper error handling
  */
 
-import { Effect, Data, Option } from 'effect';
+import { Effect, Data, Option, Chunk } from 'effect';
 
 // ============================================================================
 // Error Types
@@ -93,22 +93,21 @@ export const RegexUtils = {
   findAll: (pattern: string, input: string, flags?: string): Effect.Effect<RegexMatch[], RegexCompileError> =>
     Effect.gen(function* () {
       // Ensure global flag is set for matchAll
-      const globalFlags = flags?.includes('g') ? flags : `${flags || ''}g`;
+      const globalFlags = flags?.includes('g') ? flags : `${flags ?? ''}g`;
       const regex = yield* RegexUtils.compile(pattern, globalFlags);
-      
-      const matches: RegexMatch[] = [];
+
       const allMatches = input.matchAll(regex);
-      
-      for (const match of allMatches) {
-        matches.push({
+
+      const matches = Chunk.fromIterable(
+        Array.from(allMatches).map((match) => ({
           match: match[0],
           index: match.index ?? 0,
-          groups: match.groups || {},
-          input: match.input || ''
-        });
-      }
-      
-      return matches;
+          groups: match.groups ?? {},
+          input: match.input ?? ''
+        }))
+      );
+
+      return Chunk.toArray(matches);
     }),
 
   /**
@@ -125,18 +124,20 @@ export const RegexUtils = {
   findFirst: (pattern: string, input: string, flags?: string) =>
     Effect.gen(function* () {
       const regex = yield* RegexUtils.compile(pattern, flags);
-      const match = input.match(regex);
-      
-      if (match && match.index !== undefined) {
-        return Option.some<RegexMatch>({
-          match: match[0],
-          index: match.index,
-          groups: match.groups || {},
-          input: match.input || ''
-        });
-      }
-      
-      return Option.none();
+      const matchResult = input.match(regex);
+
+      return Option.fromNullable(matchResult).pipe(
+        Option.flatMap((m) =>
+          Option.fromNullable(m.index).pipe(
+            Option.map((index) => ({
+              match: m[0],
+              index,
+              groups: m.groups ?? {},
+              input: m.input ?? ''
+            }))
+          )
+        )
+      );
     }),
 
   /**
@@ -155,26 +156,27 @@ export const RegexUtils = {
   replace: (
     pattern: string,
     input: string,
-    replacement: string | ((match: string, ...args: any[]) => string),
+    replacement: string | ((match: string, ...args: ReadonlyArray<string | number | Record<string, string>>) => string),
     flags?: string
-  ) =>
+  ): Effect.Effect<RegexReplacement, RegexCompileError> =>
     Effect.gen(function* () {
       const regex = yield* RegexUtils.compile(pattern, flags);
       let matchCount = 0;
-      
-      const replaced = input.replace(regex, (...args) => {
+
+      const replaced = input.replace(regex, (...args: ReadonlyArray<string | number | Record<string, string>>) => {
         matchCount++;
         if (typeof replacement === 'function') {
-          return replacement(...args);
+          const [matchStr, ...rest] = args;
+          return replacement(String(matchStr), ...rest);
         }
         return replacement;
       });
-      
+
       return {
         original: input,
         replaced,
         matches: matchCount
-      } as RegexReplacement;
+      };
     }),
 
   /**
@@ -193,11 +195,11 @@ export const RegexUtils = {
   replaceAll: (
     pattern: string,
     input: string,
-    replacement: string | ((match: string, ...args: any[]) => string),
+    replacement: string | ((match: string, ...args: ReadonlyArray<string | number | Record<string, string>>) => string),
     flags?: string
   ) => {
     // Ensure global flag is set
-    const globalFlags = flags?.includes('g') ? flags : `${flags || ''}g`;
+    const globalFlags = flags?.includes('g') ? flags : `${flags ?? ''}g`;
     return RegexUtils.replace(pattern, input, replacement, globalFlags);
   },
 
@@ -244,12 +246,8 @@ export const RegexUtils = {
     Effect.gen(function* () {
       const regex = yield* RegexUtils.compile(pattern, flags);
       const match = input.match(regex);
-      
-      if (match && match.groups) {
-        return Option.some(match.groups);
-      }
-      
-      return Option.none<Record<string, string | undefined>>();
+
+      return Option.fromNullable(match?.groups);
     }),
 
   /**
@@ -350,21 +348,18 @@ export const RegexUtils = {
    */
   extractAllGroups: (pattern: string, input: string, flags?: string) =>
     Effect.gen(function* () {
-      const globalFlags = flags?.includes('g') ? flags : `${flags || ''}g`;
+      const globalFlags = flags?.includes('g') ? flags : `${flags ?? ''}g`;
       const regex = yield* RegexUtils.compile(pattern, globalFlags);
-      
-      const allGroups: string[][] = [];
+
       const matches = input.matchAll(regex);
-      
-      for (const match of matches) {
-        // Skip the full match (index 0) and get only captured groups
-        const groups = Array.from(match).slice(1);
-        if (groups.length > 0) {
-          allGroups.push(groups);
-        }
-      }
-      
-      return allGroups;
+
+      const allGroups = Chunk.fromIterable(
+        Array.from(matches)
+          .map((match) => Array.from(match).slice(1))
+          .filter((groups) => groups.length > 0)
+      );
+
+      return Chunk.toArray(allGroups);
     }),
 
   /**

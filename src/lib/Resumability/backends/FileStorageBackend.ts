@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Chunk, DateTime, Effect, Option, Schema } from 'effect';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
@@ -9,6 +9,32 @@ import {
   StorageBackend,
   StorageCapabilities,
 } from '../types.js';
+
+/**
+ * Type guard for NodeJS error with code property
+ */
+interface NodeJSError extends Error {
+  readonly code?: string;
+}
+
+const isNodeJSError = (error: unknown): error is NodeJSError =>
+  error instanceof Error && 'code' in error;
+
+/**
+ * Schema for snapshot data stored on disk
+ */
+const SnapshotData = Schema.Struct({
+  state: SpiderState,
+  sequence: Schema.Number,
+  timestamp: Schema.String,
+});
+
+/**
+ * JSON schemas for serialisation/deserialisation
+ */
+const SpiderStateJsonSchema = Schema.parseJson(SpiderState, { space: 2 });
+const StateDeltaJsonSchema = Schema.parseJson(StateDelta, { space: 2 });
+const SnapshotDataJsonSchema = Schema.parseJson(SnapshotData, { space: 2 });
 
 /**
  * File system storage backend for spider state persistence.
@@ -43,13 +69,17 @@ export class FileStorageBackend implements StorageBackend {
 
   readonly name = 'FileStorageBackend';
 
-  constructor(private readonly baseDir: string) {}
+  private readonly storageDir: string;
+
+  constructor(baseDir: string) {
+    this.storageDir = baseDir;
+  }
 
   initialize = (): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       yield* Effect.tryPromise({
-        try: () => fs.mkdir(self.baseDir, { recursive: true }),
+        try: () => fs.mkdir(self.storageDir, { recursive: true }),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to initialize file storage: ${error}`,
@@ -59,7 +89,7 @@ export class FileStorageBackend implements StorageBackend {
       });
       yield* Effect.tryPromise({
         try: () =>
-          fs.mkdir(path.join(self.baseDir, 'sessions'), { recursive: true }),
+          fs.mkdir(path.join(self.storageDir, 'sessions'), { recursive: true }),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to initialize file storage: ${error}`,
@@ -70,14 +100,13 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
-  cleanup = (): Effect.Effect<void, PersistenceError> =>
-    Effect.succeed(undefined); // No cleanup needed for file backend
+  cleanup = (): Effect.Effect<void, PersistenceError> => Effect.void;
 
   // Full state operations
   saveState = (
     key: SpiderStateKey,
     state: SpiderState
-  ): Effect.Effect<void, PersistenceError, never> => {
+  ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       const sessionDir = self.getSessionDir(key);
@@ -92,10 +121,20 @@ export class FileStorageBackend implements StorageBackend {
             operation: 'saveState',
           }),
       });
-      const encoded = Schema.encodeSync(SpiderState)(state);
+      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+        state
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode state: ${error}`,
+              cause: error,
+              operation: 'saveState',
+            })
+        )
+      );
       yield* Effect.tryPromise({
-        try: () =>
-          fs.writeFile(statePath, JSON.stringify(encoded, null, 2), 'utf8'),
+        try: () => fs.writeFile(statePath, jsonContent, 'utf8'),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to save state: ${error}`,
@@ -108,7 +147,7 @@ export class FileStorageBackend implements StorageBackend {
 
   loadState = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError, never> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       const sessionDir = self.getSessionDir(key);
@@ -117,9 +156,10 @@ export class FileStorageBackend implements StorageBackend {
       const result = yield* Effect.tryPromise(() =>
         fs.readFile(statePath, 'utf8')
       ).pipe(
-        Effect.catchAll((error: any) => {
-          if (error.code === 'ENOENT') {
-            return Effect.succeed(null);
+        Effect.map(Option.some),
+        Effect.catchAll((error: unknown) => {
+          if (isNodeJSError(error) && error.code === 'ENOENT') {
+            return Effect.succeed(Option.none<string>());
           }
           return Effect.fail(
             new PersistenceError({
@@ -131,29 +171,29 @@ export class FileStorageBackend implements StorageBackend {
         })
       );
 
-      if (result === null) {
-        return null;
+      if (Option.isNone(result)) {
+        return Option.none<SpiderState>();
       }
 
-      try {
-        const parsed = JSON.parse(result);
-        const decoded = Schema.decodeUnknownSync(SpiderState)(parsed);
-        return decoded;
-      } catch (error) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Failed to parse state: ${error}`,
-            cause: error,
-            operation: 'loadState',
-          })
-        );
-      }
+      const decoded = yield* Schema.decode(SpiderStateJsonSchema)(
+        result.value
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to parse state: ${error}`,
+              cause: error,
+              operation: 'loadState',
+            })
+        )
+      );
+      return Option.some(decoded);
     });
   };
 
   deleteState = (
     key: SpiderStateKey
-  ): Effect.Effect<void, PersistenceError, never> => {
+  ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       const sessionDir = self.getSessionDir(key);
@@ -174,7 +214,11 @@ export class FileStorageBackend implements StorageBackend {
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const sessionDir = path.join(self.baseDir, 'sessions', delta.stateKey);
+      const sessionDir = path.join(
+        self.storageDir,
+        'sessions',
+        delta.stateKey
+      );
       const deltasDir = path.join(sessionDir, 'deltas');
       const deltaPath = path.join(
         deltasDir,
@@ -190,10 +234,20 @@ export class FileStorageBackend implements StorageBackend {
             operation: 'saveDelta',
           }),
       });
-      const encoded = Schema.encodeSync(StateDelta)(delta);
+      const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(
+        delta
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode delta: ${error}`,
+              cause: error,
+              operation: 'saveDelta',
+            })
+        )
+      );
       yield* Effect.tryPromise({
-        try: () =>
-          fs.writeFile(deltaPath, JSON.stringify(encoded, null, 2), 'utf8'),
+        try: () => fs.writeFile(deltaPath, jsonContent, 'utf8'),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to save delta: ${error}`,
@@ -225,8 +279,8 @@ export class FileStorageBackend implements StorageBackend {
       const deltasDir = path.join(self.getSessionDir(key), 'deltas');
 
       const files = yield* Effect.tryPromise(() => fs.readdir(deltasDir)).pipe(
-        Effect.catchAll((error: any) => {
-          if (error.code === 'ENOENT') {
+        Effect.catchAll((error: unknown) => {
+          if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
           return Effect.fail(
@@ -252,7 +306,7 @@ export class FileStorageBackend implements StorageBackend {
         .filter(({ sequence }) => sequence >= fromSequence)
         .sort((a, b) => a.sequence - b.sequence);
 
-      const deltas: StateDelta[] = [];
+      let deltas = Chunk.empty<StateDelta>();
 
       for (const { file } of deltaFiles) {
         const content = yield* Effect.tryPromise({
@@ -265,22 +319,20 @@ export class FileStorageBackend implements StorageBackend {
             }),
         });
 
-        try {
-          const parsed = JSON.parse(content);
-          const decoded = Schema.decodeUnknownSync(StateDelta)(parsed);
-          deltas.push(decoded);
-        } catch (error) {
-          return yield* Effect.fail(
-            new PersistenceError({
-              message: `Failed to parse delta file ${file}: ${error}`,
-              cause: error,
-              operation: 'loadDeltas',
-            })
-          );
-        }
+        const decoded = yield* Schema.decode(StateDeltaJsonSchema)(content).pipe(
+          Effect.mapError(
+            (error) =>
+              new PersistenceError({
+                message: `Failed to parse delta file ${file}: ${error}`,
+                cause: error,
+                operation: 'loadDeltas',
+              })
+          )
+        );
+        deltas = Chunk.append(deltas, decoded);
       }
 
-      return deltas;
+      return [...Chunk.toReadonlyArray(deltas)];
     });
   };
 
@@ -305,17 +357,24 @@ export class FileStorageBackend implements StorageBackend {
           }),
       });
       const snapshotData = {
-        state: Schema.encodeSync(SpiderState)(state),
+        state,
         sequence,
-        timestamp: new Date().toISOString(),
+        timestamp: DateTime.formatIso(DateTime.unsafeNow()),
       };
+      const jsonContent = yield* Schema.encode(SnapshotDataJsonSchema)(
+        snapshotData
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode snapshot: ${error}`,
+              cause: error,
+              operation: 'saveSnapshot',
+            })
+        )
+      );
       yield* Effect.tryPromise({
-        try: () =>
-          fs.writeFile(
-            snapshotPath,
-            JSON.stringify(snapshotData, null, 2),
-            'utf8'
-          ),
+        try: () => fs.writeFile(snapshotPath, jsonContent, 'utf8'),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to save snapshot: ${error}`,
@@ -329,7 +388,7 @@ export class FileStorageBackend implements StorageBackend {
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
-    { state: SpiderState; sequence: number } | null,
+    Option.Option<{ state: SpiderState; sequence: number }>,
     PersistenceError
   > => {
     const self = this;
@@ -340,9 +399,10 @@ export class FileStorageBackend implements StorageBackend {
       const content = yield* Effect.tryPromise(() =>
         fs.readFile(snapshotPath, 'utf8')
       ).pipe(
-        Effect.catchAll((error: any) => {
-          if (error.code === 'ENOENT') {
-            return Effect.succeed(null);
+        Effect.map(Option.some),
+        Effect.catchAll((error: unknown) => {
+          if (isNodeJSError(error) && error.code === 'ENOENT') {
+            return Effect.succeed(Option.none<string>());
           }
           return Effect.fail(
             new PersistenceError({
@@ -354,26 +414,26 @@ export class FileStorageBackend implements StorageBackend {
         })
       );
 
-      if (content === null) {
-        return null;
+      if (Option.isNone(content)) {
+        return Option.none<{ state: SpiderState; sequence: number }>();
       }
 
-      try {
-        const parsed = JSON.parse(content);
-        const state = Schema.decodeUnknownSync(SpiderState)(parsed.state);
-        return {
-          state,
-          sequence: Number(parsed.sequence),
-        };
-      } catch (error) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Failed to parse snapshot: ${error}`,
-            cause: error,
-            operation: 'loadLatestSnapshot',
-          })
-        );
-      }
+      const parsed = yield* Schema.decode(SnapshotDataJsonSchema)(
+        content.value
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to parse snapshot: ${error}`,
+              cause: error,
+              operation: 'loadLatestSnapshot',
+            })
+        )
+      );
+      return Option.some({
+        state: parsed.state,
+        sequence: parsed.sequence,
+      });
     });
   };
 
@@ -387,8 +447,8 @@ export class FileStorageBackend implements StorageBackend {
       const deltasDir = path.join(self.getSessionDir(key), 'deltas');
 
       const files = yield* Effect.tryPromise(() => fs.readdir(deltasDir)).pipe(
-        Effect.catchAll((error: any) => {
-          if (error.code === 'ENOENT') {
+        Effect.catchAll((error: unknown) => {
+          if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
           return Effect.fail(
@@ -431,11 +491,11 @@ export class FileStorageBackend implements StorageBackend {
   listSessions = (): Effect.Effect<SpiderStateKey[], PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const sessionsDir = path.join(self.baseDir, 'sessions');
+      const sessionsDir = path.join(self.storageDir, 'sessions');
 
       const dirs = yield* Effect.tryPromise(() => fs.readdir(sessionsDir)).pipe(
-        Effect.catchAll((error: any) => {
-          if (error.code === 'ENOENT') {
+        Effect.catchAll((error: unknown) => {
+          if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
           return Effect.fail(
@@ -452,7 +512,7 @@ export class FileStorageBackend implements StorageBackend {
         return [];
       }
 
-      const sessions: SpiderStateKey[] = [];
+      let sessions = Chunk.empty<SpiderStateKey>();
 
       for (const dir of dirs) {
         const sessionDir = path.join(sessionsDir, dir);
@@ -460,28 +520,38 @@ export class FileStorageBackend implements StorageBackend {
 
         const content = yield* Effect.tryPromise(() =>
           fs.readFile(statePath, 'utf8')
-        ).pipe(Effect.catchAll(() => Effect.succeed(null)));
+        ).pipe(
+          Effect.map(Option.some),
+          Effect.catchAll(() => Effect.succeed(Option.none<string>()))
+        );
 
-        if (content === null) {
+        if (Option.isNone(content)) {
           continue; // Skip invalid session directories
         }
 
-        try {
-          const parsed = JSON.parse(content);
-          Schema.decodeUnknownSync(SpiderState)(parsed); // Validate the state
+        const validationResult = yield* Schema.decode(SpiderStateJsonSchema)(
+          content.value
+        ).pipe(
+          Effect.map(Option.some),
+          Effect.catchAll(() => Effect.succeed(Option.none<SpiderState>()))
+        );
+
+        if (Option.isSome(validationResult)) {
           // Use the directory name as the key - this needs proper SpiderStateKey construction
-          sessions.push({ id: dir, name: dir, timestamp: new Date() });
-        } catch {
-          // Skip invalid session directories
-          continue;
+          const stateKey = new SpiderStateKey({
+            id: dir,
+            name: dir,
+            timestamp: DateTime.toDate(DateTime.unsafeNow()),
+          });
+          sessions = Chunk.append(sessions, stateKey);
         }
       }
 
-      return sessions;
+      return [...Chunk.toReadonlyArray(sessions)];
     });
   };
 
   private getSessionDir = (key: SpiderStateKey): string => {
-    return path.join(this.baseDir, 'sessions', key.id);
+    return path.join(this.storageDir, 'sessions', key.id);
   };
 }

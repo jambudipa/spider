@@ -3,9 +3,9 @@
  * Handles browser lifecycle, pooling, and resource management
  */
 
-import { Effect, Either } from 'effect';
+import { Effect, Either, MutableHashMap, Option } from 'effect';
 import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
-import { BrowserCleanupError } from '../lib/errors';
+import { BrowserCleanupError, BrowserError } from '../lib/errors';
 
 export interface BrowserConfig {
   headless?: boolean;
@@ -19,13 +19,13 @@ export interface BrowserConfig {
 
 export class BrowserManager {
   private browsers: Browser[] = [];
-  private contexts: Map<string, BrowserContext> = new Map();
+  private contexts: MutableHashMap.MutableHashMap<string, BrowserContext> = MutableHashMap.empty();
   private config: Required<BrowserConfig>;
   private isInitialised = false;
 
   constructor(config: BrowserConfig = {}) {
     this.config = {
-      headless: config.headless ?? process.env.PLAYWRIGHT_HEADLESS === 'true',
+      headless: config.headless ?? true,
       timeout: config.timeout ?? 30000,
       poolSize: config.poolSize ?? 3,
       viewport: config.viewport ?? { width: 1920, height: 1080 },
@@ -38,79 +38,90 @@ export class BrowserManager {
   /**
    * Initialise browser pool
    */
-  async initialise(): Promise<void> {
-    if (this.isInitialised) return;
+  initialise(): Effect.Effect<void, BrowserError> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.isInitialised) return;
 
-    for (let i = 0; i < this.config.poolSize; i++) {
-      const browser = await this.launchBrowser();
-      this.browsers.push(browser);
-    }
+      for (let i = 0; i < self.config.poolSize; i++) {
+        const browser = yield* self.launchBrowser();
+        self.browsers.push(browser);
+      }
 
-    this.isInitialised = true;
+      self.isInitialised = true;
+    });
   }
 
   /**
    * Launch a new browser instance
    */
-  private async launchBrowser(): Promise<Browser> {
-    return await chromium.launch({
-      headless: this.config.headless,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu'
-      ]
+  private launchBrowser(): Effect.Effect<Browser, BrowserError> {
+    const self = this;
+    return Effect.tryPromise({
+      try: () => chromium.launch({
+        headless: self.config.headless,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu'
+        ]
+      }),
+      catch: (error: unknown): BrowserError => BrowserError.launch(error)
     });
   }
 
   /**
    * Get or create a browser context
    */
-  async getContext(id: string, options?: BrowserContextOptions): Promise<BrowserContext> {
-    if (!this.isInitialised) {
-      await this.initialise();
-    }
+  getContext(id: string, options?: BrowserContextOptions): Effect.Effect<BrowserContext, BrowserError> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (!self.isInitialised) {
+        yield* self.initialise();
+      }
 
-    if (this.contexts.has(id)) {
-      return this.contexts.get(id)!;
-    }
+      const existing = MutableHashMap.get(self.contexts, id);
+      if (Option.isSome(existing)) {
+        return existing.value;
+      }
 
-    const browser = this.getLeastLoadedBrowser();
-    const context = await browser.newContext({
-      viewport: this.config.viewport,
-      userAgent: this.config.userAgent,
-      locale: this.config.locale,
-      extraHTTPHeaders: this.config.extraHTTPHeaders,
-      ...options
+      const browser = self.getLeastLoadedBrowser();
+      const context = yield* Effect.tryPromise({
+        try: () => browser.newContext({
+          viewport: self.config.viewport,
+          userAgent: self.config.userAgent,
+          locale: self.config.locale,
+          extraHTTPHeaders: self.config.extraHTTPHeaders,
+          ...options
+        }),
+        catch: (error: unknown): BrowserError => BrowserError.createContext(error)
+      });
+
+      context.setDefaultTimeout(self.config.timeout);
+      MutableHashMap.set(self.contexts, id, context);
+
+      return context;
     });
-
-    context.setDefaultTimeout(this.config.timeout);
-    this.contexts.set(id, context);
-
-    return context;
   }
 
   /**
    * Create a new page in a context
    */
-  async createPage(contextId: string): Promise<Page> {
-    const context = await this.getContext(contextId);
-    const page = await context.newPage();
-    
-    // Setup error handlers
-    page.on('pageerror', error => {
-      console.error(`Page error in context ${contextId}:`, error);
-    });
+  createPage(contextId: string): Effect.Effect<Page, BrowserError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const context = yield* self.getContext(contextId);
+      const page = yield* Effect.tryPromise({
+        try: () => context.newPage(),
+        catch: (error: unknown): BrowserError => BrowserError.createPage(error)
+      });
 
-    page.on('crash', () => {
-      console.error(`Page crashed in context ${contextId}`);
+      return page;
     });
-
-    return page;
   }
 
   /**
@@ -134,40 +145,48 @@ export class BrowserManager {
   /**
    * Close a specific context
    */
-  async closeContext(id: string): Promise<void> {
-    const context = this.contexts.get(id);
-    if (context) {
-      await context.close();
-      this.contexts.delete(id);
-    }
+  closeContext(id: string): Effect.Effect<void, BrowserError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const existing = MutableHashMap.get(self.contexts, id);
+      if (Option.isSome(existing)) {
+        yield* Effect.tryPromise({
+          try: () => existing.value.close(),
+          catch: (error: unknown): BrowserError => BrowserError.closeContext(error)
+        });
+        MutableHashMap.remove(self.contexts, id);
+      }
+    });
   }
 
   /**
    * Close all resources
    */
-  close(): Effect.Effect<void, never, never> {
+  close(): Effect.Effect<void> {
     const self = this;
     return Effect.gen(function* () {
       // Close all contexts in parallel, collecting errors
-      const contextEntries = Array.from(self.contexts.entries());
+      const contextEntries: Array<[string, BrowserContext]> = Array.from(self.contexts);
+
       const contextEffects = contextEntries.map(([id, context]) =>
         Effect.tryPromise({
           try: () => context.close(),
           catch: (error) => BrowserCleanupError.context(id, error)
         })
       );
-      
-      const contextResults = yield* Effect.all(contextEffects, { mode: "either" });
+
+      const contextResults = yield* Effect.all(contextEffects, { mode: 'either' });
 
       // Log any context cleanup errors
-      contextResults.forEach((result, index) => {
+      for (let index = 0; index < contextResults.length; index++) {
+        const result = contextResults[index];
         if (Either.isLeft(result)) {
           const [id] = contextEntries[index];
-          console.warn(`Error closing context ${id}:`, result.left);
+          yield* Effect.logWarning(`Error closing context ${id}:`, result.left);
         }
-      });
+      }
 
-      self.contexts.clear();
+      MutableHashMap.clear(self.contexts);
 
       // Close all browsers in parallel, collecting errors
       const browserEffects = self.browsers.map((browser, index) =>
@@ -176,15 +195,16 @@ export class BrowserManager {
           catch: (error) => BrowserCleanupError.browser(`browser-${index}`, error)
         })
       );
-      
-      const browserResults = yield* Effect.all(browserEffects, { mode: "either" });
+
+      const browserResults = yield* Effect.all(browserEffects, { mode: 'either' });
 
       // Log any browser cleanup errors
-      browserResults.forEach((result, index) => {
+      for (let index = 0; index < browserResults.length; index++) {
+        const result = browserResults[index];
         if (Either.isLeft(result)) {
-          console.warn(`Error closing browser ${index}:`, result.left);
+          yield* Effect.logWarning(`Error closing browser ${index}:`, result.left);
         }
-      });
+      }
 
       self.browsers = [];
       self.isInitialised = false;
@@ -200,13 +220,13 @@ export class BrowserManager {
     pages: number;
   } {
     let totalPages = 0;
-    for (const context of this.contexts.values()) {
+    for (const [, context] of this.contexts) {
       totalPages += context.pages().length;
     }
 
     return {
       browsers: this.browsers.length,
-      contexts: this.contexts.size,
+      contexts: MutableHashMap.size(this.contexts),
       pages: totalPages
     };
   }

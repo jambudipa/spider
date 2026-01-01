@@ -5,25 +5,26 @@
 
 import { Context, Effect, Layer } from 'effect';
 import type { SpiderService } from '../../lib/Spider/Spider.service.js';
-import type { RateLimiterService } from './RateLimiter.js';
-import type { EffectAssertions } from '../assertions/EffectAssertions.js';
+import type { RateLimiterServiceInterface } from './RateLimiter.js';
+import type { IEffectAssertions } from '../assertions/EffectAssertions.js';
+import type { SpiderConfigOptions } from '../../lib/Config/SpiderConfig.service.js';
 
-export interface TestContext {
+export interface TestContextShape {
   readonly spider: SpiderService;
   readonly baseUrl: string;
-  readonly rateLimiter: RateLimiterService;
-  readonly assertions: EffectAssertions;
-  readonly cleanup: () => Effect.Effect<void, never, never>;
+  readonly rateLimiter: RateLimiterServiceInterface;
+  readonly assertions: IEffectAssertions;
+  readonly cleanup: () => Effect.Effect<void>;
 }
 
 export class TestContext extends Context.Tag('TestContext')<
   TestContext,
-  TestContext
+  TestContextShape
 >() {}
 
 export interface TestContextConfig {
   readonly baseUrl?: string;
-  readonly spiderConfig?: any;
+  readonly spiderConfig?: Partial<SpiderConfigOptions>;
   readonly requestsPerSecond?: number;
   readonly scenarioPath?: string;
 }
@@ -31,7 +32,7 @@ export interface TestContextConfig {
 export class TestContextService {
   static make = (
     config: TestContextConfig = {}
-  ): Effect.Effect<TestContext, never, any> =>
+  ): Effect.Effect<TestContextShape, never, SpiderService> =>
     Effect.gen(function* () {
       // Import dependencies dynamically
       const SpiderModule = yield* Effect.promise(
@@ -60,18 +61,17 @@ export class TestContextService {
       const assertions = AssertionsModule.EffectAssertions.make();
 
       // Create cleanup function
-      const cleanup = () =>
-        Effect.sync(() => {
-          console.log('Test cleanup complete');
-        });
+      const cleanup = (): Effect.Effect<void> =>
+        Effect.logInfo('Test cleanup complete');
 
-      return {
+      const result: TestContextShape = {
         spider,
         baseUrl,
         rateLimiter,
         assertions,
         cleanup,
-      } as TestContext;
+      };
+      return result;
     });
 
   static withRateLimit = (requestsPerSecond: number) =>

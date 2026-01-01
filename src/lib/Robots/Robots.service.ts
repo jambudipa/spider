@@ -1,4 +1,4 @@
-import { Effect, MutableHashMap, Option } from 'effect';
+import { Effect, MutableHashMap, MutableHashSet, Option } from 'effect';
 import { RobotsTxtError } from '../errors.js';
 
 /**
@@ -12,7 +12,7 @@ import { RobotsTxtError } from '../errors.js';
  */
 interface RobotsRules {
   /** Set of URL paths that are disallowed for this user agent */
-  disallowedPaths: Set<string>;
+  disallowedPaths: MutableHashSet.MutableHashSet<string>;
   /** Optional crawl delay in seconds specified in robots.txt */
   crawlDelay?: number;
   /** The user agent these rules apply to */
@@ -75,7 +75,7 @@ export class RobotsService extends Effect.Service<RobotsService>()(
       ): RobotsRules => {
         const lines = content.split('\n');
         const rules: RobotsRules = {
-          disallowedPaths: new Set(),
+          disallowedPaths: MutableHashSet.empty<string>(),
           userAgent,
         };
 
@@ -96,7 +96,7 @@ export class RobotsService extends Effect.Service<RobotsService>()(
               currentUserAgent.toLowerCase() === userAgent.toLowerCase();
           } else if (isRelevantSection) {
             if (directive.toLowerCase() === 'disallow' && value) {
-              rules.disallowedPaths.add(value);
+              MutableHashSet.add(rules.disallowedPaths, value);
             } else if (directive.toLowerCase() === 'crawl-delay') {
               rules.crawlDelay = parseInt(value);
             }
@@ -106,74 +106,97 @@ export class RobotsService extends Effect.Service<RobotsService>()(
         return rules;
       };
 
-      const fetchRobotsTxt = (baseUrl: URL) => {
+      const fetchRobotsTxt = (baseUrl: URL): Effect.Effect<Option.Option<string>, RobotsTxtError> => {
         const robotsUrl = new URL('/robots.txt', baseUrl);
-        return Effect.tryPromise({
-          try: async () => {
-            const response = await fetch(robotsUrl.toString());
+        return Effect.gen(function* () {
+          const response = yield* Effect.tryPromise({
+            try: () => globalThis.fetch(robotsUrl.toString()),
+            catch: (error) => RobotsTxtError.fromCause(robotsUrl.toString(), error),
+          });
 
-            if (!response.ok) {
-              return null;
-            }
+          if (!response.ok) {
+            return Option.none<string>();
+          }
 
-            return await response.text();
-          },
-          catch: (error) =>
-            RobotsTxtError.fromCause(robotsUrl.toString(), error),
+          const text = yield* Effect.tryPromise({
+            try: () => response.text(),
+            catch: (error) => RobotsTxtError.fromCause(robotsUrl.toString(), error),
+          });
+
+          return Option.some(text);
         });
       };
 
-      const isPathAllowed = (url: URL, rules: RobotsRules): boolean => {
+      const isPathDisallowedByPattern = (path: string, disallowedPath: string): boolean => {
+        if (disallowedPath === '/') return true;
+
+        // Escape regex special characters first, then handle wildcards
+        const pattern = disallowedPath
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape all regex special chars
+          .replace(/\\\*/g, '.*'); // Convert escaped asterisks back to wildcard patterns
+
+        return new RegExp(`^${pattern}`).test(path);
+      };
+
+      const isPathDisallowedFallback = (path: string, disallowedPath: string): boolean => {
+        // Simple prefix matching as fallback
+        if (disallowedPath.endsWith('*')) {
+          const prefix = disallowedPath.slice(0, -1);
+          return path.startsWith(prefix);
+        }
+        return path.startsWith(disallowedPath);
+      };
+
+      const checkPathAgainstPattern = (path: string, disallowedPath: string): Effect.Effect<boolean> =>
+        Effect.try(() => isPathDisallowedByPattern(path, disallowedPath)).pipe(
+          Effect.orElse(() => Effect.succeed(isPathDisallowedFallback(path, disallowedPath)))
+        );
+
+      const isPathAllowed = (url: URL, rules: RobotsRules): Effect.Effect<boolean> => {
         const path = url.pathname;
 
-        for (const disallowedPath of rules.disallowedPaths) {
-          if (disallowedPath === '/') return false;
-
-          try {
-            // Escape regex special characters first, then handle wildcards
-            const pattern = disallowedPath
-              .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape all regex special chars
-              .replace(/\\\*/g, '.*'); // Convert escaped asterisks back to wildcard patterns
-
-            if (new RegExp(`^${pattern}`).test(path)) {
-              return false;
-            }
-          } catch {
-            // If regex construction fails, fall back to simple string matching
-            // Silently fall back to simple prefix matching for invalid patterns
-
-            // Simple prefix matching as fallback
-            if (disallowedPath.endsWith('*')) {
-              const prefix = disallowedPath.slice(0, -1);
-              if (path.startsWith(prefix)) {
-                return false;
-              }
-            } else if (path.startsWith(disallowedPath)) {
+        return Effect.gen(function* () {
+          for (const disallowedPath of rules.disallowedPaths) {
+            const isDisallowed = yield* checkPathAgainstPattern(path, disallowedPath);
+            if (isDisallowed) {
               return false;
             }
           }
-        }
-
-        return true;
+          return true;
+        });
       };
+
+      const createDefaultRules = (): RobotsRules => ({
+        disallowedPaths: MutableHashSet.empty<string>(),
+        userAgent: '*',
+      });
+
+      const parseUrlSafely = (urlString: string): Option.Option<{ url: URL; baseUrl: URL }> =>
+        Option.gen(function* () {
+          const url = yield* Option.liftThrowable(() => new URL(urlString))();
+          const baseUrl = yield* Option.liftThrowable(() => new URL(`${url.protocol}//${url.host}`))();
+          return { url, baseUrl };
+        });
+
+      const parseRobotsTxtSafely = (content: string): Effect.Effect<RobotsRules> =>
+        Effect.try(() => parseRobotsTxt(content)).pipe(
+          Effect.orElse(() => Effect.succeed(createDefaultRules()))
+        );
 
       return {
         checkUrl: (urlString: string) =>
           Effect.gen(function* () {
-            let url: URL;
-            let baseUrl: URL;
+            const parsedUrls = parseUrlSafely(urlString);
 
-            try {
-              url = new URL(urlString);
-              baseUrl = new URL(`${url.protocol}//${url.host}`);
-            } catch (error) {
+            if (Option.isNone(parsedUrls)) {
               // Invalid URL, default to allowing access
               yield* Effect.logWarning(
-                `Invalid URL "${urlString}": ${error instanceof Error ? error.message : String(error)}. Allowing access.`
+                `Invalid URL "${urlString}". Allowing access.`
               );
               return { allowed: true };
             }
 
+            const { url, baseUrl } = parsedUrls.value;
             const cacheKey = baseUrl.toString();
 
             const cachedRules = MutableHashMap.get(robotsCache, cacheKey);
@@ -181,23 +204,18 @@ export class RobotsService extends Effect.Service<RobotsService>()(
             let rules: RobotsRules;
 
             if (Option.isNone(cachedRules)) {
-              const robotsContent = yield* fetchRobotsTxt(baseUrl).pipe(
+              const robotsContentOption = yield* fetchRobotsTxt(baseUrl).pipe(
                 Effect.catchAll((error) =>
                   Effect.logWarning(
                     `Failed to fetch robots.txt for ${baseUrl}: ${error.message}. Allowing access.`
-                  ).pipe(Effect.map(() => null))
+                  ).pipe(Effect.map(() => Option.none<string>()))
                 )
               );
 
-              if (robotsContent) {
-                try {
-                  rules = parseRobotsTxt(robotsContent);
-                } catch {
-                  // Silently handle parse errors and use default rules
-                  rules = { disallowedPaths: new Set(), userAgent: '*' };
-                }
+              if (Option.isSome(robotsContentOption)) {
+                rules = yield* parseRobotsTxtSafely(robotsContentOption.value);
               } else {
-                rules = { disallowedPaths: new Set(), userAgent: '*' };
+                rules = createDefaultRules();
               }
 
               MutableHashMap.set(robotsCache, cacheKey, rules);
@@ -205,8 +223,10 @@ export class RobotsService extends Effect.Service<RobotsService>()(
               rules = cachedRules.value;
             }
 
+            const allowed = yield* isPathAllowed(url, rules);
+
             return {
-              allowed: isPathAllowed(url, rules),
+              allowed,
               crawlDelay: rules.crawlDelay,
             };
           }),

@@ -3,14 +3,14 @@
  * Abstract base class for all test scenarios
  */
 
-import { Effect } from 'effect';
-import { TestContext } from '../infrastructure/TestContext.js';
+import { Data, DateTime, Effect, Option } from 'effect';
+import { TestContext, type TestContextShape } from '../infrastructure/TestContext.js';
 import type { ScenarioConfig } from './ScenarioConfig.js';
 
 /**
  * Simple scenario result type
  */
-export interface SimpleScenarioResult<T = any> {
+export interface SimpleScenarioResult<T = unknown> {
   readonly scenario: string;
   readonly success: boolean;
   readonly data?: T;
@@ -21,39 +21,39 @@ export interface SimpleScenarioResult<T = any> {
 }
 
 /**
- * Base error type for test scenarios
+ * Base error type for test scenarios using Effect's TaggedError pattern
  */
-export class TestError extends Error {
-  readonly _tag: string = 'TestError';
-  constructor(
-    message: string,
-    readonly cause?: unknown
-  ) {
-    super(message);
-    this.name = 'TestError';
+export class TestError extends Data.TaggedError('TestError')<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  override get name(): string {
+    return 'TestError';
   }
 }
 
 /**
  * Scenario-specific error
  */
-export class ScenarioError extends TestError {
-  override readonly _tag: string = 'ScenarioError';
-  constructor(
-    readonly scenario: string,
-    message: string,
-    cause?: unknown
-  ) {
-    super(`[${scenario}] ${message}`, cause);
-    this.name = 'ScenarioError';
+export class ScenarioError extends Data.TaggedError('ScenarioError')<{
+  readonly scenario: string;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  override get name(): string {
+    return 'ScenarioError';
+  }
+
+  get formattedMessage(): string {
+    return `[${this.scenario}] ${this.message}`;
   }
 }
 
 /**
  * Abstract base class for test scenarios
  */
-export abstract class BaseTestScenario<TResult = any> {
-  protected startTime?: number;
+export abstract class BaseTestScenario<TResult = unknown> {
+  protected startTime: Option.Option<number> = Option.none();
   protected requestCount: number = 0;
 
   constructor(
@@ -64,19 +64,21 @@ export abstract class BaseTestScenario<TResult = any> {
   /**
    * Setup the test scenario
    */
-  setup(): Effect.Effect<TestContext, TestError, TestContext> {
+  setup(): Effect.Effect<TestContextShape, TestError, TestContext> {
     const self = this;
     return Effect.gen(function* () {
-      console.log(`Setting up scenario: ${self.scenarioName}`);
-      self.startTime = Date.now();
+      yield* Effect.logInfo(`Setting up scenario: ${self.scenarioName}`);
+      const now = yield* DateTime.now;
+      self.startTime = Option.some(DateTime.toEpochMillis(now));
       self.requestCount = 0;
 
       // Get test context from dependency
       const context = yield* TestContext;
 
       // Apply rate limiting if specified
-      if (self.config.rateLimit) {
-        yield* context.rateLimiter.setRate(self.config.rateLimit);
+      const rateLimit = Option.fromNullable(self.config.rateLimit);
+      if (Option.isSome(rateLimit)) {
+        yield* context.rateLimiter.setRate(rateLimit.value);
       }
 
       return context;
@@ -87,28 +89,33 @@ export abstract class BaseTestScenario<TResult = any> {
    * Execute the test scenario
    */
   abstract execute(
-    context: TestContext
-  ): Effect.Effect<TResult, TestError, any>;
+    context: TestContextShape
+  ): Effect.Effect<TResult, TestError, TestContext>;
 
   /**
    * Validate the results
    */
-  abstract validate(result: TResult): Effect.Effect<boolean, TestError, any>;
+  abstract validate(
+    result: TResult
+  ): Effect.Effect<boolean, TestError, TestContext>;
 
   /**
    * Cleanup after the test
    */
-  cleanup(): Effect.Effect<void, never, never> {
+  cleanup(): Effect.Effect<void> {
     const self = this;
-    return Effect.sync(() => {
-      console.log(`Cleaning up scenario: ${self.scenarioName}`);
-      const duration = Date.now() - (self.startTime || 0);
-      console.log(
+    return Effect.gen(function* () {
+      yield* Effect.logInfo(`Cleaning up scenario: ${self.scenarioName}`);
+      const now = yield* DateTime.now;
+      const currentMs = DateTime.toEpochMillis(now);
+      const startMs = Option.getOrElse(self.startTime, () => currentMs);
+      const duration = currentMs - startMs;
+      yield* Effect.logInfo(
         `Scenario completed in ${duration}ms with ${self.requestCount} requests`
       );
 
       // Reset state
-      self.startTime = undefined;
+      self.startTime = Option.none();
       self.requestCount = 0;
     });
   }
@@ -120,33 +127,48 @@ export abstract class BaseTestScenario<TResult = any> {
     const self = this;
     return Effect.gen(function* () {
       const context = yield* self.setup();
+      const result = yield* self.execute(context);
+      const isValid = yield* self.validate(result);
 
-      try {
-        const result = yield* self.execute(context);
-        const isValid = yield* self.validate(result);
+      const now = yield* DateTime.now;
+      const currentMs = DateTime.toEpochMillis(now);
+      const startMs = Option.getOrElse(self.startTime, () => currentMs);
 
-        return {
-          scenario: self.scenarioName,
-          success: isValid,
-          data: result,
-          duration: Date.now() - (self.startTime || 0),
-          requestCount: self.requestCount,
-          validationResults: isValid
-            ? 'All validations passed'
-            : 'Some validations failed',
-        } as SimpleScenarioResult<TResult>;
-      } catch (error) {
-        return {
-          scenario: self.scenarioName,
-          success: false,
-          error: error instanceof Error ? error : new Error(String(error)),
-          duration: Date.now() - (self.startTime || 0),
-          requestCount: self.requestCount,
-        } as SimpleScenarioResult<TResult>;
-      } finally {
-        yield* self.cleanup();
-      }
-    });
+      const scenarioResult: SimpleScenarioResult<TResult> = {
+        scenario: self.scenarioName,
+        success: isValid,
+        data: result,
+        duration: currentMs - startMs,
+        requestCount: self.requestCount,
+        validationResults: isValid
+          ? 'All validations passed'
+          : 'Some validations failed',
+      };
+
+      return scenarioResult;
+    }).pipe(
+      Effect.catchAll((error) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const currentMs = DateTime.toEpochMillis(now);
+          const startMs = Option.getOrElse(self.startTime, () => currentMs);
+
+          const failedResult: SimpleScenarioResult<TResult> = {
+            scenario: self.scenarioName,
+            success: false,
+            error:
+              error instanceof Error
+                ? error
+                : new TestError({ message: String(error) }),
+            duration: currentMs - startMs,
+            requestCount: self.requestCount,
+          };
+
+          return failedResult;
+        })
+      ),
+      Effect.ensuring(self.cleanup())
+    );
   }
 
   /**
@@ -160,6 +182,10 @@ export abstract class BaseTestScenario<TResult = any> {
    * Helper to create scenario-specific errors
    */
   protected error(message: string, cause?: unknown): ScenarioError {
-    return new ScenarioError(this.scenarioName, message, cause);
+    return new ScenarioError({
+      scenario: this.scenarioName,
+      message,
+      cause,
+    });
   }
 }

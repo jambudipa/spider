@@ -4,7 +4,7 @@
 
 import { Effect } from 'effect';
 import { describe, it, expect } from 'vitest';
-import { AssertionCollector, createAssertionCollector, withAssertions } from './AssertionCollector.js';
+import { createAssertionCollector, withAssertions } from './AssertionCollector.js';
 
 describe('AssertionCollector', () => {
   it('should collect passing assertions', async () => {

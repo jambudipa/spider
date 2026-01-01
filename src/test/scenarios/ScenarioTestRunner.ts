@@ -3,8 +3,40 @@
  * Orchestrates the execution of all web-scraping.dev scenario tests
  */
 
-import { Effect } from 'effect';
+import { Data, DateTime, Effect, HashMap } from 'effect';
 import { AssertionCollector, createAssertionCollector } from './AssertionCollector.js';
+
+/**
+ * Error when a scenario is not found
+ */
+export class ScenarioNotFoundError extends Data.TaggedError('ScenarioNotFoundError')<{
+  readonly scenarioId: string;
+  readonly message: string;
+}> {
+  override get name(): string {
+    return 'ScenarioNotFoundError';
+  }
+}
+
+/**
+ * Error when a scenario is not yet implemented
+ */
+export class NotImplementedError extends Data.TaggedError('NotImplementedError')<{
+  readonly feature: string;
+  readonly taskId: string;
+  readonly message: string;
+}> {
+  override get name(): string {
+    return 'NotImplementedError';
+  }
+}
+
+/**
+ * Generic data type for scenario result data
+ */
+export interface ScenarioData {
+  readonly [key: string]: unknown;
+}
 
 export interface ScenarioDefinition {
   id: string;
@@ -13,15 +45,15 @@ export interface ScenarioDefinition {
   url: string;
   description: string;
   requiresBrowser: boolean;
-  execute: () => Effect.Effect<ScenarioResult, Error, any>;
-  validate: (result: any, collector: AssertionCollector) => Effect.Effect<boolean>;
+  execute: () => Effect.Effect<ScenarioData, ScenarioNotFoundError | NotImplementedError>;
+  validate: (result: ScenarioData, collector: AssertionCollector) => Effect.Effect<boolean>;
 }
 
 export interface ScenarioResult {
   scenario: string;
   success: boolean;
-  data?: any;
-  errors?: Error[];
+  data?: ScenarioData;
+  errors?: Array<ScenarioNotFoundError | NotImplementedError>;
   duration: number;
   assertions: AssertionResult[];
 }
@@ -29,13 +61,13 @@ export interface ScenarioResult {
 export interface AssertionResult {
   name: string;
   passed: boolean;
-  expected?: any;
-  actual?: any;
+  expected?: unknown;
+  actual?: unknown;
   message?: string;
 }
 
 export class ScenarioTestRunner {
-  private scenarios: Map<string, ScenarioDefinition> = new Map();
+  private scenarios: HashMap.HashMap<string, ScenarioDefinition> = HashMap.empty();
 
   /**
    * Register all scenario definitions
@@ -201,23 +233,28 @@ export class ScenarioTestRunner {
   }
 
   private register(scenario: ScenarioDefinition): void {
-    this.scenarios.set(scenario.id, scenario);
+    this.scenarios = HashMap.set(this.scenarios, scenario.id, scenario);
   }
 
   /**
    * Run a specific scenario
    */
-  runScenario(id: string): Effect.Effect<ScenarioResult, Error, any> {
+  runScenario(id: string): Effect.Effect<ScenarioResult, ScenarioNotFoundError | NotImplementedError> {
     const self = this;
     return Effect.gen(function* () {
-      const scenario = self.scenarios.get(id);
-      if (!scenario) {
-        return yield* Effect.fail(new Error(`Scenario ${id} not found`));
+      const scenarioOption = HashMap.get(self.scenarios, id);
+      if (scenarioOption._tag === 'None') {
+        return yield* Effect.fail(new ScenarioNotFoundError({
+          scenarioId: id,
+          message: `Scenario ${id} not found`,
+        }));
       }
+      const scenario = scenarioOption.value;
 
-      const startTime = Date.now();
+      const startTime = yield* DateTime.now;
       const result = yield* scenario.execute();
-      const duration = Date.now() - startTime;
+      const endTime = yield* DateTime.now;
+      const duration = DateTime.toEpochMillis(endTime) - DateTime.toEpochMillis(startTime);
 
       // Create assertion collector for validation
       const collector = createAssertionCollector();
@@ -237,17 +274,17 @@ export class ScenarioTestRunner {
   /**
    * Run all scenarios
    */
-  runAll(): Effect.Effect<Map<string, ScenarioResult>, never, any> {
+  runAll(): Effect.Effect<HashMap.HashMap<string, ScenarioResult>> {
     const self = this;
     return Effect.gen(function* () {
-      const results = new Map<string, ScenarioResult>();
+      let results = HashMap.empty<string, ScenarioResult>();
 
-      for (const [id, scenario] of self.scenarios) {
+      for (const [id, scenario] of HashMap.toEntries(self.scenarios)) {
         const result = yield* Effect.either(self.runScenario(id));
         if (result._tag === 'Right') {
-          results.set(id, result.right);
+          results = HashMap.set(results, id, result.right);
         } else {
-          results.set(id, {
+          results = HashMap.set(results, id, {
             scenario: scenario.name,
             success: false,
             errors: [result.left],
@@ -257,35 +294,42 @@ export class ScenarioTestRunner {
         }
       }
 
-        return results;
-      }.bind(this)
-    );
+      return results;
+    });
   }
 
   // Implementation stubs for each scenario
   // These will be implemented in Phase 4 tasks
 
-  private executeStaticPagination() {
-    return Effect.fail(new Error('Not implemented - Task 4.4'));
+  private executeStaticPagination(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Static Pagination',
+      taskId: '4.4',
+      message: 'Not implemented - Task 4.4',
+    }));
   }
 
-  private validateStaticPagination(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateStaticPagination(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       // Example assertions for static pagination
       yield* collector.assertTruthy('Result exists', result);
       yield* collector.assertHasProperty('Has pages', result, 'pages');
-      
+
       // Return overall validation status
       const summary = yield* collector.getSummary();
       return summary.failed === 0;
     });
   }
 
-  private executeProductMarkup() {
-    return Effect.fail(new Error('Not implemented - Task 4.5'));
+  private executeProductMarkup(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Product Markup',
+      taskId: '4.5',
+      message: 'Not implemented - Task 4.5',
+    }));
   }
 
-  private validateProductMarkup(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateProductMarkup(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -293,11 +337,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeHiddenData() {
-    return Effect.fail(new Error('Not implemented - Task 4.6'));
+  private executeHiddenData(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Hidden Data',
+      taskId: '4.6',
+      message: 'Not implemented - Task 4.6',
+    }));
   }
 
-  private validateHiddenData(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateHiddenData(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -305,11 +353,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeInfiniteScroll() {
-    return Effect.fail(new Error('Not implemented - Task 4.7'));
+  private executeInfiniteScroll(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Infinite Scroll',
+      taskId: '4.7',
+      message: 'Not implemented - Task 4.7',
+    }));
   }
 
-  private validateInfiniteScroll(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateInfiniteScroll(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -317,11 +369,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeLoadMoreButton() {
-    return Effect.fail(new Error('Not implemented - Task 4.8'));
+  private executeLoadMoreButton(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Load More Button',
+      taskId: '4.8',
+      message: 'Not implemented - Task 4.8',
+    }));
   }
 
-  private validateLoadMoreButton(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateLoadMoreButton(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -329,11 +385,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeGraphQL() {
-    return Effect.fail(new Error('Not implemented - Task 4.9'));
+  private executeGraphQL(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'GraphQL',
+      taskId: '4.9',
+      message: 'Not implemented - Task 4.9',
+    }));
   }
 
-  private validateGraphQL(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateGraphQL(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -341,11 +401,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeCookieLogin() {
-    return Effect.fail(new Error('Not implemented - Task 4.10'));
+  private executeCookieLogin(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Cookie Login',
+      taskId: '4.10',
+      message: 'Not implemented - Task 4.10',
+    }));
   }
 
-  private validateCookieLogin(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateCookieLogin(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -353,11 +417,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeCSRFToken() {
-    return Effect.fail(new Error('Not implemented - Task 4.11'));
+  private executeCSRFToken(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'CSRF Token',
+      taskId: '4.11',
+      message: 'Not implemented - Task 4.11',
+    }));
   }
 
-  private validateCSRFToken(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateCSRFToken(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -365,11 +433,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeSecretAPIToken() {
-    return Effect.fail(new Error('Not implemented - Task 4.12'));
+  private executeSecretAPIToken(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Secret API Token',
+      taskId: '4.12',
+      message: 'Not implemented - Task 4.12',
+    }));
   }
 
-  private validateSecretAPIToken(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateSecretAPIToken(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -377,11 +449,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executePDFDownload() {
-    return Effect.fail(new Error('Not implemented - Task 4.13'));
+  private executePDFDownload(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'PDF Download',
+      taskId: '4.13',
+      message: 'Not implemented - Task 4.13',
+    }));
   }
 
-  private validatePDFDownload(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validatePDFDownload(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -389,11 +465,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeCookiePopup() {
-    return Effect.fail(new Error('Not implemented - Task 4.14'));
+  private executeCookiePopup(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Cookie Popup',
+      taskId: '4.14',
+      message: 'Not implemented - Task 4.14',
+    }));
   }
 
-  private validateCookiePopup(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateCookiePopup(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -401,11 +481,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeLocalStorage() {
-    return Effect.fail(new Error('Not implemented - Task 4.15'));
+  private executeLocalStorage(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Local Storage',
+      taskId: '4.15',
+      message: 'Not implemented - Task 4.15',
+    }));
   }
 
-  private validateLocalStorage(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateLocalStorage(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -413,11 +497,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeForcedNewTab() {
-    return Effect.fail(new Error('Not implemented - Task 4.16'));
+  private executeForcedNewTab(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Forced New Tab',
+      taskId: '4.16',
+      message: 'Not implemented - Task 4.16',
+    }));
   }
 
-  private validateForcedNewTab(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateForcedNewTab(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();
@@ -425,11 +513,15 @@ export class ScenarioTestRunner {
     });
   }
 
-  private executeBlockPage() {
-    return Effect.fail(new Error('Not implemented - Task 4.17'));
+  private executeBlockPage(): Effect.Effect<ScenarioData, NotImplementedError> {
+    return Effect.fail(new NotImplementedError({
+      feature: 'Block Page',
+      taskId: '4.17',
+      message: 'Not implemented - Task 4.17',
+    }));
   }
 
-  private validateBlockPage(result: any, collector: AssertionCollector): Effect.Effect<boolean> {
+  private validateBlockPage(result: ScenarioData, collector: AssertionCollector): Effect.Effect<boolean> {
     return Effect.gen(function* () {
       yield* collector.assertTruthy('Result exists', result);
       const summary = yield* collector.getSummary();

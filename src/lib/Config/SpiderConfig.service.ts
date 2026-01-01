@@ -1,4 +1,4 @@
-import { Effect, Layer } from 'effect';
+import { Chunk, Effect, Layer, Option } from 'effect';
 
 /**
  * File extension filter categories based on Scrapy's IGNORED_EXTENSIONS.
@@ -177,9 +177,9 @@ export interface SpiderConfigService {
   getOptions: () => Effect.Effect<SpiderConfigOptions>;
   /** Check if a URL should be followed based on configured rules */
   shouldFollowUrl: (
-    urlString: string,
-    fromUrl?: string,
-    restrictToStartingDomain?: string
+    _urlString: string,
+    _fromUrl?: string,
+    _restrictToStartingDomain?: string
   ) => Effect.Effect<{ follow: boolean; reason?: string }>;
   /** Get the configured user agent string */
   getUserAgent: () => Effect.Effect<string>;
@@ -398,29 +398,39 @@ const FILE_EXTENSION_CATEGORIES = {
  * @internal
  */
 const generateSkipExtensions = (filters: FileExtensionFilters): string[] => {
-  const skipExtensions: string[] = [];
+  const categoryChunks = [
+    filters.filterArchives
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.archives)
+      : Chunk.empty<string>(),
+    filters.filterImages
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.images)
+      : Chunk.empty<string>(),
+    filters.filterAudio
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.audio)
+      : Chunk.empty<string>(),
+    filters.filterVideo
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.video)
+      : Chunk.empty<string>(),
+    filters.filterOfficeDocuments
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.officeDocuments)
+      : Chunk.empty<string>(),
+    filters.filterOther
+      ? Chunk.fromIterable(FILE_EXTENSION_CATEGORIES.other)
+      : Chunk.empty<string>(),
+  ] as const;
 
-  if (filters.filterArchives) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.archives);
-  }
-  if (filters.filterImages) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.images);
-  }
-  if (filters.filterAudio) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.audio);
-  }
-  if (filters.filterVideo) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.video);
-  }
-  if (filters.filterOfficeDocuments) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.officeDocuments);
-  }
-  if (filters.filterOther) {
-    skipExtensions.push(...FILE_EXTENSION_CATEGORIES.other);
-  }
-
-  return skipExtensions;
+  return Chunk.toArray(Chunk.flatten(Chunk.fromIterable(categoryChunks)));
 };
+
+/**
+ * Safely parse a URL string, returning Option.none if invalid.
+ *
+ * @param urlString - The URL string to parse
+ * @returns Option containing the parsed URL or Option.none if invalid
+ * @internal
+ */
+const safeParseUrl: (urlString: string) => Option.Option<URL> =
+  Option.liftThrowable((urlString: string) => new URL(urlString));
 
 export const makeSpiderConfig = (
   options: Partial<SpiderConfigOptions> = {}
@@ -481,7 +491,7 @@ export const makeSpiderConfig = (
 
   // Determine which extensions to skip
   const skipExtensions =
-    config.skipFileExtensions ||
+    config.skipFileExtensions ??
     generateSkipExtensions(
       config.fileExtensionFilters ?? defaultFileExtensionFilters
     );
@@ -494,184 +504,188 @@ export const makeSpiderConfig = (
       fromUrl?: string,
       restrictToStartingDomain?: string
     ) =>
-      Effect.sync(() => {
-        try {
-          const url = new URL(urlString);
-          const fromUrlParsed = fromUrl ? new URL(fromUrl) : undefined;
-          const techFilters =
-            config.technicalFilters ?? defaultTechnicalFilters;
-
-          // Domain restriction override for multiple starting URLs
-          if (restrictToStartingDomain) {
-            const startingDomain = new URL(restrictToStartingDomain).hostname;
-            const isAllowedDomain =
-              url.hostname === startingDomain ||
-              url.hostname.endsWith(`.${startingDomain}`);
-            if (!isAllowedDomain) {
-              return {
-                follow: false,
-                reason: `Domain ${url.hostname} restricted to starting domain ${startingDomain}`,
-              };
-            }
-          }
-
-          // Technical filter: URL length check (Scrapy equivalent)
-          if (
-            techFilters.filterLongUrls &&
-            urlString.length > techFilters.maxUrlLength
-          ) {
-            return {
-              follow: false,
-              reason: `URL length ${urlString.length} exceeds maximum ${techFilters.maxUrlLength}`,
-            };
-          }
-
-          // Technical filter: Protocol/scheme check (Scrapy equivalent)
-          if (
-            techFilters.filterUnsupportedSchemes &&
-            !config.allowedProtocols.includes(url.protocol)
-          ) {
-            return {
-              follow: false,
-              reason: `Protocol ${url.protocol} not in allowed schemes: ${config.allowedProtocols.join(', ')}`,
-            };
-          }
-
-          // Domain allowlist check
-          if (config.allowedDomains && config.allowedDomains.length > 0) {
-            const isDomainAllowed = config.allowedDomains.some(
-              (domain) =>
-                url.hostname === domain || url.hostname.endsWith(`.${domain}`)
+      Effect.try({
+        try: () => new URL(urlString),
+        catch: (error) =>
+          error instanceof Error ? error.message : 'Unknown parsing error',
+      }).pipe(
+        Effect.flatMap((url) =>
+          Effect.sync(() => {
+            const fromUrlParsed = Option.fromNullable(fromUrl).pipe(
+              Option.flatMap((u) => safeParseUrl(u))
             );
-            if (!isDomainAllowed) {
+            const techFilters =
+              config.technicalFilters ?? defaultTechnicalFilters;
+
+            // Domain restriction override for multiple starting URLs
+            if (restrictToStartingDomain) {
+              const startingDomainUrlOpt = safeParseUrl(restrictToStartingDomain);
+              if (Option.isSome(startingDomainUrlOpt)) {
+                const startingDomain = startingDomainUrlOpt.value.hostname;
+                const isAllowedDomain =
+                  url.hostname === startingDomain ||
+                  url.hostname.endsWith(`.${startingDomain}`);
+                if (!isAllowedDomain) {
+                  return {
+                    follow: false,
+                    reason: `Domain ${url.hostname} restricted to starting domain ${startingDomain}`,
+                  };
+                }
+              }
+            }
+
+            // Technical filter: URL length check (Scrapy equivalent)
+            if (
+              techFilters.filterLongUrls &&
+              urlString.length > techFilters.maxUrlLength
+            ) {
               return {
                 follow: false,
-                reason: `Domain ${url.hostname} not in allowlist`,
+                reason: `URL length ${urlString.length} exceeds maximum ${techFilters.maxUrlLength}`,
               };
             }
-          }
 
-          // Domain blocklist check
-          if (config.blockedDomains && config.blockedDomains.length > 0) {
-            const isDomainBlocked = config.blockedDomains.some(
-              (domain) =>
-                url.hostname === domain || url.hostname.endsWith(`.${domain}`)
-            );
-            if (isDomainBlocked) {
+            // Technical filter: Protocol/scheme check (Scrapy equivalent)
+            if (
+              techFilters.filterUnsupportedSchemes &&
+              !config.allowedProtocols.includes(url.protocol)
+            ) {
               return {
                 follow: false,
-                reason: `Domain ${url.hostname} is blocked`,
+                reason: `Protocol ${url.protocol} not in allowed schemes: ${config.allowedProtocols.join(', ')}`,
               };
             }
-          }
 
-          // Custom URL filter check
-          if (config.customUrlFilters && config.customUrlFilters.length > 0) {
-            for (const pattern of config.customUrlFilters) {
-              if (pattern.test(urlString)) {
+            // Domain allowlist check
+            if (config.allowedDomains && config.allowedDomains.length > 0) {
+              const isDomainAllowed = config.allowedDomains.some(
+                (domain) =>
+                  url.hostname === domain || url.hostname.endsWith(`.${domain}`)
+              );
+              if (!isDomainAllowed) {
                 return {
                   follow: false,
-                  reason: `URL matches custom filter pattern: ${pattern}`,
+                  reason: `Domain ${url.hostname} not in allowlist`,
                 };
               }
             }
-          }
 
-          // Fragment check (skip anchor links to same page)
-          if (
-            fromUrlParsed &&
-            url.hostname === fromUrlParsed.hostname &&
-            url.pathname === fromUrlParsed.pathname &&
-            url.search === fromUrlParsed.search &&
-            url.hash
-          ) {
-            return {
-              follow: false,
-              reason: 'Fragment-only link to same page',
-            };
-          }
-
-          // File extension check (Scrapy IGNORED_EXTENSIONS equivalent)
-          const pathname = url.pathname.toLowerCase();
-          if (
-            skipExtensions.some((ext) => pathname.endsWith(ext.toLowerCase()))
-          ) {
-            // Determine which category was filtered for better error reporting
-            const filterReasons = [];
-            if (
-              config.fileExtensionFilters?.filterArchives &&
-              FILE_EXTENSION_CATEGORIES.archives.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('archive');
-            }
-            if (
-              config.fileExtensionFilters?.filterImages &&
-              FILE_EXTENSION_CATEGORIES.images.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('image');
-            }
-            if (
-              config.fileExtensionFilters?.filterAudio &&
-              FILE_EXTENSION_CATEGORIES.audio.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('audio');
-            }
-            if (
-              config.fileExtensionFilters?.filterVideo &&
-              FILE_EXTENSION_CATEGORIES.video.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('video');
-            }
-            if (
-              config.fileExtensionFilters?.filterOfficeDocuments &&
-              FILE_EXTENSION_CATEGORIES.officeDocuments.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('office document');
-            }
-            if (
-              config.fileExtensionFilters?.filterOther &&
-              FILE_EXTENSION_CATEGORIES.other.some((ext) =>
-                pathname.endsWith(ext.toLowerCase())
-              )
-            ) {
-              filterReasons.push('other file type');
+            // Domain blocklist check
+            if (config.blockedDomains && config.blockedDomains.length > 0) {
+              const isDomainBlocked = config.blockedDomains.some(
+                (domain) =>
+                  url.hostname === domain || url.hostname.endsWith(`.${domain}`)
+              );
+              if (isDomainBlocked) {
+                return {
+                  follow: false,
+                  reason: `Domain ${url.hostname} is blocked`,
+                };
+              }
             }
 
-            const reason =
-              filterReasons.length > 0
-                ? `Filtered ${filterReasons.join('/')} file extension`
-                : 'File extension not suitable for crawling';
+            // Custom URL filter check
+            if (config.customUrlFilters && config.customUrlFilters.length > 0) {
+              for (const pattern of config.customUrlFilters) {
+                if (pattern.test(urlString)) {
+                  return {
+                    follow: false,
+                    reason: `URL matches custom filter pattern: ${pattern}`,
+                  };
+                }
+              }
+            }
 
-            return {
-              follow: false,
-              reason,
-            };
-          }
+            // Fragment check (skip anchor links to same page)
+            if (
+              Option.isSome(fromUrlParsed) &&
+              url.hostname === fromUrlParsed.value.hostname &&
+              url.pathname === fromUrlParsed.value.pathname &&
+              url.search === fromUrlParsed.value.search &&
+              url.hash
+            ) {
+              return {
+                follow: false,
+                reason: 'Fragment-only link to same page',
+              };
+            }
 
-          return { follow: true };
-        } catch (error) {
-          // Technical filter: Malformed URL check (Scrapy equivalent)
-          if (config.technicalFilters?.filterMalformedUrls) {
-            return {
-              follow: false,
-              reason: `Malformed URL: ${error instanceof Error ? error.message : 'Unknown parsing error'}`,
-            };
-          } else {
-            // If malformed URL filtering is disabled, silently allow
+            // File extension check (Scrapy IGNORED_EXTENSIONS equivalent)
+            const pathname = url.pathname.toLowerCase();
+            if (
+              skipExtensions.some((ext) => pathname.endsWith(ext.toLowerCase()))
+            ) {
+              // Determine which category was filtered for better error reporting
+              const filterReasonChunks = [
+                config.fileExtensionFilters?.filterArchives &&
+                FILE_EXTENSION_CATEGORIES.archives.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('archive')
+                  : Chunk.empty<string>(),
+                config.fileExtensionFilters?.filterImages &&
+                FILE_EXTENSION_CATEGORIES.images.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('image')
+                  : Chunk.empty<string>(),
+                config.fileExtensionFilters?.filterAudio &&
+                FILE_EXTENSION_CATEGORIES.audio.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('audio')
+                  : Chunk.empty<string>(),
+                config.fileExtensionFilters?.filterVideo &&
+                FILE_EXTENSION_CATEGORIES.video.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('video')
+                  : Chunk.empty<string>(),
+                config.fileExtensionFilters?.filterOfficeDocuments &&
+                FILE_EXTENSION_CATEGORIES.officeDocuments.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('office document')
+                  : Chunk.empty<string>(),
+                config.fileExtensionFilters?.filterOther &&
+                FILE_EXTENSION_CATEGORIES.other.some((ext) =>
+                  pathname.endsWith(ext.toLowerCase())
+                )
+                  ? Chunk.of('other file type')
+                  : Chunk.empty<string>(),
+              ] as const;
+
+              const filterReasons = Chunk.toArray(
+                Chunk.flatten(Chunk.fromIterable(filterReasonChunks))
+              );
+
+              const reason =
+                filterReasons.length > 0
+                  ? `Filtered ${filterReasons.join('/')} file extension`
+                  : 'File extension not suitable for crawling';
+
+              return {
+                follow: false,
+                reason,
+              };
+            }
+
             return { follow: true };
-          }
-        }
-      }),
+          })
+        ),
+        Effect.catchAll((errorMessage) =>
+          Effect.succeed(
+            // Technical filter: Malformed URL check (Scrapy equivalent)
+            config.technicalFilters?.filterMalformedUrls
+              ? {
+                  follow: false,
+                  reason: `Malformed URL: ${errorMessage}`,
+                }
+              : // If malformed URL filtering is disabled, silently allow
+                { follow: true }
+          )
+        )
+      ),
 
     getUserAgent: () => Effect.succeed(config.userAgent),
     getRequestDelay: () => Effect.succeed(config.requestDelayMs),
@@ -683,7 +697,7 @@ export const makeSpiderConfig = (
     shouldFollowRedirects: () => Effect.succeed(config.followRedirects),
     shouldRespectNoFollow: () => Effect.succeed(config.respectNoFollow),
     getSkipFileExtensions: () =>
-      Effect.succeed(config.skipFileExtensions || []),
+      Effect.succeed(config.skipFileExtensions ?? []),
     getMaxConcurrentRequests: () =>
       Effect.succeed(config.maxConcurrentRequests),
     getMaxRequestsPerSecondPerDomain: () =>

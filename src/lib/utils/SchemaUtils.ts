@@ -156,7 +156,7 @@ export const SchemaUtils = {
    */
   decodeFromJson: <A, I>(schema: Schema.Schema<A, I>, json: string) =>
     Effect.gen(function* () {
-      const parsed = yield* JsonUtils.parse(json);
+      const parsed = yield* JsonUtils.parseUnknown(json);
       return yield* SchemaUtils.decodeUnknown(schema, parsed);
     }),
 
@@ -198,16 +198,18 @@ export const SchemaUtils = {
     SchemaUtils.decodeUnknown(schema, value).pipe(
       Effect.map(data => ({
         success: true as const,
-        data,
-        errors: null
+        data: Option.some(data),
+        errors: Option.none<ReadonlyArray<unknown>>()
       })),
       Effect.catchAll((error) => {
         return Effect.succeed({
           success: false as const,
-          data: null,
-          errors: 'errors' in error && error.errors
-            ? error.errors 
-            : [error]
+          data: Option.none<A>(),
+          errors: Option.some<ReadonlyArray<unknown>>(
+            'errors' in error && Array.isArray(error.errors)
+              ? error.errors
+              : [error]
+          )
         });
       })
     ),
@@ -277,8 +279,8 @@ export const SchemaUtils = {
     }),
 
   /**
-   * Merge two schemas (creates a new schema with combined properties)
-   * 
+   * Merge two Struct schemas (creates a new schema with combined properties)
+   *
    * @example
    * ```ts
    * const BaseSchema = Schema.Struct({ id: Schema.String });
@@ -287,15 +289,16 @@ export const SchemaUtils = {
    * // Results in schema with both id and name
    * ```
    */
-  merge: <A, I, B, J>(
-    schema1: Schema.Schema<A, I>,
-    schema2: Schema.Schema<B, J>
-  ): Schema.Schema<A & B, I & J> => {
-    // This is a simplified merge - in practice you'd want more sophisticated merging
-    return Schema.Struct({
-      ...getStructFields(schema1),
-      ...getStructFields(schema2)
-    }) as any;
+  merge: <
+    F1 extends Schema.Struct.Fields,
+    F2 extends Schema.Struct.Fields
+  >(
+    schema1: Schema.Struct<F1>,
+    schema2: Schema.Struct<F2>
+  ): Schema.Struct<F1 & F2> => {
+    // Merge the fields from both structs
+    const mergedFields = { ...schema1.fields, ...schema2.fields };
+    return Schema.Struct(mergedFields);
   },
 
   /**
@@ -338,7 +341,7 @@ export const SchemaUtils = {
 
   /**
    * Create record schema
-   * 
+   *
    * @example
    * ```ts
    * const UserMapSchema = SchemaUtils.record(Schema.String, UserSchema);
@@ -348,9 +351,14 @@ export const SchemaUtils = {
    * });
    * ```
    */
-  record: <K extends Schema.Schema<any, any>, V extends Schema.Schema<any, any>>(
-    key: K,
-    value: V
+  record: <
+    KA extends string | symbol,
+    KI,
+    VA,
+    VI
+  >(
+    key: Schema.Schema<KA, KI>,
+    value: Schema.Schema<VA, VI>
   ) =>
     Schema.Record({ key, value })
 };
@@ -360,47 +368,69 @@ export const SchemaUtils = {
 // ============================================================================
 
 /**
- * Get schema name for error messages
+ * Check if value is a non-null object
  */
-function getSchemaName(schema: Schema.Schema<any, any>): string {
-  // Try to get the name from the AST
-  const ast = schema.ast as any;
-  
-  if (ast && typeof ast === 'object') {
-    if ('_tag' in ast && typeof ast._tag === 'string') {
-      return ast._tag;
-    }
-    
-    if ('name' in ast && typeof ast.name === 'string') {
-      return ast.name;
-    }
-    
-    if ('identifier' in ast && typeof ast.identifier === 'string') {
-      return ast.identifier;
-    }
-  }
-  
-  // Fallback to a generic name
-  return 'Schema';
+function isNonNullObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== Object.create(Object.prototype) && Boolean(value);
 }
 
 /**
- * Get struct fields if schema is a struct
+ * Safely get a string property from an unknown object
  */
-function getStructFields(schema: Schema.Schema<any, any>): Record<string, any> {
-  const ast = schema.ast as any;
-  
-  if (ast && typeof ast === 'object' && ast._tag === 'TypeLiteral' && 'propertySignatures' in ast) {
-    const fields: Record<string, any> = {};
-    for (const prop of ast.propertySignatures) {
-      if (prop && typeof prop === 'object' && 'name' in prop && typeof prop.name === 'string') {
-        fields[prop.name] = prop;
-      }
-    }
-    return fields;
+function getStringProperty(obj: unknown, key: string): Option.Option<string> {
+  if (!isNonNullObject(obj)) {
+    return Option.none();
   }
-  
-  return {};
+  // Use Object.prototype.hasOwnProperty for safe property access
+  if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+    return Option.none();
+  }
+  const value: unknown = Reflect.get(obj, key);
+  if (typeof value === 'string') {
+    return Option.some(value);
+  }
+  return Option.none();
+}
+
+/**
+ * Safely get a string value from annotations using a symbol key
+ */
+function getAnnotationString(annotations: unknown, symbolKey: symbol): Option.Option<string> {
+  if (!isNonNullObject(annotations)) {
+    return Option.none();
+  }
+  const value: unknown = Reflect.get(annotations, symbolKey);
+  if (typeof value === 'string') {
+    return Option.some(value);
+  }
+  return Option.none();
+}
+
+/**
+ * Get schema name for error messages
+ */
+function getSchemaName<A, I>(schema: Schema.Schema<A, I>): string {
+  // Try to get the name from the AST (schema.ast is always present)
+  const ast: unknown = schema.ast;
+
+  // Try to get the _tag property first
+  const tagResult = getStringProperty(ast, '_tag');
+  if (Option.isSome(tagResult)) {
+    return tagResult.value;
+  }
+
+  // Check for annotations which may contain identifier
+  if (isNonNullObject(ast) && 'annotations' in ast) {
+    const annotations: unknown = Reflect.get(ast, 'annotations');
+    const identifierSymbol = Symbol.for('effect/Schema/annotation/Identifier');
+    const identifierResult = getAnnotationString(annotations, identifierSymbol);
+    if (Option.isSome(identifierResult)) {
+      return identifierResult.value;
+    }
+  }
+
+  // Fallback to a generic name
+  return 'Schema';
 }
 
 // ============================================================================

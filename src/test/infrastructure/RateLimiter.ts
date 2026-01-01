@@ -3,20 +3,29 @@
  * Ensures respectful testing of web-scraping.dev by limiting request frequency
  */
 
-import { Duration, Effect, Option, pipe, Ref, Schedule } from 'effect';
+import { Data, DateTime, Duration, Effect, Option, pipe, Ref, Schedule } from 'effect';
 
 export interface RateLimiterConfig {
   readonly requestsPerSecond: number;
   readonly burstSize?: number;
 }
 
-export interface RateLimiterService {
+export class CircuitBreakerOpenError extends Data.TaggedError('CircuitBreakerOpenError')<{
+  readonly message: string;
+}> {}
+
+export class TimeoutError extends Data.TaggedError('TimeoutError')<{
+  readonly message: string;
+  readonly timeoutMs: number;
+}> {}
+
+export interface RateLimiterServiceInterface {
   readonly throttle: <A, E, R>(
     effect: Effect.Effect<A, E, R>
   ) => Effect.Effect<A, E, R>;
   readonly setRate: (
     requestsPerSecond: number
-  ) => Effect.Effect<void, never, never>;
+  ) => Effect.Effect<void>;
   readonly withBackoff: <A, E, R>(
     effect: Effect.Effect<A, E, R>
   ) => Effect.Effect<A, E, R>;
@@ -30,12 +39,12 @@ export class RateLimiterService {
 
       // Token bucket for rate limiting
       const tokens = yield* Ref.make(burstSize);
-      const lastRefill = yield* Ref.make(Date.now());
+      const lastRefill = yield* Ref.make(DateTime.unsafeNow().epochMillis);
 
       // Refill tokens periodically
       const refillTokens = () =>
         Effect.gen(function* () {
-          const now = Date.now();
+          const now = DateTime.unsafeNow().epochMillis;
           const last = yield* Ref.get(lastRefill);
           const elapsed = now - last;
           const tokensToAdd = Math.floor(elapsed / intervalMs);
@@ -49,7 +58,7 @@ export class RateLimiterService {
         });
 
       // Wait for available token
-      const acquireToken = (): Effect.Effect<void, never, never> =>
+      const acquireToken = (): Effect.Effect<void> =>
         Effect.gen(function* () {
           yield* refillTokens();
           const available = yield* Ref.get(tokens);
@@ -74,9 +83,7 @@ export class RateLimiterService {
 
       // Set new rate
       const setRate = (newRequestsPerSecond: number) =>
-        Effect.sync(() => {
-          console.log(`Rate limit updated to ${newRequestsPerSecond} req/s`);
-        });
+        Effect.logInfo(`Rate limit updated to ${newRequestsPerSecond} req/s`);
 
       // Exponential backoff for failures
       const withBackoff = <A, E, R>(
@@ -93,7 +100,7 @@ export class RateLimiterService {
         throttle,
         setRate,
         withBackoff,
-      } satisfies RateLimiterService;
+      } satisfies RateLimiterServiceInterface;
     });
 }
 
@@ -111,7 +118,7 @@ export const makeTestRateLimiter = () =>
  */
 export const rateLimitedSequence = <A, E, R>(
   effects: Effect.Effect<A, E, R>[],
-  rateLimiter: RateLimiterService
+  rateLimiter: RateLimiterServiceInterface
 ): Effect.Effect<readonly A[], E, R> =>
   Effect.all(
     effects.map((effect) => rateLimiter.throttle(effect)),
@@ -157,8 +164,8 @@ export const NetworkResilience = {
       failureThreshold?: number;
       resetTimeout?: Duration.Duration;
     } = {}
-  ) => {
-    const { failureThreshold = 5, resetTimeout = Duration.seconds(60) } =
+  ): Effect.Effect<A, E | CircuitBreakerOpenError, R> => {
+    const { failureThreshold = 5, resetTimeout: _resetTimeout = Duration.seconds(60) } =
       options;
 
     return Effect.gen(function* () {
@@ -167,7 +174,7 @@ export const NetworkResilience = {
 
       const isOpen = yield* Ref.get(circuitOpen);
       if (isOpen) {
-        return yield* Effect.fail(new Error('Circuit breaker is open') as E);
+        return yield* Effect.fail(new CircuitBreakerOpenError({ message: 'Circuit breaker is open' }));
       }
 
       return yield* pipe(
@@ -195,7 +202,7 @@ export const NetworkResilience = {
     effect: Effect.Effect<A, E, R>,
     timeout: Duration.Duration,
     retries: number = 2
-  ): Effect.Effect<A, E | Error, R> =>
+  ): Effect.Effect<A, E | TimeoutError, R> =>
     pipe(
       effect,
       Effect.timeoutOption(timeout),
@@ -203,10 +210,9 @@ export const NetworkResilience = {
         if (Option.isSome(option)) {
           return Effect.succeed(option.value);
         }
+        const timeoutMs = Duration.toMillis(timeout);
         return Effect.fail(
-          new Error(`Timeout after ${Duration.toMillis(timeout)}ms`) as
-            | E
-            | Error
+          new TimeoutError({ message: `Timeout after ${timeoutMs}ms`, timeoutMs })
         );
       }),
       Effect.retry(Schedule.recurs(retries))

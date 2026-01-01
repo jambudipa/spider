@@ -43,7 +43,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         elements => elements
           .map(el => {
             const text = el.textContent?.toLowerCase().trim() || '';
-            const classNames = el.className?.toLowerCase() || '';
+            const classNames = (el.getAttribute('class') ?? '').toLowerCase();
             const id = el.id?.toLowerCase() || '';
             
             const isLoadMore = 
@@ -63,7 +63,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
               id,
               tagName: el.tagName,
               isLoadMore,
-              isVisible: 'offsetParent' in el ? (el as HTMLElement).offsetParent !== null : true,
+              isVisible: 'offsetParent' in el ? el.offsetParent !== null : true,
               isEnabled: !el.hasAttribute('disabled')
             };
           })
@@ -133,7 +133,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           }
         }
         
-      } catch (clickError) {
+      } catch (_clickError) {
         // If we can't find the button, check if pagination exists in another form
         const paginationExists = await test.getPage().evaluate(() => {
           const paginationSelectors = [
@@ -186,7 +186,9 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
                 break;
               }
             }
-          } catch {}
+          } catch {
+            // Selector not found or button not clickable - continue to next selector
+          }
         }
         
         if (!buttonClicked) {
@@ -270,7 +272,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           // Use the specific selector from manual validation
           const loadMoreButton = document.getElementById('page-load-more');
           
-          if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
+          if (loadMoreButton && !(loadMoreButton instanceof HTMLButtonElement && loadMoreButton.disabled) && loadMoreButton.offsetParent !== null) {
             loadMoreButton.click();
             return true;
           }
@@ -308,22 +310,10 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         
         // Try to click load more button
         try {
-          const loadMoreButton = document.getElementById('page-load-more');
-          
-          if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
-            try {
-              loadMoreButton.click();
-              return true;
-            } catch (error) {
-              console.log('Click failed:', error instanceof Error ? error.message : String(error));
-              return false;
-            }
-          }
-          
           const clickResult = await test.getPage().evaluate(() => {
             const loadMoreButton = document.getElementById('page-load-more');
-            
-            if (loadMoreButton && !('disabled' in loadMoreButton && (loadMoreButton as any).disabled) && loadMoreButton.offsetParent !== null) {
+
+            if (loadMoreButton && !(loadMoreButton instanceof HTMLButtonElement && loadMoreButton.disabled) && loadMoreButton.offsetParent !== null) {
               try {
                 loadMoreButton.click();
                 return true;
@@ -356,7 +346,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       expect(allReviews.length).toBeGreaterThan(0);
       
       // Validate review structure
-      allReviews.forEach((review, index) => {
+      allReviews.forEach((review, _index) => {
         expect(review.author).toBeTruthy();
         expect(review.content).toBeTruthy();
         expect(review.content.length).toBeGreaterThan(5);
@@ -386,7 +376,20 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
   it('should handle button state changes', async () => {
     try {
       // Monitor button state changes
-      const buttonStates: any[] = [];
+      interface ButtonState {
+        text: string;
+        disabled: boolean;
+        visible: boolean;
+        className: string;
+        hasLoadingClass?: boolean;
+      }
+
+      interface StateRecord {
+        phase: string;
+        buttons: ButtonState[];
+      }
+
+      const buttonStates: StateRecord[] = [];
       
       // Get initial button state
       const initialState = await test.getPage().evaluate(() => {
@@ -450,7 +453,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
           
           buttonStates.push({ phase: 'final', buttons: finalState });
         }
-      } catch (clickError) {
+      } catch (_clickError) {
         // Button click failed - that's okay, we still have initial state
       }
       

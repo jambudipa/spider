@@ -3,7 +3,7 @@
  * Extracts and manages various types of tokens from HTTP responses
  */
 
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, HashMap, Option, DateTime, Data } from 'effect';
 import * as cheerio from 'cheerio';
 import {
   StateManager,
@@ -11,6 +11,21 @@ import {
 } from '../StateManager/StateManager.service.js';
 import { EnhancedHttpClient, type HttpResponse } from './EnhancedHttpClient.js';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
+import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
+
+// Tagged error types for Effect-style error handling
+export class TokenNotAvailableError extends Data.TaggedError('TokenNotAvailableError')<{
+  readonly message: string;
+}> {}
+
+export class TokenRefreshError extends Data.TaggedError('TokenRefreshError')<{
+  readonly message: string;
+  readonly tokenType: TokenType;
+}> {}
+
+export class NoRefreshUrlError extends Data.TaggedError('NoRefreshUrlError')<{
+  readonly message: string;
+}> {}
 
 export interface TokenInfo {
   type: TokenType;
@@ -20,27 +35,33 @@ export interface TokenInfo {
   pattern?: string;
 }
 
+// Common HTTP error type for methods that make HTTP requests
+type HttpRequestError = NetworkError | ParseError | TimeoutError;
+
+// Combined error type that includes HTTP and state management errors
+type TokenExtractorError = HttpRequestError | Error | TokenNotAvailableError | TokenRefreshError | NoRefreshUrlError;
+
 export interface TokenExtractorService {
   /**
    * Extract all tokens from an HTTP response
    */
   extractTokensFromResponse: (
     response: HttpResponse
-  ) => Effect.Effect<TokenInfo[], Error, never>;
+  ) => Effect.Effect<TokenInfo[]>;
 
   /**
    * Extract CSRF token from response
    */
   extractCSRFFromResponse: (
     response: HttpResponse
-  ) => Effect.Effect<string | null, Error, never>;
+  ) => Effect.Effect<Option.Option<string>>;
 
   /**
    * Extract API token from response
    */
   extractAPIFromResponse: (
     response: HttpResponse
-  ) => Effect.Effect<string | null, Error, never>;
+  ) => Effect.Effect<Option.Option<string>>;
 
   /**
    * Make authenticated request with automatic token injection
@@ -52,7 +73,7 @@ export interface TokenExtractorService {
       requireAPI?: boolean;
       customHeaders?: Record<string, string>;
     }
-  ) => Effect.Effect<HttpResponse, Error, never>;
+  ) => Effect.Effect<HttpResponse, TokenExtractorError>;
 
   /**
    * Detect and handle token rotation
@@ -61,7 +82,7 @@ export interface TokenExtractorService {
     oldToken: string,
     response: HttpResponse,
     type: TokenType
-  ) => Effect.Effect<boolean, Error, never>;
+  ) => Effect.Effect<boolean>;
 
   /**
    * Refresh expired tokens
@@ -69,8 +90,10 @@ export interface TokenExtractorService {
   refreshToken: (
     type: TokenType,
     refreshUrl?: string
-  ) => Effect.Effect<string, Error, never>;
+  ) => Effect.Effect<string, TokenExtractorError>;
 }
+
+export type { TokenExtractorError };
 
 export class TokenExtractor extends Context.Tag('TokenExtractor')<
   TokenExtractor,
@@ -86,7 +109,6 @@ export const makeTokenExtractor = Effect.gen(function* () {
   const logger = yield* SpiderLogger;
 
   const extractFromHTML = (html: string): TokenInfo[] => {
-    const tokens: TokenInfo[] = [];
     const $ = cheerio.load(html);
 
     // CSRF token patterns in HTML
@@ -101,20 +123,21 @@ export const makeTokenExtractor = Effect.gen(function* () {
       { selector: 'input[name="__RequestVerificationToken"]', attr: 'value' },
     ];
 
-    for (const { selector, attr } of csrfSelectors) {
+    const csrfTokens = csrfSelectors.flatMap(({ selector, attr }) => {
       const element = $(selector);
       if (element.length > 0) {
         const value = element.attr(attr);
         if (value) {
-          tokens.push({
+          return [{
             type: TokenType.CSRF,
             value,
-            source: 'html',
+            source: 'html' as const,
             selector,
-          });
+          }];
         }
       }
-    }
+      return [];
+    });
 
     // API token patterns in HTML (less common)
     const apiSelectors = [
@@ -124,26 +147,26 @@ export const makeTokenExtractor = Effect.gen(function* () {
       { selector: 'meta[name="access-token"]', attr: 'content' },
     ];
 
-    for (const { selector, attr } of apiSelectors) {
+    const apiTokens = apiSelectors.flatMap(({ selector, attr }) => {
       const element = $(selector);
       if (element.length > 0) {
         const value = element.attr(attr);
         if (value) {
-          tokens.push({
+          return [{
             type: TokenType.API,
             value,
-            source: 'html',
+            source: 'html' as const,
             selector,
-          });
+          }];
         }
       }
-    }
+      return [];
+    });
 
-    return tokens;
+    return [...csrfTokens, ...apiTokens];
   };
 
   const extractFromScripts = (html: string): TokenInfo[] => {
-    const tokens: TokenInfo[] = [];
     const $ = cheerio.load(html);
 
     // Get all inline scripts
@@ -174,17 +197,18 @@ export const makeTokenExtractor = Effect.gen(function* () {
       },
     ];
 
-    for (const { pattern, name } of csrfPatterns) {
+    const csrfTokens = csrfPatterns.flatMap(({ pattern, name }) => {
       const match = scriptContent.match(pattern);
-      if (match && match[1]) {
-        tokens.push({
+      if (match?.[1]) {
+        return [{
           type: TokenType.CSRF,
           value: match[1],
-          source: 'script',
+          source: 'script' as const,
           pattern: name,
-        });
+        }];
       }
-    }
+      return [];
+    });
 
     // API token patterns in JavaScript
     const apiPatterns = [
@@ -214,23 +238,24 @@ export const makeTokenExtractor = Effect.gen(function* () {
       },
     ];
 
-    for (const { pattern, name } of apiPatterns) {
+    const apiTokens = apiPatterns.flatMap(({ pattern, name }) => {
       const match = scriptContent.match(pattern);
-      if (match && match[1]) {
-        tokens.push({
+      if (match?.[1]) {
+        return [{
           type: TokenType.API,
           value: match[1],
-          source: 'script',
+          source: 'script' as const,
           pattern: name,
-        });
+        }];
       }
-    }
+      return [];
+    });
 
     // Check window object assignments
     const windowPattern =
       /window\[["']([^"']*[Tt]oken[^"']*)["']\]\s*=\s*["']([^"']+)["']/g;
-    let windowMatch;
-    while ((windowMatch = windowPattern.exec(scriptContent)) !== null) {
+    const windowMatches = Array.from(scriptContent.matchAll(windowPattern));
+    const windowTokens = windowMatches.flatMap((windowMatch) => {
       if (windowMatch[2]) {
         const keyLower = windowMatch[1].toLowerCase();
         const type =
@@ -238,21 +263,20 @@ export const makeTokenExtractor = Effect.gen(function* () {
             ? TokenType.CSRF
             : TokenType.API;
 
-        tokens.push({
+        return [{
           type,
           value: windowMatch[2],
-          source: 'script',
+          source: 'script' as const,
           pattern: `window['${windowMatch[1]}']`,
-        });
+        }];
       }
-    }
+      return [];
+    });
 
-    return tokens;
+    return [...csrfTokens, ...apiTokens, ...windowTokens];
   };
 
   const extractFromHeaders = (headers: Record<string, string>): TokenInfo[] => {
-    const tokens: TokenInfo[] = [];
-
     // Check for tokens in response headers
     const headerPatterns = [
       { header: 'x-csrf-token', type: TokenType.CSRF },
@@ -262,102 +286,111 @@ export const makeTokenExtractor = Effect.gen(function* () {
       { header: 'x-access-token', type: TokenType.AUTH },
     ];
 
-    for (const { header, type } of headerPatterns) {
+    return headerPatterns.flatMap(({ header, type }) => {
       const value = headers[header] || headers[header.toLowerCase()];
       if (value) {
-        tokens.push({
+        return [{
           type,
           value,
-          source: 'header',
+          source: 'header' as const,
           pattern: header,
-        });
+        }];
       }
-    }
+      return [];
+    });
+  };
 
-    return tokens;
+  // Helper to compute expiry DateTime (1 hour from now)
+  const computeExpiryDate = (): Date => {
+    const now = DateTime.unsafeNow();
+    const oneHourMs = 3600000;
+    return DateTime.toDate(DateTime.add(now, { millis: oneHourMs }));
   };
 
   const service: TokenExtractorService = {
     extractTokensFromResponse: (response: HttpResponse) =>
       Effect.gen(function* () {
-        const tokens: TokenInfo[] = [];
+        // Extract from all sources
+        const allTokens = [
+          ...extractFromHTML(response.body),
+          ...extractFromScripts(response.body),
+          ...extractFromHeaders(response.headers),
+        ];
 
-        // Extract from HTML
-        tokens.push(...extractFromHTML(response.body));
+        // Store unique tokens (by type and value) using HashMap
+        const uniqueTokensMap = allTokens.reduce(
+          (acc, token) => {
+            const key = `${token.type}:${token.value}`;
+            if (!HashMap.has(acc, key)) {
+              return HashMap.set(acc, key, token);
+            }
+            return acc;
+          },
+          HashMap.empty<string, TokenInfo>()
+        );
 
-        // Extract from scripts
-        tokens.push(...extractFromScripts(response.body));
+        const uniqueTokensList = Array.from(HashMap.values(uniqueTokensMap));
 
-        // Extract from headers
-        tokens.push(...extractFromHeaders(response.headers));
+        // Store in StateManager and log
+        for (const token of uniqueTokensList) {
+          yield* stateManager.storeToken(
+            token.type,
+            token.value,
+            computeExpiryDate()
+          );
 
-        // Store unique tokens (by type and value)
-        const uniqueTokens = new Map<string, TokenInfo>();
-        for (const token of tokens) {
-          const key = `${token.type}:${token.value}`;
-          if (!uniqueTokens.has(key)) {
-            uniqueTokens.set(key, token);
-
-            // Store in StateManager
-            yield* stateManager.storeToken(
-              token.type,
-              token.value,
-              new Date(Date.now() + 3600000) // 1 hour expiry
-            );
-
-            yield* logger.logEdgeCase(
-              new URL(response.url).hostname,
-              'token_found',
-              {
-                type: token.type,
-                source: token.source,
-                pattern: token.pattern || token.selector,
-              }
-            );
-          }
+          yield* logger.logEdgeCase(
+            new URL(response.url).hostname,
+            'token_found',
+            {
+              type: token.type,
+              source: token.source,
+              pattern: token.pattern || token.selector,
+            }
+          );
         }
 
-        return Array.from(uniqueTokens.values());
+        return uniqueTokensList;
       }),
 
     extractCSRFFromResponse: (response: HttpResponse) =>
       Effect.gen(function* () {
-        const tokens = yield* Effect.succeed([
+        const tokens = [
           ...extractFromHTML(response.body),
           ...extractFromScripts(response.body),
-        ]);
+        ];
 
         const csrfToken = tokens.find((t) => t.type === TokenType.CSRF);
         if (csrfToken) {
           yield* stateManager.storeToken(
             TokenType.CSRF,
             csrfToken.value,
-            new Date(Date.now() + 3600000)
+            computeExpiryDate()
           );
-          return csrfToken.value;
+          return Option.some(csrfToken.value);
         }
 
-        return null;
+        return Option.none();
       }),
 
     extractAPIFromResponse: (response: HttpResponse) =>
       Effect.gen(function* () {
-        const tokens = yield* Effect.succeed([
+        const tokens = [
           ...extractFromScripts(response.body),
           ...extractFromHeaders(response.headers),
-        ]);
+        ];
 
         const apiToken = tokens.find((t) => t.type === TokenType.API);
         if (apiToken) {
           yield* stateManager.storeToken(
             TokenType.API,
             apiToken.value,
-            new Date(Date.now() + 3600000)
+            computeExpiryDate()
           );
-          return apiToken.value;
+          return Option.some(apiToken.value);
         }
 
-        return null;
+        return Option.none();
       }),
 
     authenticatedRequest: (
@@ -386,7 +419,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
                   return stateManager.storeToken(
                     TokenType.CSRF,
                     csrfToken.value,
-                    new Date(Date.now() + 3600000)
+                    computeExpiryDate()
                   );
                 }
                 return Effect.void;
@@ -394,12 +427,15 @@ export const makeTokenExtractor = Effect.gen(function* () {
             );
           }
 
-          const csrfToken = yield* stateManager
+          const csrfTokenOption = yield* stateManager
             .getToken(TokenType.CSRF)
-            .pipe(Effect.catchAll(() => Effect.succeed(null)));
+            .pipe(
+              Effect.map(Option.some),
+              Effect.catchAll(() => Effect.succeed(Option.none()))
+            );
 
-          if (csrfToken) {
-            headers['X-CSRF-Token'] = csrfToken;
+          if (Option.isSome(csrfTokenOption)) {
+            headers['X-CSRF-Token'] = csrfTokenOption.value;
             headers['X-Requested-With'] = 'XMLHttpRequest';
           }
         }
@@ -410,7 +446,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
 
           if (!isValid) {
             return yield* Effect.fail(
-              new Error('API token not available or expired')
+              new TokenNotAvailableError({ message: 'API token not available or expired' })
             );
           }
 
@@ -424,12 +460,15 @@ export const makeTokenExtractor = Effect.gen(function* () {
 
         // Check for token rotation
         if (options.requireCSRF) {
-          const currentCSRF = yield* stateManager
+          const currentCSRFOption = yield* stateManager
             .getToken(TokenType.CSRF)
-            .pipe(Effect.catchAll(() => Effect.succeed('')));
-          if (currentCSRF) {
+            .pipe(
+              Effect.map(Option.some),
+              Effect.catchAll(() => Effect.succeed(Option.none()))
+            );
+          if (Option.isSome(currentCSRFOption)) {
             yield* service.detectTokenRotation(
-              currentCSRF,
+              currentCSRFOption.value,
               response,
               TokenType.CSRF
             );
@@ -437,12 +476,15 @@ export const makeTokenExtractor = Effect.gen(function* () {
         }
 
         if (options.requireAPI) {
-          const currentAPI = yield* stateManager
+          const currentAPIOption = yield* stateManager
             .getToken(TokenType.API)
-            .pipe(Effect.catchAll(() => Effect.succeed('')));
-          if (currentAPI) {
+            .pipe(
+              Effect.map(Option.some),
+              Effect.catchAll(() => Effect.succeed(Option.none()))
+            );
+          if (Option.isSome(currentAPIOption)) {
             yield* service.detectTokenRotation(
-              currentAPI,
+              currentAPIOption.value,
               response,
               TokenType.API
             );
@@ -458,11 +500,11 @@ export const makeTokenExtractor = Effect.gen(function* () {
       type: TokenType
     ) =>
       Effect.gen(function* () {
-        const tokens = yield* Effect.succeed([
+        const tokens = [
           ...extractFromHTML(response.body),
           ...extractFromScripts(response.body),
           ...extractFromHeaders(response.headers),
-        ]);
+        ];
 
         const newToken = tokens.find(
           (t) => t.type === type && t.value !== oldToken
@@ -472,7 +514,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
           yield* stateManager.storeToken(
             type,
             newToken.value,
-            new Date(Date.now() + 3600000)
+            computeExpiryDate()
           );
 
           yield* logger.logEdgeCase(
@@ -494,24 +536,24 @@ export const makeTokenExtractor = Effect.gen(function* () {
     refreshToken: (type: TokenType, refreshUrl?: string) =>
       Effect.gen(function* () {
         if (!refreshUrl) {
-          return yield* Effect.fail(new Error('No refresh URL provided'));
+          return yield* Effect.fail(new NoRefreshUrlError({ message: 'No refresh URL provided' }));
         }
 
         // Make request to refresh endpoint
         const response = yield* httpClient.get(refreshUrl);
 
         // Extract tokens from response
-        const tokens = yield* Effect.succeed([
+        const tokens = [
           ...extractFromHTML(response.body),
           ...extractFromScripts(response.body),
           ...extractFromHeaders(response.headers),
-        ]);
+        ];
 
         const newToken = tokens.find((t) => t.type === type);
 
         if (!newToken) {
           return yield* Effect.fail(
-            new Error(`Failed to refresh ${type} token`)
+            new TokenRefreshError({ message: `Failed to refresh ${type} token`, tokenType: type })
           );
         }
 
@@ -519,7 +561,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
         yield* stateManager.storeToken(
           type,
           newToken.value,
-          new Date(Date.now() + 3600000)
+          computeExpiryDate()
         );
 
         return newToken.value;

@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
 import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors.js';
@@ -98,117 +98,106 @@ export class ScraperService extends Effect.Service<ScraperService>()(
        */
       fetchAndParse: (url: string, depth = 0) =>
         Effect.gen(function* () {
-          const startTime = yield* Effect.sync(() => new Date());
-          const startMs = startTime.getTime();
+          const startTime = yield* DateTime.now;
+          const startMs = DateTime.toEpochMillis(startTime);
           const logger = yield* SpiderLogger;
           const domain = new URL(url).hostname;
 
           // Log fetch start is handled by spider already
 
-          // Create AbortController for proper timeout handling
-          const controller = new AbortController();
           const timeoutMs = 30000; // 30 seconds
 
-          const timeoutId = setTimeout(() => {
-            const duration = Date.now() - startMs;
-            Effect.runSync(
-              logger.logEdgeCase(domain, 'fetch_abort_triggered', {
-                url,
-                durationMs: duration,
-                reason: 'timeout',
-                timeoutMs,
-              })
-            );
-            controller.abort();
-          }, timeoutMs);
-
-          // Fetch HTML with AbortController-based timeout
-          // JUSTIFICATION: Effect's timeout doesn't actually abort the underlying fetch operation,
-          // causing workers to hang on malformed URLs. AbortController properly cancels the request.
-          // EVIDENCE: Logs show 298 stuck fetches on URLs with escaped quotes, 292 on multiple slashes,
-          // all showing as "pending" with 0 timeouts fired despite 45-second configuration.
-          const response = yield* Effect.tryPromise({
-            try: async () => {
-              try {
-                const resp = await fetch(url, { signal: controller.signal });
-                clearTimeout(timeoutId);
-
-                // Check content type - skip binary files
-                const contentType = resp.headers.get('content-type') || '';
-                if (
-                  !contentType.includes('text/html') &&
-                  !contentType.includes('application/xhtml') &&
-                  !contentType.includes('text/') &&
-                  contentType !== ''
-                ) {
-                  throw ContentTypeError.create(
-                    url,
-                    contentType,
-                    ['text/html', 'application/xhtml+xml', 'text/*']
-                  );
-                }
-
-                return resp;
-              } catch (error) {
-                clearTimeout(timeoutId);
-                if (error instanceof Error && error.name === 'AbortError') {
-                  throw RequestAbortError.timeout(url, Date.now() - startMs);
-                }
-                throw error;
+          // Create the fetch effect with timeout
+          const fetchEffect = Effect.tryPromise({
+            try: () => globalThis.fetch(url),
+            catch: (error) => {
+              if (error instanceof Error && error.name === 'AbortError') {
+                return RequestAbortError.timeout(url, timeoutMs);
               }
+              return NetworkError.fromCause(url, error);
             },
-            catch: (error) => NetworkError.fromCause(url, error),
           });
+
+          // Apply timeout and handle timeout case
+          const fetchWithTimeout = fetchEffect.pipe(
+            Effect.timeoutOption(Duration.millis(timeoutMs)),
+            Effect.flatMap((maybeResponse) =>
+              Option.match(maybeResponse, {
+                onNone: () =>
+                  Effect.gen(function* () {
+                    const currentTime = yield* DateTime.now;
+                    const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
+                    yield* logger.logEdgeCase(domain, 'fetch_abort_triggered', {
+                      url,
+                      durationMs,
+                      reason: 'timeout',
+                      timeoutMs,
+                    });
+                    return yield* Effect.fail(
+                      RequestAbortError.timeout(url, durationMs)
+                    );
+                  }),
+                onSome: (response) => Effect.succeed(response),
+              })
+            )
+          );
+
+          // Fetch HTML with Effect-based timeout
+          // JUSTIFICATION: Effect's timeout properly handles cancellation via Fiber interruption.
+          // Previous implementation used AbortController, now using idiomatic Effect patterns.
+          const response = yield* fetchWithTimeout;
+
+          // Check content type - skip binary files
+          const contentType = response.headers.get('content-type') ?? '';
+          if (
+            !contentType.includes('text/html') &&
+            !contentType.includes('application/xhtml') &&
+            !contentType.includes('text/') &&
+            contentType !== ''
+          ) {
+            return yield* Effect.fail(
+              ContentTypeError.create(
+                url,
+                contentType,
+                ['text/html', 'application/xhtml+xml', 'text/*']
+              )
+            );
+          }
 
           // Parse response with timeout protection
-          // Create a new AbortController for response parsing
-          const textController = new AbortController();
           const textTimeoutMs = 10000; // 10 seconds
 
-          const textTimeoutId = setTimeout(() => {
-            const duration = Date.now() - startMs;
-            Effect.runSync(
-              logger.logEdgeCase(domain, 'response_text_abort_triggered', {
-                url,
-                durationMs: duration,
-                reason: 'timeout',
-                timeoutMs: textTimeoutMs,
-              })
-            );
-            textController.abort();
-          }, textTimeoutMs);
-
-          const html = yield* Effect.tryPromise({
-            try: async () => {
-              try {
-                // Use a readable stream with abort capability
-                const reader = response.body?.getReader();
-                if (!reader) throw ResponseError.fromCause(url, 'No response body');
-
-                const decoder = new TextDecoder();
-                let html = '';
-
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  html += decoder.decode(value, { stream: true });
-
-                  // Check if we should abort
-                  if (textController.signal.aborted) {
-                    reader.cancel();
-                    throw RequestAbortError.cancelled(url, Date.now() - startMs);
-                  }
-                }
-
-                clearTimeout(textTimeoutId);
-                return html;
-              } catch (error) {
-                clearTimeout(textTimeoutId);
-                throw error;
-              }
-            },
+          // Create the text parsing effect
+          const parseTextEffect = Effect.tryPromise({
+            try: () => response.text(),
             catch: (error) => ResponseError.fromCause(url, error),
           });
+
+          // Apply timeout and handle timeout case
+          const parseWithTimeout = parseTextEffect.pipe(
+            Effect.timeoutOption(Duration.millis(textTimeoutMs)),
+            Effect.flatMap((maybeHtml) =>
+              Option.match(maybeHtml, {
+                onNone: () =>
+                  Effect.gen(function* () {
+                    const currentTime = yield* DateTime.now;
+                    const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
+                    yield* logger.logEdgeCase(domain, 'response_text_abort_triggered', {
+                      url,
+                      durationMs,
+                      reason: 'timeout',
+                      timeoutMs: textTimeoutMs,
+                    });
+                    return yield* Effect.fail(
+                      RequestAbortError.timeout(url, durationMs)
+                    );
+                  }),
+                onSome: (html) => Effect.succeed(html),
+              })
+            )
+          );
+
+          const html = yield* parseWithTimeout;
 
           // Parse with Cheerio
           const $ = cheerio.load(html);
@@ -242,21 +231,29 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           });
 
           // Calculate duration
-          const endTime = yield* Effect.sync(() => new Date());
-          const durationMs = endTime.getTime() - startTime.getTime();
+          const endTime = yield* DateTime.now;
+          const durationMs = DateTime.toEpochMillis(endTime) - startMs;
 
-          // Build PageData object
+          // Build PageData object using Option for optional fields
+          const titleText = $('title').text();
+          const title = Option.liftPredicate(titleText, (t) => t.length > 0);
+          const hasAnyMetadata = Object.values(commonMetadata).some(
+            (v) => Option.isSome(Option.fromNullable(v))
+          );
+          const maybeCommonMetadata = Option.liftPredicate(
+            commonMetadata,
+            () => hasAnyMetadata
+          );
+
           const pageData = {
             url,
             html,
-            title: $('title').text() || undefined,
+            title: Option.getOrUndefined(title),
             metadata,
-            commonMetadata: Object.values(commonMetadata).some((v) => v)
-              ? commonMetadata
-              : undefined,
+            commonMetadata: Option.getOrUndefined(maybeCommonMetadata),
             statusCode: response.status,
             headers,
-            fetchedAt: startTime,
+            fetchedAt: DateTime.toDate(startTime),
             scrapeDurationMs: durationMs,
             depth,
           };

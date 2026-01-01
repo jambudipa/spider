@@ -20,7 +20,7 @@ export interface CrawlTask {
   /** Optional metadata to be passed through to the result */
   metadata?: Record<string, unknown>;
   /** Optional data extraction configuration */
-  extractData?: Record<string, any>;
+  extractData?: Record<string, unknown>;
 }
 
 /**

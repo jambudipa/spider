@@ -181,7 +181,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
             await test.getPage().fill('input[type="password"]', creds.password);
             
             // Prepare to monitor changes
-            const navigationPromise = test.getPage().waitForNavigation({ timeout: 10000 }).catch(() => null);
+            const navigationPromise = test.getPage().waitForURL('**/*', { timeout: 10000 }).catch(() => null);
             
             // Submit the form
             if (formElements.hasSubmitButton) {
@@ -232,7 +232,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         expect(loginAttemptMade).toBe(true);
         
         // Check final state
-        const finalUrl = test.getPage().url();
+        const _finalUrl = test.getPage().url();
         const finalCookies = await test.getPage().context().cookies();
         
         // At minimum, verify page is still functional
@@ -380,7 +380,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
             await test.getPage().waitForTimeout(2000);
           }
         }
-      } catch (error) {
+      } catch (_error) {
         // Login attempt failed, continue with analysis
       }
       
@@ -414,7 +414,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
               expect(response.status()).toBeLessThan(400);
             }
           }
-        } catch (error) {
+        } catch (_error) {
           // Protected resource not accessible - expected for some URLs
         }
       }
@@ -453,10 +453,10 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       // Navigate to a page that might check authentication
       try {
         await test.navigateToScenario('/dashboard');
-      } catch (error) {
+      } catch (_error) {
         try {
           await test.navigateToScenario('/profile');
-        } catch (error) {
+        } catch (_error2) {
           // Fallback to login page
           await test.navigateToScenario('/login');
         }
@@ -466,7 +466,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       const cookiesAfterNavigation = await test.getPage().context().cookies();
       
       // Verify cookie handling
-      const expiredCookiesRemoved = cookiesAfterNavigation.length <= cookiesBeforeCleanup.length;
+      const _expiredCookiesRemoved = cookiesAfterNavigation.length <= cookiesBeforeCleanup.length;
       
       // Test manual cookie expiration
       await test.getPage().evaluate(() => {
@@ -510,15 +510,15 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
           .map(el => ({
             text: el.textContent?.toLowerCase().trim() || '',
             href: (el as HTMLAnchorElement).href || '',
-            className: el.className,
+            classAttr: el.getAttribute('class') ?? '',
             tagName: el.tagName
           }))
-          .filter(el => 
+          .filter(el =>
             el.text.includes('logout') ||
             el.text.includes('log out') ||
             el.text.includes('sign out') ||
             el.href.includes('logout') ||
-            el.className.includes('logout')
+            el.classAttr.includes('logout')
           )
       );
       
@@ -546,7 +546,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
             const currentUrl = test.getPage().url();
             expect(currentUrl.includes('login') || currentUrl.includes('home') || currentUrl === test.getBaseUrl() + '/').toBe(true);
           }
-        } catch (error) {
+        } catch (_error) {
           // Logout button not clickable or doesn't exist
         }
       }
@@ -556,7 +556,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       
       // Verify cookies were cleared
       const clearedCookies = await test.getPage().context().cookies();
-      expect(clearedCookies.length).toBe(0);
+      expect(clearedCookies).toHaveLength(0);
       
       // Navigate to verify session is cleared
       await test.navigateToScenario('/');
@@ -587,7 +587,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
           f.action.includes('login') ||
           f.querySelector('input[type="password"]') ||
           f.method.toLowerCase() === 'post'
-        ) || forms[0];
+        ) ?? forms[0];
         
         if (!primaryForm) return null;
         
@@ -650,7 +650,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
         { username: '', password: 'password' }
       ];
       
-      let errorHandlingTested = false;
+      let _errorHandlingTested = false;
       
       for (const creds of invalidCredentials) {
         try {
@@ -665,15 +665,15 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
           await test.getPage().fill('input[name*="user"], input[name*="email"], input[type="email"], input[name="username"], input[name="email"]', creds.username);
           await test.getPage().fill('input[type="password"]', creds.password);
           
-          const initialUrl = test.getPage().url();
+          const _initialUrl = test.getPage().url();
           
           // Submit form
           await test.getPage().press('input[type="password"]', 'Enter');
           await test.getPage().waitForTimeout(2000);
           
           // Check for error handling
-          const currentUrl = test.getPage().url();
-          const pageContent = await test.getPage().content();
+          const _currentUrl = test.getPage().url();
+          const _pageContent = await test.getPage().content();
           
           // Look for error indicators
           const errorIndicators = await test.getPage().evaluate(() => {
@@ -696,7 +696,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
           
           // Most login systems should either show error or stay on login page
           if (errorIndicators.hasErrorMessage || errorIndicators.staysOnLoginPage) {
-            errorHandlingTested = true;
+            _errorHandlingTested = true;
           }
           
         } catch (attemptError) {
@@ -721,8 +721,8 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       // Get initial session state
       const initialCookies = await test.getPage().context().cookies();
       const initialSessionData = await test.getPage().evaluate(() => ({
-        sessionStorage: Object.keys(sessionStorage).length,
-        localStorage: Object.keys(localStorage).length,
+        sessionStorageCount: Object.keys(window.sessionStorage).length,
+        localStorageCount: Object.keys(window.localStorage).length,
         cookieCount: document.cookie.split(';').filter(c => c.trim()).length
       }));
       
@@ -843,7 +843,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
           authResults.push({
             ...testCase,
             ...authState,
-            responseStatus: response?.status() || 200
+            responseStatus: response?.status() ?? 200
           });
           
         } catch (navError) {
@@ -866,7 +866,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       
       // Verify final page state - handle 404 pages gracefully
       const finalContent = await test.getPage().content();
-      const currentUrl = test.getPage().url();
+      const _currentUrl = test.getPage().url();
       
       // If we're on a valid page, expect substantial content; if 404, content may be minimal
       if (!authResults.some(r => 'responseStatus' in r && r.responseStatus === 404)) {

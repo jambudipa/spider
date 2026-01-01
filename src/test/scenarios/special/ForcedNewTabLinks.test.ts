@@ -46,7 +46,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
           href: el.getAttribute('href'),
           target: el.getAttribute('target'),
           text: el.textContent?.trim(),
-          className: el.className
+          className: el.getAttribute('class')
         }));
         
         console.log('Link details:', linkDetails);

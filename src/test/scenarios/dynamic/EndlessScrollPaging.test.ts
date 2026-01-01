@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
-import { DataExtractor } from '../../helpers/DataExtractor';
+import { DataExtractor, Testimonial } from '../../helpers/DataExtractor';
 
 class EndlessScrollTest extends DynamicScenarioBase {
   async validateScenario(): Promise<void> {
@@ -256,7 +256,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
   it('should extract all dynamically loaded items', async () => {
     try {
       // Load content gradually and track progress
-      let allTestimonials: any[] = [];
+      let allTestimonials: Testimonial[] = [];
       let attempts = 0;
       const maxAttempts = 8;
       
@@ -282,7 +282,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       expect(allTestimonials.length).toBeGreaterThan(0);
       
       // Validate testimonial structure
-      allTestimonials.forEach((testimonial, index) => {
+      allTestimonials.forEach((testimonial, _index) => {
         expect(testimonial.author).toBeTruthy();
         expect(testimonial.content).toBeTruthy();
         expect(testimonial.content.length).toBeGreaterThan(5);

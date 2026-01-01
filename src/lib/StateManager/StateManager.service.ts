@@ -3,8 +3,33 @@
  * Manages tokens, sessions, and client-side storage simulation
  */
 
-import { Context, Effect, Layer, Ref } from 'effect';
+import { Context, Data, DateTime, Effect, HashMap, Layer, Option, Ref } from 'effect';
 import * as cheerio from 'cheerio';
+
+// Tagged error types for Effect-style error handling
+export class CSRFTokenNotFoundError extends Data.TaggedError('CSRFTokenNotFoundError')<{
+  readonly message: string;
+}> {}
+
+export class APITokenNotFoundError extends Data.TaggedError('APITokenNotFoundError')<{
+  readonly message: string;
+}> {}
+
+export class TokenNotFoundError extends Data.TaggedError('TokenNotFoundError')<{
+  readonly message: string;
+  readonly tokenType: TokenType;
+}> {}
+
+export class TokenExpiredError extends Data.TaggedError('TokenExpiredError')<{
+  readonly message: string;
+  readonly tokenType: TokenType;
+}> {}
+
+export class StorageKeyNotFoundError extends Data.TaggedError('StorageKeyNotFoundError')<{
+  readonly message: string;
+  readonly key: string;
+  readonly storageType: 'local' | 'session';
+}> {}
 
 export enum TokenType {
   CSRF = 'csrf',
@@ -24,12 +49,12 @@ export interface StateManagerService {
   /**
    * Extract CSRF token from HTML
    */
-  extractCSRFToken: (html: string) => Effect.Effect<string, Error, never>;
+  extractCSRFToken: (html: string) => Effect.Effect<string, CSRFTokenNotFoundError>;
 
   /**
    * Extract API token from JavaScript
    */
-  extractAPIToken: (scripts: string[]) => Effect.Effect<string, Error, never>;
+  extractAPIToken: (scripts: string[]) => Effect.Effect<string, APITokenNotFoundError>;
 
   /**
    * Store a token
@@ -38,17 +63,17 @@ export interface StateManagerService {
     type: TokenType,
     token: string,
     expiry?: Date
-  ) => Effect.Effect<void, never, never>;
+  ) => Effect.Effect<void>;
 
   /**
    * Get a stored token
    */
-  getToken: (type: TokenType) => Effect.Effect<string, Error, never>;
+  getToken: (type: TokenType) => Effect.Effect<string, TokenNotFoundError | TokenExpiredError>;
 
   /**
    * Check if token is valid (not expired)
    */
-  isTokenValid: (type: TokenType) => Effect.Effect<boolean, never, never>;
+  isTokenValid: (type: TokenType) => Effect.Effect<boolean>;
 
   /**
    * Simulate local storage
@@ -56,9 +81,9 @@ export interface StateManagerService {
   setLocalStorage: (
     key: string,
     value: string
-  ) => Effect.Effect<void, never, never>;
-  getLocalStorage: (key: string) => Effect.Effect<string, Error, never>;
-  clearLocalStorage: () => Effect.Effect<void, never, never>;
+  ) => Effect.Effect<void>;
+  getLocalStorage: (key: string) => Effect.Effect<string, StorageKeyNotFoundError>;
+  clearLocalStorage: () => Effect.Effect<void>;
 
   /**
    * Simulate session storage
@@ -66,14 +91,14 @@ export interface StateManagerService {
   setSessionStorage: (
     key: string,
     value: string
-  ) => Effect.Effect<void, never, never>;
-  getSessionStorage: (key: string) => Effect.Effect<string, Error, never>;
-  clearSessionStorage: () => Effect.Effect<void, never, never>;
+  ) => Effect.Effect<void>;
+  getSessionStorage: (key: string) => Effect.Effect<string, StorageKeyNotFoundError>;
+  clearSessionStorage: () => Effect.Effect<void>;
 
   /**
    * Clear all state
    */
-  clearState: () => Effect.Effect<void, never, never>;
+  clearState: () => Effect.Effect<void>;
 }
 
 export class StateManager extends Context.Tag('StateManager')<
@@ -84,18 +109,14 @@ export class StateManager extends Context.Tag('StateManager')<
 /**
  * Create a StateManager service implementation
  */
-export const makeStateManager = (): Effect.Effect<
-  StateManagerService,
-  never,
-  never
-> =>
+export const makeStateManager = (): Effect.Effect<StateManagerService> =>
   Effect.gen(function* () {
-    // Token storage
-    const tokens = yield* Ref.make(new Map<TokenType, Token>());
+    // Token storage using Effect's HashMap
+    const tokens = yield* Ref.make(HashMap.empty<TokenType, Token>());
 
-    // Browser storage simulation
-    const localStorage = yield* Ref.make(new Map<string, string>());
-    const sessionStorage = yield* Ref.make(new Map<string, string>());
+    // Browser storage simulation using Effect's HashMap
+    const localStorage = yield* Ref.make(HashMap.empty<string, string>());
+    const sessionStorage = yield* Ref.make(HashMap.empty<string, string>());
 
     return {
       extractCSRFToken: (html: string) =>
@@ -142,12 +163,12 @@ export const makeStateManager = (): Effect.Effect<
 
           for (const pattern of patterns) {
             const match = scriptContent.match(pattern);
-            if (match && match[1]) {
+            if (match?.[1]) {
               return match[1];
             }
           }
 
-          return yield* Effect.fail(new Error('CSRF token not found in HTML'));
+          return yield* Effect.fail(new CSRFTokenNotFoundError({ message: 'CSRF token not found in HTML' }));
         }),
 
       extractAPIToken: (scripts: string[]) =>
@@ -166,7 +187,7 @@ export const makeStateManager = (): Effect.Effect<
 
           for (const pattern of patterns) {
             const match = scriptContent.match(pattern);
-            if (match && match[1]) {
+            if (match?.[1]) {
               return match[1];
             }
           }
@@ -174,15 +195,15 @@ export const makeStateManager = (): Effect.Effect<
           // Try to find in window object assignments
           const windowPattern =
             /window\[["']([^"']*[Tt]oken[^"']*)["']\]\s*=\s*["']([^"']+)["']/g;
-          let windowMatch;
-          while ((windowMatch = windowPattern.exec(scriptContent)) !== null) {
+          const windowMatches = Array.from(scriptContent.matchAll(windowPattern));
+          for (const windowMatch of windowMatches) {
             if (windowMatch[2]) {
               return windowMatch[2];
             }
           }
 
           return yield* Effect.fail(
-            new Error('API token not found in scripts')
+            new APITokenNotFoundError({ message: 'API token not found in scripts' })
           );
         }),
 
@@ -194,27 +215,31 @@ export const makeStateManager = (): Effect.Effect<
             expiry,
           };
 
-          const tokensMap = yield* Ref.get(tokens);
-          tokensMap.set(type, token);
-          yield* Ref.set(tokens, tokensMap);
+          yield* Ref.update(tokens, (tokensMap) => HashMap.set(tokensMap, type, token));
         }),
 
       getToken: (type: TokenType) =>
         Effect.gen(function* () {
           const tokensMap = yield* Ref.get(tokens);
-          const token = tokensMap.get(type);
+          const tokenOption = HashMap.get(tokensMap, type);
 
-          if (!token) {
+          if (Option.isNone(tokenOption)) {
             return yield* Effect.fail(
-              new Error(`Token of type ${type} not found`)
+              new TokenNotFoundError({ message: `Token of type ${type} not found`, tokenType: type })
             );
           }
 
-          // Check if expired
-          if (token.expiry && token.expiry < new Date()) {
-            return yield* Effect.fail(
-              new Error(`Token of type ${type} has expired`)
-            );
+          const token = tokenOption.value;
+
+          // Check if expired using DateTime
+          if (token.expiry) {
+            const now = DateTime.unsafeNow();
+            const expiryDateTime = DateTime.unsafeMake(token.expiry);
+            if (DateTime.lessThan(expiryDateTime, now)) {
+              return yield* Effect.fail(
+                new TokenExpiredError({ message: `Token of type ${type} has expired`, tokenType: type })
+              );
+            }
           }
 
           return token.value;
@@ -223,14 +248,20 @@ export const makeStateManager = (): Effect.Effect<
       isTokenValid: (type: TokenType) =>
         Effect.gen(function* () {
           const tokensMap = yield* Ref.get(tokens);
-          const token = tokensMap.get(type);
+          const tokenOption = HashMap.get(tokensMap, type);
 
-          if (!token) {
+          if (Option.isNone(tokenOption)) {
             return false;
           }
 
-          if (token.expiry && token.expiry < new Date()) {
-            return false;
+          const token = tokenOption.value;
+
+          if (token.expiry) {
+            const now = DateTime.unsafeNow();
+            const expiryDateTime = DateTime.unsafeMake(token.expiry);
+            if (DateTime.lessThan(expiryDateTime, now)) {
+              return false;
+            }
           }
 
           return true;
@@ -238,61 +269,57 @@ export const makeStateManager = (): Effect.Effect<
 
       setLocalStorage: (key: string, value: string) =>
         Effect.gen(function* () {
-          const storage = yield* Ref.get(localStorage);
-          storage.set(key, value);
-          yield* Ref.set(localStorage, storage);
+          yield* Ref.update(localStorage, (storage) => HashMap.set(storage, key, value));
         }),
 
       getLocalStorage: (key: string) =>
         Effect.gen(function* () {
           const storage = yield* Ref.get(localStorage);
-          const value = storage.get(key);
+          const valueOption = HashMap.get(storage, key);
 
-          if (!value) {
+          if (Option.isNone(valueOption)) {
             return yield* Effect.fail(
-              new Error(`Local storage key '${key}' not found`)
+              new StorageKeyNotFoundError({ message: `Local storage key '${key}' not found`, key, storageType: 'local' })
             );
           }
 
-          return value;
+          return valueOption.value;
         }),
 
       clearLocalStorage: () =>
         Effect.gen(function* () {
-          yield* Ref.set(localStorage, new Map());
+          yield* Ref.set(localStorage, HashMap.empty());
         }),
 
       setSessionStorage: (key: string, value: string) =>
         Effect.gen(function* () {
-          const storage = yield* Ref.get(sessionStorage);
-          storage.set(key, value);
-          yield* Ref.set(sessionStorage, storage);
+          yield* Ref.update(sessionStorage, (storage) => HashMap.set(storage, key, value));
         }),
 
       getSessionStorage: (key: string) =>
         Effect.gen(function* () {
           const storage = yield* Ref.get(sessionStorage);
-          const value = storage.get(key);
+          const valueOption = HashMap.get(storage, key);
 
-          if (!value) {
+          if (Option.isNone(valueOption)) {
             return yield* Effect.fail(
-              new Error(`Session storage key '${key}' not found`)
+              new StorageKeyNotFoundError({ message: `Session storage key '${key}' not found`, key, storageType: 'session' })
             );
           }
 
-          return value;
+          return valueOption.value;
         }),
 
       clearSessionStorage: () =>
         Effect.gen(function* () {
-          yield* Ref.set(sessionStorage, new Map());
+          yield* Ref.set(sessionStorage, HashMap.empty());
         }),
 
       clearState: () =>
         Effect.gen(function* () {
-          yield* Ref.set(tokens, new Map());
-          yield* Ref.set(localStorage, new Map());
-          yield* Ref.set(sessionStorage, new Map());
+          yield* Ref.set(tokens, HashMap.empty());
+          yield* Ref.set(localStorage, HashMap.empty());
+          yield* Ref.set(sessionStorage, HashMap.empty());
         }),
     };
   });

@@ -53,8 +53,8 @@ export interface ISpider {
    * @returns Effect containing crawl statistics (total pages, completion status)
    */
   crawl<A, E, R>(
-    urlString: string,
-    sink: Sink.Sink<A, CrawlResult, E, R>
+    _urlString: string,
+    _sink: Sink.Sink<A, CrawlResult, E, R>
   ): Effect.Effect<{ totalPages: number; completed: boolean }, Error>;
 
   /**
@@ -105,8 +105,8 @@ export interface ISpiderScheduler {
    * @param stateKey - Unique identifier for the crawl session
    */
   configurePersistence(
-    persistence: StatePersistence,
-    stateKey: SpiderStateKey
+    _persistence: StatePersistence,
+    _stateKey: SpiderStateKey
   ): Effect.Effect<void>;
 
   /**
@@ -121,7 +121,7 @@ export interface ISpiderScheduler {
    * @param priority - Optional priority (higher numbers = higher priority, default: 0)
    * @returns Effect containing boolean indicating if task was added (false if duplicate)
    */
-  enqueue(request: CrawlTask, priority?: number): Effect.Effect<boolean>;
+  enqueue(_request: CrawlTask, _priority?: number): Effect.Effect<boolean>;
 
   /**
    * Retrieves the next highest-priority task from the queue.
@@ -150,7 +150,7 @@ export interface ISpiderScheduler {
    *
    * @param state - Complete state to restore from
    */
-  restoreFromState(state: SpiderState): Effect.Effect<void>;
+  restoreFromState(_state: SpiderState): Effect.Effect<void>;
 
   /**
    * Attempts to restore state from a persistence layer.
@@ -160,8 +160,8 @@ export interface ISpiderScheduler {
    * @returns Effect containing boolean indicating if state was successfully restored
    */
   restore(
-    persistence: StatePersistence,
-    stateKey: SpiderStateKey
+    _persistence: StatePersistence,
+    _stateKey: SpiderStateKey
   ): Effect.Effect<boolean>;
 }
 
@@ -199,8 +199,8 @@ export interface IMiddlewareManager {
    * @returns Effect containing the processed request
    */
   processRequest(
-    request: SpiderRequest,
-    middlewares: SpiderMiddleware[]
+    _request: SpiderRequest,
+    _middlewares: SpiderMiddleware[]
   ): Effect.Effect<SpiderRequest, MiddlewareError>;
 
   /**
@@ -212,9 +212,9 @@ export interface IMiddlewareManager {
    * @returns Effect containing the processed response
    */
   processResponse(
-    response: SpiderResponse,
-    request: SpiderRequest,
-    middlewares: SpiderMiddleware[]
+    _response: SpiderResponse,
+    _request: SpiderRequest,
+    _middlewares: SpiderMiddleware[]
   ): Effect.Effect<SpiderResponse, MiddlewareError>;
 
   /**
@@ -226,9 +226,9 @@ export interface IMiddlewareManager {
    * @returns Effect containing a recovered response or null
    */
   processException(
-    error: Error,
-    request: SpiderRequest,
-    middlewares: SpiderMiddleware[]
+    _error: Error,
+    _request: SpiderRequest,
+    _middlewares: SpiderMiddleware[]
   ): Effect.Effect<SpiderResponse | null, MiddlewareError>;
 }
 
@@ -258,7 +258,7 @@ export interface IRateLimitMiddleware {
    * });
    * ```
    */
-  create(config: {
+  create(_config: {
     maxConcurrentRequests: number;
     maxRequestsPerSecondPerDomain: number;
     requestDelayMs?: number;
@@ -291,7 +291,7 @@ export interface ILoggingMiddleware {
    * });
    * ```
    */
-  create(config?: {
+  create(_config?: {
     logRequests?: boolean;
     logResponses?: boolean;
     logErrors?: boolean;
@@ -321,7 +321,7 @@ export interface IUserAgentMiddleware {
    * const middleware = userAgent.create('MyBot/1.0 (+https://example.com)');
    * ```
    */
-  create(userAgent: string): SpiderMiddleware;
+  create(_userAgent: string): SpiderMiddleware;
 }
 
 /**

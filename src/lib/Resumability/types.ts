@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from 'effect';
+import { Data, Effect, Option, Schema } from 'effect';
 import {
   PriorityRequest,
   SpiderState,
@@ -110,53 +110,52 @@ export interface StorageBackend {
   readonly name: string;
 
   /** Initialize the backend (create tables, connections, etc.) */
-  initialize(): Effect.Effect<void, PersistenceError, never>;
+  initialize(): Effect.Effect<void, PersistenceError>;
 
   /** Cleanup backend resources */
-  cleanup(): Effect.Effect<void, PersistenceError, never>;
+  cleanup(): Effect.Effect<void, PersistenceError>;
 
   // Full state operations
   saveState?(
     key: SpiderStateKey,
     state: SpiderState
-  ): Effect.Effect<void, PersistenceError, never>;
+  ): Effect.Effect<void, PersistenceError>;
   loadState?(
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError, never>;
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError>;
   deleteState?(
     key: SpiderStateKey
-  ): Effect.Effect<void, PersistenceError, never>;
+  ): Effect.Effect<void, PersistenceError>;
 
   // Delta operations
-  saveDelta?(delta: StateDelta): Effect.Effect<void, PersistenceError, never>;
+  saveDelta?(delta: StateDelta): Effect.Effect<void, PersistenceError>;
   saveDeltas?(
-    deltas: StateDelta[]
-  ): Effect.Effect<void, PersistenceError, never>;
+    deltas: readonly StateDelta[]
+  ): Effect.Effect<void, PersistenceError>;
   loadDeltas?(
     key: SpiderStateKey,
     fromSequence?: number
-  ): Effect.Effect<StateDelta[], PersistenceError, never>;
+  ): Effect.Effect<readonly StateDelta[], PersistenceError>;
 
   // Snapshot operations for hybrid strategies
   saveSnapshot?(
     key: SpiderStateKey,
     state: SpiderState,
     sequence: number
-  ): Effect.Effect<void, PersistenceError, never>;
+  ): Effect.Effect<void, PersistenceError>;
   loadLatestSnapshot?(
     key: SpiderStateKey
   ): Effect.Effect<
-    { state: SpiderState; sequence: number } | null,
-    PersistenceError,
-    never
+    Option.Option<{ state: SpiderState; sequence: number }>,
+    PersistenceError
   >;
 
   // Cleanup operations
   compactDeltas?(
     key: SpiderStateKey,
     beforeSequence: number
-  ): Effect.Effect<void, PersistenceError, never>;
-  listSessions?(): Effect.Effect<SpiderStateKey[], PersistenceError, never>;
+  ): Effect.Effect<void, PersistenceError>;
+  listSessions?(): Effect.Effect<readonly SpiderStateKey[], PersistenceError>;
 }
 
 /**
@@ -172,15 +171,15 @@ export interface PersistenceStrategy {
   /** Persist a state operation */
   persist(
     operation: StateOperation
-  ): Effect.Effect<void, PersistenceError, never>;
+  ): Effect.Effect<void, PersistenceError>;
 
   /** Restore state from storage */
   restore(
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError, never>;
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError>;
 
   /** Clean up old data */
-  cleanup(key: SpiderStateKey): Effect.Effect<void, PersistenceError, never>;
+  cleanup(key: SpiderStateKey): Effect.Effect<void, PersistenceError>;
 
   /** Get strategy information */
   getInfo(): {

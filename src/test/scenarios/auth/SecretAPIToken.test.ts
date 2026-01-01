@@ -3,36 +3,19 @@
  * Tests for the SecretAPIToken scenario: X-Secret-Token authentication
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, it } from 'vitest';
 
 describe('SecretAPIToken Scenario Tests - Real Site', () => {
-  it.skip('should detect X-Secret-Token requirements', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  // Tests stubbed - API token endpoint not available on web-scraping.dev
+  it.todo('should detect X-Secret-Token requirements');
 
-  it.skip('should handle authenticated requests with token', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  it.todo('should handle authenticated requests with token');
 
-  it.skip('should fail without valid token', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  it.todo('should fail without valid token');
 
-  it.skip('should detect token expiration', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  it.todo('should detect token expiration');
 
-  it.skip('should handle token refresh', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  it.todo('should handle token refresh');
 
-  it.skip('should extract protected resource data', () => {
-    // Test stubbed - API token endpoint not available on web-scraping.dev
-    expect(true).toBe(true);
-  });
+  it.todo('should extract protected resource data');
 });

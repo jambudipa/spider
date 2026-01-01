@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Chunk, DateTime, Effect, HashMap, Option, Schema } from 'effect';
 import {
   SpiderState,
   SpiderStateKey,
@@ -11,6 +11,17 @@ import {
 } from '../types.js';
 
 /**
+ * Schema for snapshot data stored in Redis.
+ */
+const SnapshotDataSchema = Schema.Struct({
+  state: SpiderState,
+  sequence: Schema.Number,
+  timestamp: Schema.String,
+});
+
+type SnapshotData = typeof SnapshotDataSchema.Type;
+
+/**
  * Redis client interface for dependency injection.
  *
  * This allows users to provide their own Redis client implementation
@@ -20,28 +31,28 @@ import {
  * @public
  */
 export interface RedisClientInterface {
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
-  del(key: string): Promise<void>;
-  exists(key: string): Promise<boolean>;
-  hget(key: string, field: string): Promise<string | null>;
-  hset(key: string, field: string, value: string): Promise<void>;
-  hdel(key: string, field: string): Promise<void>;
-  hgetall(key: string): Promise<Record<string, string>>;
-  zadd(key: string, score: number, member: string): Promise<void>;
-  zrange(key: string, start: number, stop: number): Promise<string[]>;
+  get(_key: string): Promise<string | null>;
+  set(_key: string, _value: string): Promise<void>;
+  del(_key: string): Promise<void>;
+  exists(_key: string): Promise<boolean>;
+  hget(_key: string, _field: string): Promise<string | null>;
+  hset(_key: string, _field: string, _value: string): Promise<void>;
+  hdel(_key: string, _field: string): Promise<void>;
+  hgetall(_key: string): Promise<Record<string, string>>;
+  zadd(_key: string, _score: number, _member: string): Promise<void>;
+  zrange(_key: string, _start: number, _stop: number): Promise<string[]>;
   zrangebyscore(
-    key: string,
-    min: number | string,
-    max: number | string
+    _key: string,
+    _min: number | string,
+    _max: number | string
   ): Promise<string[]>;
-  zrem(key: string, member: string): Promise<void>;
+  zrem(_key: string, _member: string): Promise<void>;
   zremrangebyscore(
-    key: string,
-    min: number | string,
-    max: number | string
+    _key: string,
+    _min: number | string,
+    _max: number | string
   ): Promise<void>;
-  keys(pattern: string): Promise<string[]>;
+  keys(_pattern: string): Promise<string[]>;
   pipeline?(): RedisPipeline;
   multi?(): RedisMulti;
 }
@@ -50,16 +61,16 @@ export interface RedisClientInterface {
  * Redis pipeline interface for batch operations.
  */
 export interface RedisPipeline {
-  zadd(key: string, score: number, member: string): RedisPipeline;
-  exec(): Promise<any[]>;
+  zadd(_key: string, _score: number, _member: string): RedisPipeline;
+  exec(): Promise<unknown[]>;
 }
 
 /**
  * Redis multi/transaction interface.
  */
 export interface RedisMulti {
-  zadd(key: string, score: number, member: string): RedisMulti;
-  exec(): Promise<any[]>;
+  zadd(_key: string, _score: number, _member: string): RedisMulti;
+  exec(): Promise<unknown[]>;
 }
 
 /**
@@ -92,16 +103,19 @@ export class RedisStorageBackend implements StorageBackend {
 
   readonly name = 'RedisStorageBackend';
 
-  constructor(
-    private readonly redis: RedisClientInterface,
-    private readonly keyPrefix = 'spider'
-  ) {}
+  private readonly redis: RedisClientInterface;
+  private readonly keyPrefix: string;
+
+  constructor(redis: RedisClientInterface, keyPrefix = 'spider') {
+    this.redis = redis;
+    this.keyPrefix = keyPrefix;
+  }
 
   initialize = (): Effect.Effect<void, PersistenceError> =>
-    Effect.succeed(undefined); // Redis doesn't need initialization
+    Effect.void; // Redis doesn't need initialization
 
   cleanup = (): Effect.Effect<void, PersistenceError> =>
-    Effect.succeed(undefined); // Redis client cleanup is handled externally
+    Effect.void; // Redis client cleanup is handled externally
 
   // Full state operations
   saveState = (
@@ -110,16 +124,18 @@ export class RedisStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(SpiderState)(state),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode state: ${error}`,
-            cause: error,
-            operation: 'saveState',
-          }),
-      });
-      const serialized = JSON.stringify(encoded);
+      const serialized = yield* Schema.encode(Schema.parseJson(SpiderState))(
+        state
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode state: ${error}`,
+              cause: error,
+              operation: 'saveState',
+            })
+        )
+      );
       const stateKey = self.getStateKey(key);
 
       yield* Effect.tryPromise({
@@ -137,7 +153,7 @@ export class RedisStorageBackend implements StorageBackend {
 
   loadState = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       const stateKey = self.getStateKey(key);
@@ -151,31 +167,23 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      if (!serialized) {
-        return null;
-      }
-
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(serialized),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to parse state JSON: ${error}`,
-            cause: error,
-            operation: 'loadState',
-          }),
-      });
-
-      const decoded = yield* Effect.try({
-        try: () => Schema.decodeUnknownSync(SpiderState)(parsed),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to decode state: ${error}`,
-            cause: error,
-            operation: 'loadState',
-          }),
-      });
-
-      return decoded;
+      return yield* Option.fromNullable(serialized).pipe(
+        Option.match({
+          onNone: () => Effect.succeed(Option.none<SpiderState>()),
+          onSome: (value) =>
+            Schema.decode(Schema.parseJson(SpiderState))(value).pipe(
+              Effect.map(Option.some),
+              Effect.mapError(
+                (error) =>
+                  new PersistenceError({
+                    message: `Failed to decode state: ${error}`,
+                    cause: error,
+                    operation: 'loadState',
+                  })
+              )
+            ),
+        })
+      );
     });
   };
 
@@ -223,16 +231,18 @@ export class RedisStorageBackend implements StorageBackend {
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(StateDelta)(delta),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode delta: ${error}`,
-            cause: error,
-            operation: 'saveDelta',
-          }),
-      });
-      const serialized = JSON.stringify(encoded);
+      const serialized = yield* Schema.encode(Schema.parseJson(StateDelta))(
+        delta
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode delta: ${error}`,
+              cause: error,
+              operation: 'saveDelta',
+            })
+        )
+      );
       const deltasKey = `${self.keyPrefix}:deltas:${delta.stateKey}`;
 
       yield* Effect.tryPromise({
@@ -246,7 +256,12 @@ export class RedisStorageBackend implements StorageBackend {
       });
 
       // Create a SpiderStateKey from the stateKey string for addToSessionsList
-      const stateKey = { id: delta.stateKey } as SpiderStateKey;
+      const now = yield* DateTime.now;
+      const stateKey = new SpiderStateKey({
+        id: delta.stateKey,
+        timestamp: DateTime.toDateUtc(now),
+        name: delta.stateKey,
+      });
       yield* self.addToSessionsList(stateKey);
     });
   };
@@ -258,14 +273,18 @@ export class RedisStorageBackend implements StorageBackend {
     return Effect.gen(function* () {
       if (deltas.length === 0) return;
 
-      // Group deltas by session key
-      const deltasBySession = new Map<string, StateDelta[]>();
+      // Group deltas by session key using HashMap
+      let deltasBySession = HashMap.empty<string, Chunk.Chunk<StateDelta>>();
       for (const delta of deltas) {
         const sessionId = delta.stateKey; // stateKey is already a string
-        if (!deltasBySession.has(sessionId)) {
-          deltasBySession.set(sessionId, []);
-        }
-        deltasBySession.get(sessionId)!.push(delta);
+        const existing = HashMap.get(deltasBySession, sessionId).pipe(
+          Option.getOrElse(() => Chunk.empty<StateDelta>())
+        );
+        deltasBySession = HashMap.set(
+          deltasBySession,
+          sessionId,
+          Chunk.append(existing, delta)
+        );
       }
 
       // Use pipeline for batch operations if available
@@ -275,16 +294,18 @@ export class RedisStorageBackend implements StorageBackend {
         for (const [sessionId, sessionDeltas] of deltasBySession) {
           const deltasKey = `${self.keyPrefix}:deltas:${sessionId}`;
           for (const delta of sessionDeltas) {
-            const encoded = yield* Effect.try({
-              try: () => Schema.encodeSync(StateDelta)(delta),
-              catch: (error) =>
-                new PersistenceError({
-                  message: `Failed to encode delta: ${error}`,
-                  cause: error,
-                  operation: 'saveDeltas',
-                }),
-            });
-            const serialized = JSON.stringify(encoded);
+            const serialized = yield* Schema.encode(
+              Schema.parseJson(StateDelta)
+            )(delta).pipe(
+              Effect.mapError(
+                (error) =>
+                  new PersistenceError({
+                    message: `Failed to encode delta: ${error}`,
+                    cause: error,
+                    operation: 'saveDeltas',
+                  })
+              )
+            );
             pipeline.zadd(deltasKey, delta.sequence, serialized);
           }
         }
@@ -306,8 +327,13 @@ export class RedisStorageBackend implements StorageBackend {
       }
 
       // Add sessions to list
-      for (const [sessionId, _] of deltasBySession) {
-        const stateKey = { id: sessionId } as SpiderStateKey;
+      const currentTime = yield* DateTime.now;
+      for (const [sessionId] of deltasBySession) {
+        const stateKey = new SpiderStateKey({
+          id: sessionId,
+          timestamp: DateTime.toDateUtc(currentTime),
+          name: sessionId,
+        });
         yield* self.addToSessionsList(stateKey);
       }
     });
@@ -330,32 +356,25 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      const deltas: StateDelta[] = [];
+      let deltas = Chunk.empty<StateDelta>();
       for (const serialized of serializedDeltas) {
-        const parsed = yield* Effect.try({
-          try: () => JSON.parse(serialized),
-          catch: (error) =>
-            new PersistenceError({
-              message: `Failed to parse delta JSON: ${error}`,
-              cause: error,
-              operation: 'loadDeltas',
-            }),
-        });
+        const decoded = yield* Schema.decode(Schema.parseJson(StateDelta))(
+          serialized
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new PersistenceError({
+                message: `Failed to decode delta: ${error}`,
+                cause: error,
+                operation: 'loadDeltas',
+              })
+          )
+        );
 
-        const decoded = yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(StateDelta)(parsed),
-          catch: (error) =>
-            new PersistenceError({
-              message: `Failed to decode delta: ${error}`,
-              cause: error,
-              operation: 'loadDeltas',
-            }),
-        });
-
-        deltas.push(decoded);
+        deltas = Chunk.append(deltas, decoded);
       }
 
-      return deltas.sort((a, b) => a.sequence - b.sequence);
+      return Chunk.toArray(deltas).sort((a, b) => a.sequence - b.sequence);
     });
   };
 
@@ -367,22 +386,24 @@ export class RedisStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(SpiderState)(state),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode state: ${error}`,
-            cause: error,
-            operation: 'saveSnapshot',
-          }),
-      });
-
-      const snapshotData = {
-        state: encoded,
+      const now = yield* DateTime.now;
+      const snapshotData: SnapshotData = {
+        state,
         sequence,
-        timestamp: new Date().toISOString(),
+        timestamp: DateTime.formatIso(now),
       };
-      const serialized = JSON.stringify(snapshotData);
+      const serialized = yield* Schema.encode(
+        Schema.parseJson(SnapshotDataSchema)
+      )(snapshotData).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode snapshot: ${error}`,
+              cause: error,
+              operation: 'saveSnapshot',
+            })
+        )
+      );
       const snapshotKey = self.getSnapshotKey(key);
 
       yield* Effect.tryPromise({
@@ -402,7 +423,7 @@ export class RedisStorageBackend implements StorageBackend {
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
-    { state: SpiderState; sequence: number } | null,
+    Option.Option<{ state: SpiderState; sequence: number }>,
     PersistenceError
   > => {
     const self = this;
@@ -418,34 +439,31 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      if (!serialized) {
-        return null;
-      }
-
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(serialized),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to parse snapshot JSON: ${error}`,
-            cause: error,
-            operation: 'loadLatestSnapshot',
-          }),
-      });
-
-      const state = yield* Effect.try({
-        try: () => Schema.decodeUnknownSync(SpiderState)(parsed.state),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to decode snapshot state: ${error}`,
-            cause: error,
-            operation: 'loadLatestSnapshot',
-          }),
-      });
-
-      return {
-        state,
-        sequence: parsed.sequence,
-      };
+      return yield* Option.fromNullable(serialized).pipe(
+        Option.match({
+          onNone: () =>
+            Effect.succeed(
+              Option.none<{ state: SpiderState; sequence: number }>()
+            ),
+          onSome: (value) =>
+            Schema.decode(Schema.parseJson(SnapshotDataSchema))(value).pipe(
+              Effect.map((snapshotData) =>
+                Option.some({
+                  state: snapshotData.state,
+                  sequence: snapshotData.sequence,
+                })
+              ),
+              Effect.mapError(
+                (error) =>
+                  new PersistenceError({
+                    message: `Failed to decode snapshot: ${error}`,
+                    cause: error,
+                    operation: 'loadLatestSnapshot',
+                  })
+              )
+            ),
+        })
+      );
     });
   };
 
@@ -474,7 +492,7 @@ export class RedisStorageBackend implements StorageBackend {
     const self = this;
     return Effect.gen(function* () {
       const pattern = `${self.keyPrefix}:state:*`;
-      const keys = yield* Effect.tryPromise({
+      const redisKeys = yield* Effect.tryPromise({
         try: () => self.redis.keys(pattern),
         catch: (error) =>
           new PersistenceError({
@@ -484,10 +502,10 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      const sessions: SpiderStateKey[] = [];
-      for (const key of keys) {
+      let sessions = Chunk.empty<SpiderStateKey>();
+      for (const redisKey of redisKeys) {
         const serialized = yield* Effect.tryPromise({
-          try: () => self.redis.get(key),
+          try: () => self.redis.get(redisKey),
           catch: (error) =>
             new PersistenceError({
               message: `Failed to get session data from Redis: ${error}`,
@@ -496,19 +514,22 @@ export class RedisStorageBackend implements StorageBackend {
             }),
         });
 
-        if (serialized) {
-          try {
-            const parsed = JSON.parse(serialized);
-            const state = Schema.decodeUnknownSync(SpiderState)(parsed);
-            sessions.push(state.key);
-          } catch {
-            // Skip invalid sessions
-            continue;
-          }
-        }
+        yield* Option.fromNullable(serialized).pipe(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (value) =>
+              Schema.decode(Schema.parseJson(SpiderState))(value).pipe(
+                Effect.tap((state) => {
+                  sessions = Chunk.append(sessions, state.key);
+                }),
+                // Skip invalid sessions silently
+                Effect.catchAll(() => Effect.void)
+              ),
+          })
+        );
       }
 
-      return sessions;
+      return Chunk.toArray(sessions);
     });
   };
 
@@ -530,8 +551,10 @@ export class RedisStorageBackend implements StorageBackend {
     const self = this;
     return Effect.gen(function* () {
       const sessionsKey = self.getSessionsKey();
+      const now = yield* DateTime.now;
+      const timestamp = DateTime.toEpochMillis(now);
       yield* Effect.tryPromise({
-        try: () => self.redis.zadd(sessionsKey, Date.now(), key.id),
+        try: () => self.redis.zadd(sessionsKey, timestamp, key.id),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to add session to list: ${error}`,

@@ -3,120 +3,196 @@
  * Abstract base classes for different scenario types
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { Page } from 'playwright';
-import { BrowserManager } from '../../browser/BrowserManager';
-import { PlaywrightAdapter } from '../../browser/PlaywrightAdapter';
+import { expect } from 'vitest';
+import { Page, Cookie } from 'playwright';
+import { Data, Effect, HashMap, Option, Random } from 'effect';
 import { TestHelper, TestContext } from './TestHelper';
 import { DataExtractor } from './DataExtractor';
+import { AdapterNotInitialisedError } from '../../lib/errors';
+
+/**
+ * Error for page initialisation failures
+ */
+export class PageInitError extends Data.TaggedError('PageInitError')<{
+  readonly message: string;
+}> {
+  static create(message: string): PageInitError {
+    return new PageInitError({ message });
+  }
+}
+
+/**
+ * Error for navigation failures
+ */
+export class NavigationError extends Data.TaggedError('NavigationError')<{
+  readonly url: string;
+  readonly status: Option.Option<number>;
+  readonly message: string;
+}> {
+  static create(url: string, status: Option.Option<number>): NavigationError {
+    const statusText = Option.isSome(status) ? String(status.value) : 'unknown';
+    return new NavigationError({
+      url,
+      status,
+      message: `Failed to navigate to ${url}: ${statusText}`
+    });
+  }
+}
+
+/**
+ * Error for element not found
+ */
+export class ElementNotFoundError extends Data.TaggedError('ElementNotFoundError')<{
+  readonly selector: string;
+  readonly message: string;
+}> {
+  static create(selector: string): ElementNotFoundError {
+    return new ElementNotFoundError({
+      selector,
+      message: `Element not found: ${selector}`
+    });
+  }
+}
 
 export abstract class BaseScenarioTest {
   protected context!: TestContext;
   protected page!: Page;
   protected scenarioName: string;
   protected baseUrl = 'https://web-scraping.dev';
-  
+
   constructor(scenarioName: string) {
     this.scenarioName = scenarioName;
   }
-  
+
   /**
    * Get the current page instance
    */
   getPage(): Page {
     return this.page;
   }
-  
+
   /**
    * Get the test context
    */
   getContext(): TestContext {
     return this.context;
   }
-  
+
   /**
    * Get the base URL
    */
   getBaseUrl(): string {
     return this.baseUrl;
   }
-  
+
   /**
    * Setup test context
    */
-  async setup(): Promise<void> {
-    this.context = await TestHelper.createTestContext(this.scenarioName);
-    this.page = this.context.adapter.getPage();
+  setup(): Effect.Effect<void, PageInitError> {
+    const self = this;
+    return Effect.gen(function* () {
+      self.context = yield* Effect.promise(() => TestHelper.createTestContext(self.scenarioName));
+      const pageOption = self.context.adapter.getPage();
+      if (Option.isNone(pageOption)) {
+        return yield* Effect.fail(PageInitError.create('Failed to get page from adapter'));
+      }
+      self.page = pageOption.value;
+    });
   }
-  
+
   /**
    * Cleanup test context
    */
-  async cleanup(): Promise<void> {
-    if (this.context) {
-      await TestHelper.cleanupTestContext(this.context);
-    }
+  cleanup(): Effect.Effect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.context) {
+        yield* Effect.promise(() => TestHelper.cleanupTestContext(self.context));
+      }
+    });
   }
-  
+
   /**
    * Handle test failure
    */
-  async handleFailure(testName: string, error: Error): Promise<void> {
-    if (this.page) {
-      await TestHelper.captureFailureScreenshot(this.page, testName, error);
-    }
-    throw error;
+  handleFailure<E extends Error>(testName: string, error: E): Effect.Effect<never, E> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.page) {
+        yield* Effect.promise(() => TestHelper.captureFailureScreenshot(self.page, testName, error));
+      }
+      return yield* Effect.fail(error);
+    });
   }
-  
+
   /**
    * Navigate to scenario URL
    */
-  async navigateToScenario(path: string): Promise<void> {
-    const url = `${this.baseUrl}${path}`;
-    const response = await this.context.adapter.goto(url);
-    
-    if (!response || response.status() >= 400) {
-      throw new Error(`Failed to navigate to ${url}: ${response?.status()}`);
-    }
+  navigateToScenario(path: string): Effect.Effect<void, NavigationError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const url = `${self.baseUrl}${path}`;
+      const responseOption = yield* self.context.adapter.goto(url).pipe(
+        Effect.mapError(() => NavigationError.create(url, Option.none()))
+      );
+
+      if (Option.isNone(responseOption)) {
+        return yield* Effect.fail(NavigationError.create(url, Option.none()));
+      }
+      const response = responseOption.value;
+      if (response.status() >= 400) {
+        return yield* Effect.fail(NavigationError.create(url, Option.some(response.status())));
+      }
+    });
   }
-  
+
   /**
    * Abstract method for scenario-specific validation
    */
-  abstract validateScenario(): Promise<void>;
+  abstract validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError>;
 }
 
 export class StaticScenarioBase extends BaseScenarioTest {
   /**
    * Extract HTML content
    */
-  async getHtmlContent(): Promise<string> {
-    return await this.context.adapter.content();
+  getHtmlContent(): Effect.Effect<string, PageInitError> {
+    return this.context.adapter.content().pipe(
+      Effect.mapError(() => PageInitError.create('Failed to get page content'))
+    );
   }
-  
+
   /**
    * Parse HTML with Cheerio
    */
   parseHtml(html: string) {
     return TestHelper.parseHtml(html);
   }
-  
+
   /**
    * Extract links from page
    */
-  async extractLinks(selector: string = 'a'): Promise<string[]> {
-    return await this.page.$$eval(selector, links =>
-      links.map(link => (link as HTMLAnchorElement).href)
+  extractLinks(selector: string = 'a'): Effect.Effect<string[]> {
+    const self = this;
+    return Effect.promise(() =>
+      self.page.$$eval(selector, links =>
+        links
+          .filter((link): link is HTMLAnchorElement => link instanceof HTMLAnchorElement)
+          .map(anchor => anchor.href)
+      )
     );
   }
-  
+
   /**
    * Default validation for static scenarios
    */
-  async validateScenario(): Promise<void> {
-    const html = await this.getHtmlContent();
-    expect(html).toBeTruthy();
-    expect(html.length).toBeGreaterThan(100);
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const html = yield* self.getHtmlContent();
+      expect(html).toBeTruthy();
+      expect(html.length).toBeGreaterThan(100);
+    });
   }
 }
 
@@ -124,147 +200,192 @@ export class DynamicScenarioBase extends BaseScenarioTest {
   /**
    * Wait for dynamic content
    */
-  async waitForContent(selector: string, timeout: number = 10000): Promise<void> {
-    await this.page.waitForSelector(selector, {
-      state: 'visible',
-      timeout
-    });
+  waitForContent(selector: string, timeout: number = 10000): Effect.Effect<void> {
+    const self = this;
+    return Effect.promise(() =>
+      self.page.waitForSelector(selector, {
+        state: 'visible',
+        timeout
+      })
+    ).pipe(Effect.asVoid);
   }
-  
+
   /**
    * Scroll to load content
    */
-  async scrollToLoadContent(options?: {
+  scrollToLoadContent(options?: {
     maxScrolls?: number;
     delay?: number;
-  }): Promise<void> {
-    await this.context.adapter.scrollToBottom({
+  }): Effect.Effect<void, AdapterNotInitialisedError> {
+    return this.context.adapter.scrollToBottom({
       maxScrolls: options?.maxScrolls ?? 10,
       delay: options?.delay ?? 500
-    });
+    }).pipe(Effect.asVoid);
   }
-  
+
   /**
    * Click to load more content
    */
-  async clickLoadMore(buttonSelector: string): Promise<void> {
-    const hasButton = await this.context.adapter.exists(buttonSelector);
-    if (!hasButton) {
-      throw new Error(`Load more button not found: ${buttonSelector}`);
-    }
-    
-    await this.context.adapter.clickAndWait(buttonSelector);
+  clickLoadMore(buttonSelector: string): Effect.Effect<void, ElementNotFoundError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const hasButton = yield* self.context.adapter.exists(buttonSelector).pipe(
+        Effect.mapError(() => ElementNotFoundError.create(buttonSelector))
+      );
+      if (!hasButton) {
+        return yield* Effect.fail(ElementNotFoundError.create(buttonSelector));
+      }
+
+      yield* self.context.adapter.clickAndWait(buttonSelector).pipe(
+        Effect.mapError(() => ElementNotFoundError.create(buttonSelector))
+      );
+    });
   }
-  
+
   /**
    * Intercept network requests
    */
-  async interceptRequests(
+  interceptRequests(
     pattern: string | RegExp,
-    handler: (url: string, body: any) => void
-  ): Promise<void> {
-    await this.context.adapter.interceptResponses(async (response) => {
+    handler: (url: string, body: unknown) => void
+  ): Effect.Effect<void> {
+    const self = this;
+    return self.context.adapter.interceptResponses((response) => {
       const url = response.url();
       if (
         (typeof pattern === 'string' && url.includes(pattern)) ||
         (pattern instanceof RegExp && pattern.test(url))
       ) {
-        try {
-          const body = await response.json();
-          handler(url, body);
-        } catch {
-          // Not JSON response
-        }
+        // Fire-and-forget: Run Effect to parse JSON and call handler
+        // This uses Effect.runPromise because we're in a synchronous callback context
+        void Effect.runPromise(
+          Effect.gen(function* () {
+            const bodyOption = yield* Effect.tryPromise({
+              try: () => response.json(),
+              catch: (): Option.Option<never> => Option.none() // Not JSON response - ignore
+            }).pipe(Effect.map(Option.some));
+            if (Option.isSome(bodyOption)) {
+              handler(url, bodyOption.value);
+            }
+          })
+        );
       }
     });
   }
-  
+
   /**
    * Default validation for dynamic scenarios
    */
-  async validateScenario(): Promise<void> {
-    // Check page loaded
-    await this.waitForContent('body');
-    
-    // Check JavaScript is running
-    const jsEnabled = await this.page.evaluate(() => true);
-    expect(jsEnabled).toBe(true);
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    const self = this;
+    return Effect.gen(function* () {
+      // Check page loaded
+      yield* self.waitForContent('body');
+
+      // Check JavaScript is running
+      const jsEnabled = yield* Effect.promise(() => self.page.evaluate(() => true));
+      expect(jsEnabled).toBe(true);
+    });
   }
 }
 
 export class AuthScenarioBase extends BaseScenarioTest {
-  protected cookies: any[] = [];
-  protected tokens: Map<string, string> = new Map();
-  
+  protected cookies: readonly Cookie[] = [];
+  protected tokens: HashMap.HashMap<string, string> = HashMap.empty();
+
   /**
    * Perform login
    */
-  async login(username: string, password: string): Promise<void> {
-    // Navigate to login page
-    await this.navigateToScenario('/login');
-    
-    // Fill login form
-    await this.context.adapter.fill('input[name="username"], #username', username);
-    await this.context.adapter.fill('input[name="password"], #password', password);
-    
-    // Submit form
-    await this.context.adapter.clickAndWait(
-      'button[type="submit"], input[type="submit"]'
-    );
-    
-    // Store cookies
-    this.cookies = await this.context.adapter.getCookies();
+  login(username: string, password: string): Effect.Effect<void, NavigationError> {
+    const self = this;
+    return Effect.gen(function* () {
+      // Navigate to login page
+      yield* self.navigateToScenario('/login');
+
+      // Fill login form
+      yield* self.context.adapter.fill('input[name="username"], #username', username).pipe(
+        Effect.mapError(() => NavigationError.create('/login', Option.none()))
+      );
+      yield* self.context.adapter.fill('input[name="password"], #password', password).pipe(
+        Effect.mapError(() => NavigationError.create('/login', Option.none()))
+      );
+
+      // Submit form
+      yield* self.context.adapter.clickAndWait(
+        'button[type="submit"], input[type="submit"]'
+      ).pipe(
+        Effect.mapError(() => NavigationError.create('/login', Option.none()))
+      );
+
+      // Store cookies
+      self.cookies = yield* self.context.adapter.getCookies().pipe(
+        Effect.mapError(() => NavigationError.create('/login', Option.none()))
+      );
+    });
   }
-  
+
   /**
    * Check if authenticated
    */
-  async isAuthenticated(): Promise<boolean> {
-    // Check for auth cookie
-    const authCookie = this.cookies.find(c => 
-      c.name.includes('session') || 
-      c.name.includes('auth') ||
-      c.name.includes('token')
-    );
-    
-    return !!authCookie;
+  isAuthenticated(): Effect.Effect<boolean> {
+    const self = this;
+    return Effect.sync(() => {
+      // Check for auth cookie
+      const authCookie = self.cookies.find(c =>
+        c.name.includes('session') ||
+        c.name.includes('auth') ||
+        c.name.includes('token')
+      );
+
+      return !!authCookie;
+    });
   }
-  
+
   /**
    * Extract and store CSRF token
    */
-  async extractCSRFToken(): Promise<string> {
-    const token = await DataExtractor.extractCSRFToken(this.page);
-    if (token) {
-      this.tokens.set('csrf', token);
-    }
-    return token;
+  extractCSRFToken(): Effect.Effect<string> {
+    const self = this;
+    return Effect.gen(function* () {
+      const token = yield* Effect.promise(() => DataExtractor.extractCSRFToken(self.page));
+      if (token) {
+        self.tokens = HashMap.set(self.tokens, 'csrf', token);
+      }
+      return token;
+    });
   }
-  
+
   /**
    * Extract and store API token
    */
-  async extractAPIToken(): Promise<string> {
-    const token = await DataExtractor.extractAPIToken(this.page);
-    if (token) {
-      this.tokens.set('api', token);
-    }
-    return token;
+  extractAPIToken(): Effect.Effect<string> {
+    const self = this;
+    return Effect.gen(function* () {
+      const token = yield* Effect.promise(() => DataExtractor.extractAPIToken(self.page));
+      if (token) {
+        self.tokens = HashMap.set(self.tokens, 'api', token);
+      }
+      return token;
+    });
   }
-  
+
   /**
    * Set authentication headers
    */
-  async setAuthHeaders(headers: Record<string, string>): Promise<void> {
-    await this.page.setExtraHTTPHeaders(headers);
+  setAuthHeaders(headers: Record<string, string>): Effect.Effect<void> {
+    const self = this;
+    return Effect.promise(() => self.page.setExtraHTTPHeaders(headers));
   }
-  
+
   /**
    * Default validation for auth scenarios
    */
-  async validateScenario(): Promise<void> {
-    const authenticated = await this.isAuthenticated();
-    expect(authenticated).toBe(true);
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const authenticated = yield* self.isAuthenticated();
+      expect(authenticated).toBe(true);
+    });
   }
 }
 
@@ -272,92 +393,111 @@ export class AntiBlockScenarioBase extends BaseScenarioTest {
   /**
    * Apply stealth techniques
    */
-  async applyStealthMode(): Promise<void> {
-    // Remove automation indicators
-    await this.page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined
-      });
-      
-      // @ts-ignore
-      window.chrome = {
-        runtime: {}
-      };
-      
-      // @ts-ignore
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5]
-      });
-      
-      // @ts-ignore
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en']
-      });
-    });
+  applyStealthMode(): Effect.Effect<void> {
+    const self = this;
+    return Effect.promise(() =>
+      self.page.addInitScript(() => {
+        // These run in browser context where navigator is defined
+        Object.defineProperty(window.navigator, 'webdriver', {
+          get: () => false
+        });
+
+        // @ts-expect-error - chrome is not defined in standard Window type but exists in Chrome browser
+        window.chrome = {
+          runtime: {}
+        };
+
+        // Override plugins property for stealth mode
+        Object.defineProperty(window.navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5]
+        });
+
+        // Override languages property for stealth mode
+        Object.defineProperty(window.navigator, 'languages', {
+          get: () => ['en-US', 'en']
+        });
+      })
+    );
   }
-  
+
   /**
    * Set custom headers
    */
-  async setCustomHeaders(headers: Record<string, string>): Promise<void> {
-    await this.page.setExtraHTTPHeaders(headers);
+  setCustomHeaders(headers: Record<string, string>): Effect.Effect<void> {
+    const self = this;
+    return Effect.promise(() => self.page.setExtraHTTPHeaders(headers));
   }
-  
+
   /**
    * Rotate user agent
    */
-  async rotateUserAgent(): Promise<void> {
-    const userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-    ];
-    
-    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
-    await this.page.setExtraHTTPHeaders({
-      'User-Agent': randomUA
+  rotateUserAgent(): Effect.Effect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+      ];
+
+      const index = yield* Random.nextIntBetween(0, userAgents.length);
+      const randomUA = userAgents[index];
+      yield* Effect.promise(() =>
+        self.page.setExtraHTTPHeaders({
+          'User-Agent': randomUA ?? userAgents[0]
+        })
+      );
     });
   }
-  
+
   /**
    * Check if blocked
    */
-  async isBlocked(): Promise<boolean> {
-    const url = this.page.url();
-    const content = await this.page.content();
-    
-    return url.includes('/blocked') || 
-           content.includes('Access Denied') ||
-           content.includes('403 Forbidden') ||
-           content.includes('You have been blocked');
+  isBlocked(): Effect.Effect<boolean> {
+    const self = this;
+    return Effect.gen(function* () {
+      const url = self.page.url();
+      const content = yield* Effect.promise(() => self.page.content());
+
+      return url.includes('/blocked') ||
+             content.includes('Access Denied') ||
+             content.includes('403 Forbidden') ||
+             content.includes('You have been blocked');
+    });
   }
-  
+
   /**
    * Bypass block attempt
    */
-  async bypassBlock(): Promise<void> {
-    await this.applyStealthMode();
-    await this.rotateUserAgent();
-    
-    // Clear cookies that might flag us
-    await this.context.adapter.clearCookies();
-    
-    // Add legitimate-looking headers
-    await this.setCustomHeaders({
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-GB,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1'
+  bypassBlock(): Effect.Effect<void, AdapterNotInitialisedError> {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* self.applyStealthMode();
+      yield* self.rotateUserAgent();
+
+      // Clear cookies that might flag us
+      yield* self.context.adapter.clearCookies().pipe(Effect.asVoid);
+
+      // Add legitimate-looking headers
+      yield* self.setCustomHeaders({
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-GB,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      });
     });
   }
-  
+
   /**
    * Default validation for anti-block scenarios
    */
-  async validateScenario(): Promise<void> {
-    const blocked = await this.isBlocked();
-    expect(blocked).toBe(false);
+  validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const blocked = yield* self.isBlocked();
+      expect(blocked).toBe(false);
+    });
   }
 }

@@ -3,7 +3,7 @@
  * Effect-based JSON parsing and stringification with proper error handling
  */
 
-import { Effect, Data, Schema } from 'effect';
+import { Effect, Data, Schema, Option, pipe, Struct } from 'effect';
 
 // ============================================================================
 // Error Types
@@ -46,35 +46,153 @@ export class JsonSchemaValidationError extends Data.TaggedError('JsonSchemaValid
 }
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Check if a value is a non-null object (not an array)
+ */
+const isNonNullObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && !Array.isArray(value) && Option.fromNullable(value)._tag === 'Some';
+
+/**
+ * Apply a replacer function to traverse and transform an object recursively
+ */
+const applyReplacer = (
+  value: unknown,
+  replacer: (key: string, value: unknown) => unknown
+): unknown => {
+  const transform = (key: string, val: unknown): unknown => {
+    const replaced = replacer(key, val);
+    if (isNonNullObject(replaced)) {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(replaced)) {
+        result[k] = transform(k, v);
+      }
+      return result;
+    }
+    if (Array.isArray(replaced)) {
+      return replaced.map((item, index) => transform(String(index), item));
+    }
+    return replaced;
+  };
+  return transform('', value);
+};
+
+/**
+ * Format a JSON string with indentation
+ * Implements proper JSON formatting without using JSON.stringify
+ */
+const formatJsonString = (jsonString: string, space: string | number): string => {
+  const indent = typeof space === 'number' ? ' '.repeat(space) : space;
+  let result = '';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < jsonString.length; i++) {
+    const char = jsonString[i];
+
+    if (escaped) {
+      result += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      result += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      continue;
+    }
+
+    switch (char) {
+      case '{':
+      case '[':
+        result += char;
+        depth++;
+        if (jsonString[i + 1] !== '}' && jsonString[i + 1] !== ']') {
+          result += '\n' + indent.repeat(depth);
+        }
+        break;
+      case '}':
+      case ']':
+        depth--;
+        if (jsonString[i - 1] !== '{' && jsonString[i - 1] !== '[') {
+          result += '\n' + indent.repeat(depth);
+        }
+        result += char;
+        break;
+      case ',':
+        result += char + '\n' + indent.repeat(depth);
+        break;
+      case ':':
+        result += char + ' ';
+        break;
+      default:
+        if (char !== ' ' && char !== '\n' && char !== '\t') {
+          result += char;
+        }
+    }
+  }
+
+  return result;
+};
+
+// ============================================================================
 // JSON Operations
 // ============================================================================
 
 export const JsonUtils = {
   /**
-   * Safely parse JSON string
-   * 
+   * Safely parse JSON string with schema validation
+   *
    * @example
    * ```ts
-   * const result = yield* JsonUtils.parse('{"name": "test"}');
+   * const UserSchema = Schema.Struct({ name: Schema.String });
+   * const result = yield* JsonUtils.parse('{"name": "test"}', UserSchema);
    * // result: { name: "test" }
    * ```
    */
-  parse: <T = unknown>(input: string) =>
-    Effect.try({
-      try: () => JSON.parse(input) as T,
-      catch: (cause) => new JsonParseError({ input, cause })
-    }),
+  parse: <A, I = A, R = never>(input: string, schema: Schema.Schema<A, I, R>) =>
+    Schema.decodeUnknown(Schema.parseJson(schema))(input).pipe(
+      Effect.mapError((cause) => new JsonParseError({ input, cause }))
+    ),
 
   /**
-   * Parse JSON with schema validation
-   * 
+   * Safely parse JSON string as unknown
+   *
+   * @example
+   * ```ts
+   * const result = yield* JsonUtils.parseUnknown('{"name": "test"}');
+   * // result: unknown
+   * ```
+   */
+  parseUnknown: (input: string) =>
+    Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(input).pipe(
+      Effect.mapError((cause) => new JsonParseError({ input, cause }))
+    ),
+
+  /**
+   * Parse JSON with schema validation (alias for parse with additional options)
+   *
    * @example
    * ```ts
    * const UserSchema = Schema.Struct({
    *   name: Schema.String,
    *   age: Schema.Number
    * });
-   * 
+   *
    * const user = yield* JsonUtils.parseWithSchema(
    *   '{"name": "Alice", "age": 30}',
    *   UserSchema
@@ -87,8 +205,8 @@ export const JsonUtils = {
     options?: { readonly strict?: boolean }
   ) =>
     Effect.gen(function* () {
-      const parsed = yield* JsonUtils.parse<I>(input);
-      
+      const parsed = yield* JsonUtils.parseUnknown(input);
+
       return yield* Effect.try({
         try: () => {
           const parseResult = Schema.decodeUnknownSync(schema, {
@@ -107,12 +225,12 @@ export const JsonUtils = {
 
   /**
    * Safely stringify value to JSON
-   * 
+   *
    * @example
    * ```ts
    * const json = yield* JsonUtils.stringify({ name: "test" });
    * // json: '{"name":"test"}'
-   * 
+   *
    * const pretty = yield* JsonUtils.stringify({ name: "test" }, 2);
    * // pretty: '{\n  "name": "test"\n}'
    * ```
@@ -121,11 +239,30 @@ export const JsonUtils = {
     value: unknown,
     space?: string | number,
     replacer?: (key: string, value: unknown) => unknown
-  ) =>
-    Effect.try({
-      try: () => JSON.stringify(value, replacer as any, space),
-      catch: (cause) => new JsonStringifyError({ input: value, cause })
-    }),
+  ) => {
+    const spaceOption = Option.fromNullable(space);
+    const replacerOption = Option.fromNullable(replacer);
+
+    return pipe(
+      Schema.encode(Schema.parseJson(Schema.Unknown))(value),
+      Effect.flatMap((jsonString) => {
+        // Apply formatting options if specified
+        if (Option.isSome(spaceOption) || Option.isSome(replacerOption)) {
+          return pipe(
+            Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(jsonString),
+            Effect.flatMap((parsed) =>
+              Schema.encode(Schema.parseJson(Schema.Unknown))(
+                Option.isSome(replacerOption) ? applyReplacer(parsed, replacerOption.value) : parsed
+              )
+            ),
+            Effect.map((result) => Option.isSome(spaceOption) ? formatJsonString(result, spaceOption.value) : result)
+          );
+        }
+        return Effect.succeed(jsonString);
+      }),
+      Effect.mapError((cause) => new JsonStringifyError({ input: value, cause }))
+    );
+  },
 
   /**
    * Parse JSON with fallback value
@@ -138,25 +275,30 @@ export const JsonUtils = {
    * );
    * ```
    */
-  parseOrDefault: <T>(input: string, defaultValue: T) =>
-    JsonUtils.parse<T>(input).pipe(
-      Effect.catchAll(() => Effect.succeed(defaultValue))
-    ),
+  parseOrDefault: <T>(input: string, defaultValue: T, schema?: Schema.Schema<T>) =>
+    (schema
+      ? JsonUtils.parse(input, schema)
+      : JsonUtils.parseUnknown(input)
+    ).pipe(Effect.catchAll(() => Effect.succeed(defaultValue))),
 
   /**
-   * Parse JSON and return null on failure
-   * 
+   * Parse JSON and return Option.none() on failure
+   *
    * @example
    * ```ts
-   * const data = yield* JsonUtils.parseOrNull(input);
-   * if (data !== null) {
-   *   // Use parsed data
+   * const data = yield* JsonUtils.parseOrNone(input);
+   * if (Option.isSome(data)) {
+   *   // Use parsed data via data.value
    * }
    * ```
    */
-  parseOrNull: <T = unknown>(input: string) =>
-    JsonUtils.parse<T>(input).pipe(
-      Effect.catchAll(() => Effect.succeed(null))
+  parseOrNone: <T>(input: string, schema?: Schema.Schema<T>) =>
+    (schema
+      ? JsonUtils.parse(input, schema)
+      : JsonUtils.parseUnknown(input)
+    ).pipe(
+      Effect.map((value) => Option.some(value)),
+      Effect.catchAll(() => Effect.succeed(Option.none()))
     ),
 
   /**
@@ -169,7 +311,7 @@ export const JsonUtils = {
    * ```
    */
   isValid: (input: string) =>
-    JsonUtils.parse(input).pipe(
+    JsonUtils.parseUnknown(input).pipe(
       Effect.map(() => true),
       Effect.catchAll(() => Effect.succeed(false))
     ),
@@ -194,15 +336,30 @@ export const JsonUtils = {
    * const clone = yield* JsonUtils.deepClone(originalObject);
    * ```
    */
-  deepClone: <T>(value: T) =>
+  deepClone: <T, I = unknown>(value: T, schema: Schema.Schema<T, I>) =>
     Effect.gen(function* () {
       const json = yield* JsonUtils.stringify(value);
-      return yield* JsonUtils.parse<T>(json);
+      return yield* JsonUtils.parse(json, schema);
+    }),
+
+  /**
+   * Deep clone an unknown JSON value without schema validation
+   * Returns unknown type - caller must validate the result
+   *
+   * @example
+   * ```ts
+   * const clone = yield* JsonUtils.deepCloneUnknown(originalObject);
+   * ```
+   */
+  deepCloneUnknown: (value: unknown) =>
+    Effect.gen(function* () {
+      const json = yield* JsonUtils.stringify(value);
+      return yield* JsonUtils.parseUnknown(json);
     }),
 
   /**
    * Merge two JSON objects
-   * 
+   *
    * @example
    * ```ts
    * const merged = yield* JsonUtils.merge(
@@ -212,15 +369,27 @@ export const JsonUtils = {
    * // merged: { a: 1, b: 2 }
    * ```
    */
-  merge: <T extends object, U extends object>(
+  merge: <T extends Record<string, unknown>, U extends Record<string, unknown>>(
     target: T,
-    source: U
-  ): Effect.Effect<T & U, JsonStringifyError | JsonParseError> =>
+    source: U,
+    schema: Schema.Schema<T & U>
+  ): Effect.Effect<T & U, JsonStringifyError | JsonParseError | JsonSchemaValidationError> =>
     Effect.gen(function* () {
-      // Deep clone to avoid mutations
-      const clonedTarget = yield* JsonUtils.deepClone(target);
-      const clonedSource = yield* JsonUtils.deepClone(source);
-      return { ...clonedTarget, ...clonedSource } as T & U;
+      // Deep clone to avoid mutations using JSON round-trip
+      const targetJson = yield* JsonUtils.stringify(target);
+      const sourceJson = yield* JsonUtils.stringify(source);
+      const clonedTarget = yield* JsonUtils.parseUnknown(targetJson);
+      const clonedSource = yield* JsonUtils.parseUnknown(sourceJson);
+      // Both are objects at runtime after JSON round-trip
+      const merged = { ...Object(clonedTarget), ...Object(clonedSource) };
+      // Validate with schema
+      return yield* Schema.decodeUnknown(schema)(merged).pipe(
+        Effect.mapError((cause) => new JsonSchemaValidationError({
+          input: merged,
+          schemaName: schema.ast._tag || 'Unknown',
+          cause
+        }))
+      );
     }),
 
   /**
@@ -235,22 +404,15 @@ export const JsonUtils = {
    * // subset: { a: 1, c: 3 }
    * ```
    */
-  pick: <T extends object, K extends keyof T>(
+  pick: <T extends Record<string, unknown>, K extends keyof T>(
     obj: T,
-    keys: K[]
-  ): Effect.Effect<Pick<T, K>, never> =>
-    Effect.succeed(
-      keys.reduce((acc, key) => {
-        if (key in obj) {
-          acc[key] = obj[key];
-        }
-        return acc;
-      }, {} as Pick<T, K>)
-    ),
+    keys: readonly K[]
+  ) =>
+    Effect.succeed(Struct.pick(obj, ...keys)),
 
   /**
    * Omit properties from JSON object
-   * 
+   *
    * @example
    * ```ts
    * const result = yield* JsonUtils.omit(
@@ -260,18 +422,11 @@ export const JsonUtils = {
    * // result: { a: 1, c: 3 }
    * ```
    */
-  omit: <T extends object, K extends keyof T>(
+  omit: <T extends Record<string, unknown>, K extends keyof T>(
     obj: T,
-    keys: K[]
-  ): Effect.Effect<Omit<T, K>, never> =>
-    Effect.succeed(
-      Object.keys(obj).reduce((acc, key) => {
-        if (!keys.includes(key as K)) {
-          acc[key as keyof Omit<T, K>] = obj[key as keyof T] as any;
-        }
-        return acc;
-      }, {} as Omit<T, K>)
-    )
+    keys: readonly K[]
+  ) =>
+    Effect.succeed(Struct.omit(obj, ...keys))
 };
 
 // ============================================================================
@@ -280,13 +435,15 @@ export const JsonUtils = {
 
 export const {
   parse,
+  parseUnknown,
   parseWithSchema,
   stringify,
   parseOrDefault,
-  parseOrNull,
+  parseOrNone,
   isValid,
   prettyPrint,
   deepClone,
+  deepCloneUnknown,
   merge,
   pick,
   omit

@@ -3,10 +3,42 @@
  * Effect-based file operations with proper error handling
  */
 
-import { Effect, Data, Option } from 'effect';
+import { Effect, Data, Option, Chunk, Random, DateTime, Config } from 'effect';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { JsonUtils } from './JsonUtils.js';
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+type FileEncoding =
+  | 'ascii'
+  | 'utf8'
+  | 'utf-8'
+  | 'utf16le'
+  | 'ucs2'
+  | 'ucs-2'
+  | 'base64'
+  | 'base64url'
+  | 'latin1'
+  | 'binary'
+  | 'hex';
+
+interface NodeError extends Error {
+  code?: string;
+}
+
+function isNodeError(error: unknown): error is NodeError {
+  return error instanceof Error && 'code' in error;
+}
+
+function getErrorCode(error: unknown): Option.Option<string> {
+  if (isNodeError(error)) {
+    return Option.fromNullable(error.code);
+  }
+  return Option.none();
+}
 
 // ============================================================================
 // Error Types
@@ -17,14 +49,14 @@ export type FileErrorType = 'FileReadError' | 'FileWriteError' | 'DirectoryError
 
 export class FileReadError extends Data.TaggedError('FileReadError')<{
   readonly path: string;
-  readonly code?: string;
+  readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
   get message(): string {
-    if (this.code === 'ENOENT') {
+    if (Option.isSome(this.code) && this.code.value === 'ENOENT') {
       return `File not found: ${this.path}`;
     }
-    if (this.code === 'EACCES') {
+    if (Option.isSome(this.code) && this.code.value === 'EACCES') {
       return `Permission denied reading file: ${this.path}`;
     }
     return `Failed to read file ${this.path}: ${this.cause}`;
@@ -33,14 +65,14 @@ export class FileReadError extends Data.TaggedError('FileReadError')<{
 
 export class FileWriteError extends Data.TaggedError('FileWriteError')<{
   readonly path: string;
-  readonly code?: string;
+  readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
   get message(): string {
-    if (this.code === 'EACCES') {
+    if (Option.isSome(this.code) && this.code.value === 'EACCES') {
       return `Permission denied writing file: ${this.path}`;
     }
-    if (this.code === 'ENOSPC') {
+    if (Option.isSome(this.code) && this.code.value === 'ENOSPC') {
       return `No space left on device for file: ${this.path}`;
     }
     return `Failed to write file ${this.path}: ${this.cause}`;
@@ -50,7 +82,7 @@ export class FileWriteError extends Data.TaggedError('FileWriteError')<{
 export class DirectoryError extends Data.TaggedError('DirectoryError')<{
   readonly path: string;
   readonly operation: 'create' | 'read' | 'delete';
-  readonly code?: string;
+  readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
   get message(): string {
@@ -71,14 +103,15 @@ export const FileUtils = {
    * const content = yield* FileUtils.readText('/path/to/file.txt');
    * ```
    */
-  readText: (filePath: string, encoding: BufferEncoding = 'utf-8') =>
+  readText: (filePath: string, encoding: FileEncoding = 'utf-8') =>
     Effect.tryPromise({
       try: () => fs.readFile(filePath, encoding),
-      catch: (error: any) => new FileReadError({ 
-        path: filePath, 
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileReadError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -89,14 +122,15 @@ export const FileUtils = {
    * yield* FileUtils.writeText('/path/to/file.txt', 'Hello, World!');
    * ```
    */
-  writeText: (filePath: string, content: string, encoding: BufferEncoding = 'utf-8') =>
+  writeText: (filePath: string, content: string, encoding: FileEncoding = 'utf-8') =>
     Effect.tryPromise({
       try: () => fs.writeFile(filePath, content, encoding),
-      catch: (error: any) => new FileWriteError({ 
-        path: filePath,
-        code: error?.code, 
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -110,11 +144,12 @@ export const FileUtils = {
   readBuffer: (filePath: string) =>
     Effect.tryPromise({
       try: () => fs.readFile(filePath),
-      catch: (error: any) => new FileReadError({ 
-        path: filePath,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileReadError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -128,11 +163,12 @@ export const FileUtils = {
   writeBuffer: (filePath: string, buffer: Buffer) =>
     Effect.tryPromise({
       try: () => fs.writeFile(filePath, buffer),
-      catch: (error: any) => new FileWriteError({ 
-        path: filePath,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -176,16 +212,12 @@ export const FileUtils = {
    */
   exists: (filePath: string) =>
     Effect.tryPromise({
-      try: async () => {
-        try {
-          await fs.access(filePath);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      catch: () => false
-    }),
+      try: () => fs.access(filePath),
+      catch: () => new FileReadError({ path: filePath, code: Option.none(), cause: 'Access check failed' })
+    }).pipe(
+      Effect.map(() => true),
+      Effect.catchAll(() => Effect.succeed(false))
+    ),
 
   /**
    * Get file stats
@@ -199,11 +231,12 @@ export const FileUtils = {
   stat: (filePath: string) =>
     Effect.tryPromise({
       try: () => fs.stat(filePath),
-      catch: (error: any) => new FileReadError({ 
-        path: filePath,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileReadError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -217,11 +250,12 @@ export const FileUtils = {
   delete: (filePath: string) =>
     Effect.tryPromise({
       try: () => fs.unlink(filePath),
-      catch: (error: any) => new FileWriteError({ 
-        path: filePath,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -235,11 +269,12 @@ export const FileUtils = {
   copy: (src: string, dest: string) =>
     Effect.tryPromise({
       try: () => fs.copyFile(src, dest),
-      catch: (error: any) => new FileWriteError({ 
-        path: dest,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: dest,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -253,11 +288,12 @@ export const FileUtils = {
   move: (src: string, dest: string) =>
     Effect.tryPromise({
       try: () => fs.rename(src, dest),
-      catch: (error: any) => new FileWriteError({ 
-        path: dest,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: dest,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -271,12 +307,13 @@ export const FileUtils = {
   ensureDir: (dirPath: string) =>
     Effect.tryPromise({
       try: () => fs.mkdir(dirPath, { recursive: true }),
-      catch: (error: any) => new DirectoryError({ 
-        path: dirPath,
-        operation: 'create',
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new DirectoryError({
+          path: dirPath,
+          operation: 'create',
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -290,12 +327,13 @@ export const FileUtils = {
   readDir: (dirPath: string) =>
     Effect.tryPromise({
       try: () => fs.readdir(dirPath),
-      catch: (error: any) => new DirectoryError({ 
-        path: dirPath,
-        operation: 'read',
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new DirectoryError({
+          path: dirPath,
+          operation: 'read',
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -314,12 +352,13 @@ export const FileUtils = {
   readDirWithStats: (dirPath: string) =>
     Effect.tryPromise({
       try: () => fs.readdir(dirPath, { withFileTypes: true }),
-      catch: (error: any) => new DirectoryError({ 
-        path: dirPath,
-        operation: 'read',
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new DirectoryError({
+          path: dirPath,
+          operation: 'read',
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -333,12 +372,13 @@ export const FileUtils = {
   deleteDir: (dirPath: string) =>
     Effect.tryPromise({
       try: () => fs.rm(dirPath, { recursive: true, force: true }),
-      catch: (error: any) => new DirectoryError({ 
-        path: dirPath,
-        operation: 'delete',
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new DirectoryError({
+          path: dirPath,
+          operation: 'delete',
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -401,11 +441,12 @@ export const FileUtils = {
   append: (filePath: string, content: string) =>
     Effect.tryPromise({
       try: () => fs.appendFile(filePath, content),
-      catch: (error: any) => new FileWriteError({ 
-        path: filePath,
-        code: error?.code,
-        cause: error 
-      })
+      catch: (error: unknown) =>
+        new FileWriteError({
+          path: filePath,
+          code: getErrorCode(error),
+          cause: error
+        })
     }),
 
   /**
@@ -420,11 +461,16 @@ export const FileUtils = {
    */
   createTempFile: (prefix: string = 'tmp', suffix: string = '') =>
     Effect.gen(function* () {
-      const tmpDir = yield* Effect.sync(() => 
-        process.env.TMPDIR || process.env.TEMP || '/tmp'
+      const tmpDirEnv = yield* Config.string('TMPDIR').pipe(
+        Config.orElse(() => Config.string('TEMP')),
+        Config.withDefault('/tmp')
       );
-      const randomName = `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}${suffix}`;
-      const tempPath = path.join(tmpDir, randomName);
+      const now = yield* DateTime.now;
+      const millis = DateTime.toEpochMillis(now);
+      const random = yield* Random.nextIntBetween(0, 2147483647);
+      const randomStr = random.toString(36).substring(0, 9);
+      const randomName = `${prefix}-${millis}-${randomStr}${suffix}`;
+      const tempPath = path.join(tmpDirEnv, randomName);
       yield* FileUtils.writeText(tempPath, '');
       return tempPath;
     }),
@@ -481,21 +527,22 @@ export const FileUtils = {
    */
   walk: (dirPath: string): Effect.Effect<string[], DirectoryError> =>
     Effect.gen(function* () {
-      const results: string[] = [];
       const entries = yield* FileUtils.readDirWithStats(dirPath);
-      
-      for (const entry of entries) {
+
+      const processedEntries = yield* Effect.forEach(entries, (entry) => {
         const fullPath = path.join(dirPath, entry.name);
-        
+
         if (entry.isDirectory()) {
-          const subFiles = yield* FileUtils.walk(fullPath);
-          results.push(...subFiles);
+          return FileUtils.walk(fullPath).pipe(
+            Effect.map(subFiles => Chunk.fromIterable(subFiles))
+          );
         } else {
-          results.push(fullPath);
+          return Effect.succeed(Chunk.of(fullPath));
         }
-      }
-      
-      return results;
+      });
+
+      const combined = Chunk.fromIterable(processedEntries).pipe(Chunk.flatten);
+      return Chunk.toArray(combined);
     })
 };
 

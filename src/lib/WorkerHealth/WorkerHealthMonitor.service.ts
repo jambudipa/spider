@@ -1,12 +1,12 @@
-import { Duration, Effect, Ref, Schedule } from 'effect';
+import { DateTime, Duration, Effect, HashMap, Option, Ref, Schedule } from 'effect';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 
 interface WorkerStatus {
   workerId: string;
   domain: string;
   currentUrl?: string;
-  lastActivity: Date;
-  fetchStartTime?: Date;
+  lastActivity: DateTime.Utc;
+  fetchStartTime?: DateTime.Utc;
 }
 
 /**
@@ -17,7 +17,7 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
   {
     effect: Effect.gen(function* () {
       const logger = yield* SpiderLogger;
-      const workers = yield* Ref.make(new Map<string, WorkerStatus>());
+      const workers = yield* Ref.make(HashMap.empty<string, WorkerStatus>());
       const stuckThresholdMs = 60000; // 1 minute without activity = stuck
 
       return {
@@ -30,23 +30,28 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
           activity: { url?: string; fetchStart?: boolean }
         ) =>
           Effect.gen(function* () {
-            const now = new Date();
+            const now = DateTime.unsafeNow();
             yield* Ref.update(workers, (map) => {
-              const current = map.get(workerId) || {
-                workerId,
-                domain,
-                lastActivity: now,
-              };
+              const current = HashMap.get(map, workerId).pipe(
+                (opt) =>
+                  opt._tag === 'Some'
+                    ? opt.value
+                    : {
+                        workerId,
+                        domain,
+                        lastActivity: now,
+                      }
+              );
               const updated: WorkerStatus = {
                 ...current,
                 domain,
                 lastActivity: now,
-                currentUrl: activity.url || current.currentUrl,
+                currentUrl: activity.url ?? current.currentUrl,
                 fetchStartTime: activity.fetchStart
                   ? now
                   : current.fetchStartTime,
               };
-              return new Map(map).set(workerId, updated);
+              return HashMap.set(map, workerId, updated);
             });
           }),
 
@@ -54,22 +59,18 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
          * Remove a worker from monitoring
          */
         removeWorker: (workerId: string) =>
-          Ref.update(workers, (map) => {
-            const newMap = new Map(map);
-            newMap.delete(workerId);
-            return newMap;
-          }),
+          Ref.update(workers, (map) => HashMap.remove(map, workerId)),
 
         /**
          * Get stuck workers
          */
         getStuckWorkers: Effect.gen(function* () {
-          const now = new Date();
+          const now = DateTime.unsafeNow();
           const workerMap = yield* Ref.get(workers);
           const stuck: WorkerStatus[] = [];
 
           for (const [, status] of workerMap) {
-            const inactiveMs = now.getTime() - status.lastActivity.getTime();
+            const inactiveMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(status.lastActivity);
             if (inactiveMs > stuckThresholdMs) {
               stuck.push(status);
             }
@@ -84,13 +85,13 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
         startMonitoring: Effect.gen(function* () {
           const self = {
             getStuckWorkers: Effect.gen(function* () {
-              const now = new Date();
+              const now = DateTime.unsafeNow();
               const workerMap = yield* Ref.get(workers);
               const stuck: WorkerStatus[] = [];
 
               for (const [, status] of workerMap) {
                 const inactiveMs =
-                  now.getTime() - status.lastActivity.getTime();
+                  DateTime.toEpochMillis(now) - DateTime.toEpochMillis(status.lastActivity);
                 if (inactiveMs > stuckThresholdMs) {
                   stuck.push(status);
                 }
@@ -106,16 +107,20 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
 
               if (stuck.length > 0) {
                 for (const worker of stuck) {
-                  const inactiveMs = Date.now() - worker.lastActivity.getTime();
+                  const nowMillis = DateTime.toEpochMillis(DateTime.unsafeNow());
+                  const inactiveMs = nowMillis - DateTime.toEpochMillis(worker.lastActivity);
                   yield* logger.logEdgeCase(
                     worker.domain,
                     'worker_stuck_detected',
                     {
                       workerId: worker.workerId,
                       currentUrl: worker.currentUrl,
-                      lastActivity: worker.lastActivity.toISOString(),
+                      lastActivity: DateTime.formatIso(worker.lastActivity),
                       inactiveMs,
-                      fetchStartTime: worker.fetchStartTime?.toISOString(),
+                      fetchStartTime: Option.fromNullable(worker.fetchStartTime).pipe(
+                        Option.map(DateTime.formatIso),
+                        Option.getOrElse(() => 'N/A')
+                      ),
                     }
                   );
                 }

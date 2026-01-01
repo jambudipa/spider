@@ -1,4 +1,4 @@
-import { Effect, MutableHashMap, Queue, Schema } from 'effect';
+import { DateTime, Effect, MutableHashMap, Option, Queue, Schema } from 'effect';
 import { CrawlTask } from '../Spider/Spider.service.js';
 import { ConfigurationError } from '../errors.js';
 import { SpiderConfig } from '../Config/SpiderConfig.service.js';
@@ -96,13 +96,13 @@ export class SpiderState extends Schema.Class<SpiderState>('SpiderState')({
 export interface StatePersistence {
   /** Saves the complete spider state to persistent storage */
   saveState: (
-    key: SpiderStateKey,
-    state: SpiderState
+    _key: SpiderStateKey,
+    _state: SpiderState
   ) => Effect.Effect<void, Error>;
-  /** Loads spider state from persistent storage, returns null if not found */
-  loadState: (key: SpiderStateKey) => Effect.Effect<SpiderState | null, Error>;
+  /** Loads spider state from persistent storage, returns Option.none if not found */
+  loadState: (_key: SpiderStateKey) => Effect.Effect<Option.Option<SpiderState>, Error>;
   /** Deletes spider state from persistent storage */
-  deleteState: (key: SpiderStateKey) => Effect.Effect<void, Error>;
+  deleteState: (_key: SpiderStateKey) => Effect.Effect<void, Error>;
 }
 
 /**
@@ -155,8 +155,8 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
       const seenFingerprints = MutableHashMap.empty<string, boolean>();
       const pendingRequestsForPersistence: PriorityRequest[] = []; // Keep track for persistence
       let totalProcessed = 0;
-      let persistenceLayer: StatePersistence | null = null;
-      let currentStateKey: SpiderStateKey | null = null;
+      let persistenceLayer: Option.Option<StatePersistence> = Option.none();
+      let currentStateKey: Option.Option<SpiderStateKey> = Option.none();
 
       /**
        * Normalizes a URL for consistent deduplication.
@@ -170,51 +170,52 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
           return url;
         }
 
-        try {
-          const parsed = new URL(url);
+        return Option.match(
+          Option.liftThrowable(() => new URL(url))(),
+          {
+            onNone: () => url,
+            onSome: (parsed) => {
+              // Normalize pathname: remove multiple consecutive slashes and trailing slashes
+              let normalizedPath = parsed.pathname
+                .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+                .replace(/\/$/, ''); // Remove trailing slash
 
-          // Normalize pathname: remove multiple consecutive slashes and trailing slashes
-          let normalizedPath = parsed.pathname
-            .replace(/\/+/g, '/') // Replace multiple slashes with single slash
-            .replace(/\/$/, ''); // Remove trailing slash
+              // Keep root path as '/'
+              if (normalizedPath === '') {
+                normalizedPath = '/';
+              }
 
-          // Keep root path as '/'
-          if (normalizedPath === '') {
-            normalizedPath = '/';
+              parsed.pathname = normalizedPath;
+
+              // Remove fragment
+              parsed.hash = '';
+
+              // Remove default ports
+              if (
+                (parsed.protocol === 'http:' && parsed.port === '80') ||
+                (parsed.protocol === 'https:' && parsed.port === '443')
+              ) {
+                parsed.port = '';
+              }
+
+              // Sort query parameters alphabetically
+              if (parsed.search) {
+                const params = new URLSearchParams(parsed.search);
+                const sortedParams = new URLSearchParams();
+                Array.from(params.keys())
+                  .sort()
+                  .forEach((key) => {
+                    params.getAll(key).forEach((value) => {
+                      sortedParams.append(key, value);
+                    });
+                  });
+                parsed.search = sortedParams.toString();
+              }
+
+              return parsed.toString();
+            }
           }
-
-          parsed.pathname = normalizedPath;
-
-          // Remove fragment
-          parsed.hash = '';
-
-          // Remove default ports
-          if (
-            (parsed.protocol === 'http:' && parsed.port === '80') ||
-            (parsed.protocol === 'https:' && parsed.port === '443')
-          ) {
-            parsed.port = '';
-          }
-
-          // Sort query parameters alphabetically
-          if (parsed.search) {
-            const params = new URLSearchParams(parsed.search);
-            const sortedParams = new URLSearchParams();
-            Array.from(params.keys())
-              .sort()
-              .forEach((key) => {
-                params.getAll(key).forEach((value) => {
-                  sortedParams.append(key, value);
-                });
-              });
-            parsed.search = sortedParams.toString();
-          }
-
-          return parsed.toString();
-        } catch {
-          // If URL parsing fails, return original
-          return url;
-        }
+        );
       };
 
       /**
@@ -237,18 +238,21 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
         new PriorityRequest({
           request,
           priority,
-          timestamp: new Date(),
+          timestamp: DateTime.toDate(DateTime.unsafeNow()),
           fingerprint: generateFingerprint(request),
         });
 
       const persistState = (): Effect.Effect<void, Error> =>
         Effect.gen(function* () {
-          if (!persistenceLayer || !currentStateKey) {
+          if (Option.isNone(persistenceLayer) || Option.isNone(currentStateKey)) {
             return;
           }
 
+          const stateKey = currentStateKey.value;
+          const persistence = persistenceLayer.value;
+
           const state = new SpiderState({
-            key: currentStateKey,
+            key: stateKey,
             pendingRequests: [...pendingRequestsForPersistence],
             visitedFingerprints: Array.from(
               MutableHashMap.keys(seenFingerprints)
@@ -256,7 +260,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             totalProcessed,
           });
 
-          yield* persistenceLayer.saveState(currentStateKey, state);
+          yield* persistence.saveState(stateKey, state);
         });
 
       const restoreFromStateImpl = (
@@ -286,7 +290,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
           );
 
           totalProcessed = state.totalProcessed;
-          currentStateKey = state.key;
+          currentStateKey = Option.some(state.key);
         });
 
       return {
@@ -296,15 +300,15 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
           stateKey: SpiderStateKey
         ) =>
           Effect.sync(() => {
-            persistenceLayer = persistence;
-            currentStateKey = stateKey;
+            persistenceLayer = Option.some(persistence);
+            currentStateKey = Option.some(stateKey);
           }),
 
         // Remove persistence configuration
         clearPersistence: () =>
           Effect.sync(() => {
-            persistenceLayer = null;
-            currentStateKey = null;
+            persistenceLayer = Option.none();
+            currentStateKey = Option.none();
           }),
 
         // Enqueue a request with priority
@@ -323,7 +327,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             pendingRequestsForPersistence.push(priorityRequest); // Track for persistence
 
             // Persist if persistence layer is configured
-            if (persistenceLayer && currentStateKey) {
+            if (Option.isSome(persistenceLayer) && Option.isSome(currentStateKey)) {
               yield* persistState();
             }
 
@@ -345,7 +349,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             }
 
             // Persist state after processing if persistence layer is configured
-            if (persistenceLayer && currentStateKey) {
+            if (Option.isSome(persistenceLayer) && Option.isSome(currentStateKey)) {
               yield* persistState();
             }
 
@@ -362,7 +366,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
         // Get current state for persistence
         getState: () =>
           Effect.gen(function* () {
-            if (!currentStateKey) {
+            if (Option.isNone(currentStateKey)) {
               return yield* Effect.fail(
                 new ConfigurationError({
                   message: 'No state key configured',
@@ -372,7 +376,7 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             }
 
             return new SpiderState({
-              key: currentStateKey,
+              key: currentStateKey.value,
               pendingRequests: [...pendingRequestsForPersistence],
               visitedFingerprints: Array.from(
                 MutableHashMap.keys(seenFingerprints)
@@ -387,10 +391,10 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
         // Generic restore method that can work with any persistence implementation
         restore: (persistence: StatePersistence, stateKey: SpiderStateKey) =>
           Effect.gen(function* () {
-            const state = yield* persistence.loadState(stateKey);
-            if (state) {
-              persistenceLayer = persistence;
-              yield* restoreFromStateImpl(state);
+            const stateOption = yield* persistence.loadState(stateKey);
+            if (Option.isSome(stateOption)) {
+              persistenceLayer = Option.some(persistence);
+              yield* restoreFromStateImpl(stateOption.value);
               return true;
             }
             return false;

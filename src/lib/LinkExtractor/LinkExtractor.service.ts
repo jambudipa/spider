@@ -1,6 +1,6 @@
-import { Data, Effect } from 'effect';
+import { Chunk, Data, Effect, Option } from 'effect';
 import * as cheerio from 'cheerio';
-import type { Element } from 'domhandler';
+import type { AnyNode, Element } from 'domhandler';
 
 /**
  * Configuration for link extraction behavior.
@@ -147,10 +147,10 @@ export interface LinkExtractorServiceInterface {
    * // URLs may be relative, absolute, fragments, etc.
    * ```
    */
-  extractLinks(
+  extractLinks: (
     html: string,
     config?: LinkExtractorConfig
-  ): Effect.Effect<LinkExtractionResult, LinkExtractionError>;
+  ) => Effect.Effect<LinkExtractionResult, LinkExtractionError>;
 }
 
 /**
@@ -180,17 +180,15 @@ export class LinkExtractorService extends Effect.Service<LinkExtractorService>()
         Effect.gen(function* () {
           const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
-          try {
-            const result = extractRawLinks(html, finalConfig);
-            return result;
-          } catch (error) {
-            return yield* Effect.fail(
+          const result = yield* Effect.try({
+            try: () => extractRawLinks(html, finalConfig),
+            catch: (error) =>
               new LinkExtractionError({
                 message: `Failed to extract links from HTML: ${error instanceof Error ? error.message : String(error)}`,
                 cause: error,
-              })
-            );
-          }
+              }),
+          });
+          return result;
         }),
     }),
   }
@@ -205,6 +203,12 @@ export class LinkExtractorService extends Effect.Service<LinkExtractorService>()
 export const LinkExtractorServiceLayer = LinkExtractorService.Default;
 
 /**
+ * Type guard to check if a cheerio element is a DOM Element.
+ */
+const isElement = (node: AnyNode): node is Element =>
+  node.type === 'tag' || node.type === 'script' || node.type === 'style';
+
+/**
  * Pure function that extracts URLs from HTML without any processing.
  *
  * This function only extracts raw URL strings from HTML elements.
@@ -215,7 +219,7 @@ const extractRawLinks = (
   config: Required<LinkExtractorConfig>
 ): LinkExtractionResult => {
   const $ = cheerio.load(html);
-  const foundUrls: string[] = [];
+  let foundUrls = Chunk.empty<string>();
   const extractionBreakdown: Record<string, number> = {};
   let totalElementsProcessed = 0;
 
@@ -223,17 +227,21 @@ const extractRawLinks = (
   const extractUrlFromAttribute = (
     element: Element,
     attr: string
-  ): string | null => {
+  ): Option.Option<string> => {
     const value = $(element).attr(attr);
-    if (!value || !value.trim()) return null;
-    return value.trim(); // Return raw URL without any processing
+    return Option.fromNullable(value?.trim()).pipe(
+      Option.filter((v) => v.length > 0)
+    );
   };
 
   // Helper to track extraction
-  const trackExtraction = (elementType: string, url: string | null) => {
+  const trackExtraction = (
+    elementType: string,
+    urlOption: Option.Option<string>
+  ) => {
     totalElementsProcessed++;
-    if (url) {
-      foundUrls.push(url);
+    if (Option.isSome(urlOption)) {
+      foundUrls = Chunk.append(foundUrls, urlOption.value);
       extractionBreakdown[elementType] =
         (extractionBreakdown[elementType] || 0) + 1;
     }
@@ -243,12 +251,13 @@ const extractRawLinks = (
     // Use restricted CSS selectors
     config.restrictCss.forEach((cssSelector) => {
       $(cssSelector).each((_, element) => {
-        const tagName = (element as Element).name?.toLowerCase() || 'unknown';
+        if (!isElement(element)) return;
+        const tagName = element.name?.toLowerCase() || 'unknown';
 
         // Extract from all configured attributes
         config.attrs.forEach((attr) => {
-          const url = extractUrlFromAttribute(element as Element, attr);
-          if (url) trackExtraction(tagName, url);
+          const url = extractUrlFromAttribute(element, attr);
+          if (Option.isSome(url)) trackExtraction(tagName, url);
         });
       });
     });
@@ -257,7 +266,8 @@ const extractRawLinks = (
     config.tags.forEach((tag) => {
       config.attrs.forEach((attr) => {
         $(`${tag}[${attr}]`).each((_, element) => {
-          const url = extractUrlFromAttribute(element as Element, attr);
+          if (!isElement(element)) return;
+          const url = extractUrlFromAttribute(element, attr);
           trackExtraction(tag, url);
         });
       });
@@ -277,13 +287,13 @@ const extractRawLinks = (
           name.includes('next')) &&
         value?.trim()
       ) {
-        trackExtraction('input', value.trim());
+        trackExtraction('input', Option.some(value.trim()));
       }
     });
   }
 
   return {
-    links: foundUrls,
+    links: Chunk.toArray(foundUrls),
     totalElementsProcessed,
     extractionBreakdown,
   };

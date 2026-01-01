@@ -48,7 +48,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         );
         
         return Array.from(potentialModals).map(modal => {
-          const computed = window.getComputedStyle(modal as Element);
+          const computed = window.getComputedStyle(modal);
           const rect = modal.getBoundingClientRect();
           
           return {
@@ -138,7 +138,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         );
         
         return Array.from(modals).map(modal => {
-          const computed = window.getComputedStyle(modal as Element);
+          const computed = window.getComputedStyle(modal);
           const rect = modal.getBoundingClientRect();
           const isVisible = computed.display !== 'none' && 
                            computed.visibility !== 'hidden' &&
@@ -241,7 +241,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           .map(el => {
             const text = el.textContent?.trim().toLowerCase() || '';
             const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
-            const className = el.className?.toLowerCase() || '';
+            const className = el instanceof HTMLElement ? el.className.toLowerCase() : '';
             
             const isCloseButton = 
               text === '×' || text === 'x' || text.includes('close') ||
@@ -282,7 +282,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
                          text.includes('ok') || text === '×' || text === 'x' ||
                          text.includes('agree') || text.includes('got it');
                 });
-                return closeButton || null;
+                return closeButton ?? null;
               });
               firstCloseButton = await handle.asElement();
             } catch {
@@ -302,7 +302,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
               const modalsAfterClose = await test.getPage().evaluate(() => {
                 const modals = document.querySelectorAll('.modal, .popup, .overlay, [role="dialog"], [aria-modal="true"]');
                 return Array.from(modals).filter(modal => {
-                  const computed = window.getComputedStyle(modal as Element);
+                  const computed = window.getComputedStyle(modal);
                   const rect = modal.getBoundingClientRect();
                   return computed.display !== 'none' && 
                          computed.visibility !== 'hidden' &&
@@ -343,7 +343,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
         );
         
         const overlays = Array.from(potentialOverlays).map(overlay => {
-          const computed = window.getComputedStyle(overlay as Element);
+          const computed = window.getComputedStyle(overlay);
           const rect = overlay.getBoundingClientRect();
           
           return {
@@ -406,7 +406,15 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           '[class*="modal"], [class*="popup"]'
         );
         
-        let nestedModals: any[] = [];
+        interface NestedModalInfo {
+          index: number;
+          hasChildren: boolean;
+          childCount: number;
+          hasParent: boolean;
+          zIndex: string;
+          className: string;
+        }
+        const nestedModals: NestedModalInfo[] = [];
         
         modals.forEach((modal, index) => {
           const childModals = modal.querySelectorAll(
@@ -420,7 +428,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
             hasChildren: childModals.length > 0,
             childCount: childModals.length,
             hasParent: parentModal !== null && parentModal !== modal,
-            zIndex: window.getComputedStyle(modal as Element).zIndex,
+            zIndex: window.getComputedStyle(modal).zIndex,
             className: modal.className
           });
         });
@@ -479,10 +487,29 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           '.modal, .popup, .cookie-banner, [role="dialog"], [aria-modal="true"]'
         );
         
-        const formsInModals: any[] = [];
+        interface FormInput {
+          name: string;
+          type: string;
+          value: string;
+          required: boolean;
+          placeholder: string;
+        }
+        interface FormButton {
+          text: string | undefined;
+          type: string;
+        }
+        interface ModalFormInfo {
+          action: string;
+          method: string;
+          inputs: FormInput[];
+          buttons: FormButton[];
+          hasSubmit: boolean;
+          modalClass: string;
+        }
+        const formsInModals: ModalFormInfo[] = [];
         
         modals.forEach(modal => {
-          const computed = window.getComputedStyle(modal as Element);
+          const computed = window.getComputedStyle(modal);
           const isVisible = computed.display !== 'none' && 
                            computed.visibility !== 'hidden';
           
@@ -529,7 +556,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
           expect(form.inputs.length + form.buttons.length).toBeGreaterThan(0);
           
           if (form.inputs.length > 0) {
-            form.inputs.forEach((input: any) => {
+            form.inputs.forEach(input => {
               expect(typeof input.type).toBe('string');
             });
           }

@@ -3,7 +3,7 @@
  * Provides browser automation capabilities using Playwright with Effect patterns
  */
 
-import { Effect, Layer, Ref, Option, pipe } from 'effect';
+import { Effect, Ref, Option } from 'effect';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { BrowserError, PageError } from '../errors/effect-errors.js';
 
@@ -21,7 +21,7 @@ export interface BrowserEngineConfig {
   locale?: string;
 }
 
-export interface BrowserEngineService {
+export interface BrowserEngineServiceInterface {
   /**
    * Launch the browser
    */
@@ -58,12 +58,12 @@ export interface BrowserEngineService {
   /**
    * Scroll the page
    */
-  scroll: (distance: number) => Effect.Effect<void, never>;
+  scroll: (distance: number) => Effect.Effect<void>;
 
   /**
    * Execute JavaScript in the page
    */
-  evaluate: <T>(script: string | Function) => Effect.Effect<T, PageError>;
+  evaluate: <T>(script: string | (() => T)) => Effect.Effect<T, PageError>;
 
   /**
    * Get page HTML
@@ -78,12 +78,12 @@ export interface BrowserEngineService {
   /**
    * Close the current page
    */
-  closePage: () => Effect.Effect<void, never>;
+  closePage: () => Effect.Effect<void>;
 
   /**
    * Close the browser
    */
-  close: () => Effect.Effect<void, never>;
+  close: () => Effect.Effect<void>;
 }
 
 /**
@@ -270,22 +270,24 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
 
         scroll: (distance: number) => Effect.gen(function* () {
           const page = yield* getCurrentPage();
-          
-          yield* Effect.tryPromise({
-            try: () => page.evaluate((d) => {
-              window.scrollBy(0, d);
-            }, distance),
-            catch: () => Effect.void
-          });
-          
+
+          yield* Effect.ignore(
+            Effect.tryPromise({
+              try: () => page.evaluate((d) => {
+                window.scrollBy(0, d);
+              }, distance),
+              catch: (error) => error
+            })
+          );
+
           yield* Effect.logDebug(`Scrolled ${distance}px`);
         }),
 
-        evaluate: <T>(script: string | ((...args: any[]) => any)) => Effect.gen(function* () {
+        evaluate: <T>(script: string | (() => T)) => Effect.gen(function* () {
           const page = yield* getCurrentPage();
-          
+
           return yield* Effect.tryPromise({
-            try: () => page.evaluate(script as any) as Promise<T>,
+            try: () => page.evaluate(script),
             catch: (error) => new PageError({
               url: page.url(),
               operation: 'evaluate',
@@ -325,13 +327,15 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
 
         closePage: () => Effect.gen(function* () {
           const pageOpt = yield* Ref.get(pageRef);
-          
+
           if (Option.isSome(pageOpt)) {
-            yield* Effect.tryPromise({
-              try: () => pageOpt.value.close(),
-              catch: () => Effect.void
-            });
-            
+            yield* Effect.ignore(
+              Effect.tryPromise({
+                try: () => pageOpt.value.close(),
+                catch: (error) => error
+              })
+            );
+
             yield* Ref.set(pageRef, Option.none());
             yield* Effect.log('Page closed');
           }
@@ -339,43 +343,43 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
 
         close: () => Effect.gen(function* () {
           // Close page first
-          yield* Effect.gen(function* () {
-            const pageOpt = yield* Ref.get(pageRef);
-            if (Option.isSome(pageOpt)) {
-              yield* Effect.tryPromise({
+          const pageOpt = yield* Ref.get(pageRef);
+          if (Option.isSome(pageOpt)) {
+            yield* Effect.ignore(
+              Effect.tryPromise({
                 try: () => pageOpt.value.close(),
-                catch: () => Effect.void
-              });
-            }
-          });
-          
+                catch: (error) => error
+              })
+            );
+          }
+
           // Close context
-          yield* Effect.gen(function* () {
-            const contextOpt = yield* Ref.get(contextRef);
-            if (Option.isSome(contextOpt)) {
-              yield* Effect.tryPromise({
+          const contextOpt = yield* Ref.get(contextRef);
+          if (Option.isSome(contextOpt)) {
+            yield* Effect.ignore(
+              Effect.tryPromise({
                 try: () => contextOpt.value.close(),
-                catch: () => Effect.void
-              });
-            }
-          });
-          
+                catch: (error) => error
+              })
+            );
+          }
+
           // Close browser
-          yield* Effect.gen(function* () {
-            const browserOpt = yield* Ref.get(browserRef);
-            if (Option.isSome(browserOpt)) {
-              yield* Effect.tryPromise({
+          const browserOpt = yield* Ref.get(browserRef);
+          if (Option.isSome(browserOpt)) {
+            yield* Effect.ignore(
+              Effect.tryPromise({
                 try: () => browserOpt.value.close(),
-                catch: () => Effect.void
-              });
-            }
-          });
-          
+                catch: (error) => error
+              })
+            );
+          }
+
           // Clear references
           yield* Ref.set(pageRef, Option.none());
           yield* Ref.set(contextRef, Option.none());
           yield* Ref.set(browserRef, Option.none());
-          
+
           yield* Effect.log('Browser engine closed');
         })
       };
@@ -391,14 +395,14 @@ export const BrowserEngineLive = BrowserEngineService.Default;
 /**
  * Create BrowserEngine with custom configuration
  */
-export const BrowserEngineWithConfig = (config: BrowserEngineConfig) =>
+export const BrowserEngineWithConfig = (_config: BrowserEngineConfig) =>
   BrowserEngineService.Default;
 
 /**
  * Helper to run browser operations with automatic cleanup
  */
 export const withBrowser = <A, E, R>(
-  operation: (engine: BrowserEngineService) => Effect.Effect<A, E, R>
+  operation: (_engine: BrowserEngineService) => Effect.Effect<A, E, R>
 ) => Effect.gen(function* () {
   const engine = yield* BrowserEngineService;
   

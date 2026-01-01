@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import {
   SpiderState,
   SpiderStateKey,
@@ -17,6 +17,16 @@ import {
   FullStatePersistence,
   HybridPersistence,
 } from './strategies.js';
+import { FileStorageBackend } from './backends/FileStorageBackend.js';
+import {
+  RedisStorageBackend,
+  type RedisClientInterface,
+} from './backends/RedisStorageBackend.js';
+import {
+  PostgresStorageBackend,
+  type DatabaseClientInterface,
+  type PostgresStorageConfig,
+} from './backends/PostgresStorageBackend.js';
 
 /**
  * Configuration for the ResumabilityService.
@@ -77,9 +87,12 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
   '@jambudipa.io/ResumabilityService',
   {
     effect: Effect.gen(function* () {
-      // Will be set during configuration
-      let strategy: PersistenceStrategy | null = null;
-      let backend: StorageBackend | null = null;
+      // Yield unit to satisfy the generator requirement
+      yield* Effect.void;
+
+      // Will be set during configuration - using Option for type-safe absence handling
+      let strategy: Option.Option<PersistenceStrategy> = Option.none();
+      let backend: Option.Option<StorageBackend> = Option.none();
 
       const service = {
         /**
@@ -93,13 +106,13 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         configure: (config: ResumabilityConfig) =>
           Effect.gen(function* () {
-            backend = config.backend;
+            backend = Option.some(config.backend);
 
             // Initialize the backend
-            yield* backend.initialize();
+            yield* config.backend.initialize();
 
             // Create the appropriate strategy
-            strategy = yield* createStrategy(config);
+            strategy = Option.some(yield* createStrategy(config));
           }),
 
         /**
@@ -110,7 +123,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         persistOperation: (operation: StateOperation) =>
           Effect.gen(function* () {
-            if (!strategy) {
+            if (Option.isNone(strategy)) {
               return yield* Effect.fail(
                 new PersistenceError({
                   message:
@@ -120,7 +133,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
               );
             }
 
-            yield* strategy.persist(operation);
+            yield* strategy.value.persist(operation);
           }),
 
         /**
@@ -131,7 +144,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         restore: (key: SpiderStateKey) =>
           Effect.gen(function* () {
-            if (!strategy) {
+            if (Option.isNone(strategy)) {
               return yield* Effect.fail(
                 new PersistenceError({
                   message:
@@ -141,7 +154,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
               );
             }
 
-            return yield* strategy.restore(key);
+            return yield* strategy.value.restore(key);
           }),
 
         /**
@@ -152,7 +165,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         cleanup: (key: SpiderStateKey) =>
           Effect.gen(function* () {
-            if (!strategy) {
+            if (Option.isNone(strategy)) {
               return yield* Effect.fail(
                 new PersistenceError({
                   message:
@@ -162,7 +175,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
               );
             }
 
-            yield* strategy.cleanup(key);
+            yield* strategy.value.cleanup(key);
           }),
 
         /**
@@ -172,7 +185,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         listSessions: () =>
           Effect.gen(function* () {
-            if (!backend) {
+            if (Option.isNone(backend)) {
               return yield* Effect.fail(
                 new PersistenceError({
                   message:
@@ -182,16 +195,17 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
               );
             }
 
-            if (!backend.listSessions) {
+            const backendValue = backend.value;
+            if (!backendValue.listSessions) {
               return yield* Effect.fail(
                 new PersistenceError({
-                  message: `Backend ${backend.name} does not support listing sessions`,
+                  message: `Backend ${backendValue.name} does not support listing sessions`,
                   operation: 'listSessions',
                 })
               );
             }
 
-            return yield* backend.listSessions();
+            return yield* backendValue.listSessions();
           }),
 
         /**
@@ -201,7 +215,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
          */
         getInfo: () =>
           Effect.gen(function* () {
-            if (!strategy || !backend) {
+            if (Option.isNone(strategy) || Option.isNone(backend)) {
               return yield* Effect.fail(
                 new PersistenceError({
                   message:
@@ -211,11 +225,13 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
               );
             }
 
+            const strategyValue = strategy.value;
+            const backendValue = backend.value;
             return {
-              strategy: strategy.getInfo(),
+              strategy: strategyValue.getInfo(),
               backend: {
-                name: backend.name,
-                capabilities: backend.capabilities,
+                name: backendValue.name,
+                capabilities: backendValue.capabilities,
               },
             };
           }),
@@ -231,8 +247,8 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         reconfigure: (config: ResumabilityConfig) =>
           Effect.gen(function* () {
             // Clean up current backend if exists
-            if (backend) {
-              yield* backend.cleanup();
+            if (Option.isSome(backend)) {
+              yield* backend.value.cleanup();
             }
 
             // Apply new configuration
@@ -282,10 +298,10 @@ const createStrategy = (
       case 'hybrid':
         return new HybridPersistence(
           backend,
-          hybridConfig || DEFAULT_HYBRID_CONFIG
+          hybridConfig ?? DEFAULT_HYBRID_CONFIG
         );
 
-      case 'auto':
+      case 'auto': {
         // Automatically choose best strategy based on backend capabilities
         const capabilities = backend.capabilities;
 
@@ -293,7 +309,7 @@ const createStrategy = (
           // Backend supports both - use hybrid for best performance
           return new HybridPersistence(
             backend,
-            hybridConfig || DEFAULT_HYBRID_CONFIG
+            hybridConfig ?? DEFAULT_HYBRID_CONFIG
           );
         } else if (capabilities.supportsDelta) {
           // Backend supports deltas - use delta strategy
@@ -302,6 +318,7 @@ const createStrategy = (
           // Fall back to full state
           return new FullStatePersistence(backend);
         }
+      }
 
       default:
         return yield* Effect.fail(
@@ -347,10 +364,7 @@ export const ResumabilityConfigs = {
     strategy: 'full-state' | 'delta' | 'hybrid' | 'auto' = 'auto'
   ): ResumabilityConfig => ({
     strategy,
-    backend:
-      new (require('./backends/FileStorageBackend.js').FileStorageBackend)(
-        baseDir
-      ),
+    backend: new FileStorageBackend(baseDir),
   }),
 
   /**
@@ -362,16 +376,12 @@ export const ResumabilityConfigs = {
    * @returns ResumabilityConfig
    */
   redis: (
-    redisClient: import('./backends/RedisStorageBackend.js').RedisClientInterface,
+    redisClient: RedisClientInterface,
     strategy: 'full-state' | 'delta' | 'hybrid' | 'auto' = 'hybrid',
     keyPrefix = 'spider'
   ): ResumabilityConfig => ({
     strategy,
-    backend:
-      new (require('./backends/RedisStorageBackend.js').RedisStorageBackend)(
-        redisClient,
-        keyPrefix
-      ),
+    backend: new RedisStorageBackend(redisClient, keyPrefix),
   }),
 
   /**
@@ -383,15 +393,11 @@ export const ResumabilityConfigs = {
    * @returns ResumabilityConfig
    */
   postgres: (
-    dbClient: import('./backends/PostgresStorageBackend.js').DatabaseClientInterface,
+    dbClient: DatabaseClientInterface,
     strategy: 'full-state' | 'delta' | 'hybrid' | 'auto' = 'hybrid',
-    config?: import('./backends/PostgresStorageBackend.js').PostgresStorageConfig
+    config?: PostgresStorageConfig
   ): ResumabilityConfig => ({
     strategy,
-    backend:
-      new (require('./backends/PostgresStorageBackend.js').PostgresStorageBackend)(
-        dbClient,
-        config
-      ),
+    backend: new PostgresStorageBackend(dbClient, config),
   }),
 };

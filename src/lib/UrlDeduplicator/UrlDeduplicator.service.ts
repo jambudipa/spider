@@ -18,7 +18,7 @@ export interface IUrlDeduplicator {
    * @param url - The URL to add
    * @returns Effect containing boolean - true if URL was added (first time seen), false if already exists
    */
-  tryAdd(url: string): Effect.Effect<boolean>;
+  tryAdd(_url: string): Effect.Effect<boolean>;
 
   /**
    * Checks if a URL has already been seen.
@@ -26,7 +26,7 @@ export interface IUrlDeduplicator {
    * @param url - The URL to check
    * @returns Effect containing boolean - true if URL exists, false otherwise
    */
-  contains(url: string): Effect.Effect<boolean>;
+  contains(_url: string): Effect.Effect<boolean>;
 
   /**
    * Returns the current number of unique URLs in the set.
@@ -63,63 +63,64 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
       /**
        * Normalizes a URL for consistent deduplication.
        */
-      const normalizeUrl = (url: string): string => {
+      const normalizeUrl = (url: string): Effect.Effect<string> => {
         if (!shouldNormalize) {
-          return url;
+          return Effect.succeed(url);
         }
 
-        try {
-          const parsed = new URL(url);
+        return Effect.orElse(
+          Effect.sync(() => {
+            const parsed = new URL(url);
 
-          // Normalize pathname: remove multiple consecutive slashes and trailing slashes
-          let normalizedPath = parsed.pathname
-            .replace(/\/+/g, '/') // Replace multiple slashes with single slash
-            .replace(/\/$/, ''); // Remove trailing slash
+            // Normalize pathname: remove multiple consecutive slashes and trailing slashes
+            let normalizedPath = parsed.pathname
+              .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+              .replace(/\/$/, ''); // Remove trailing slash
 
-          // Keep root path as '/'
-          if (normalizedPath === '') {
-            normalizedPath = '/';
-          }
+            // Keep root path as '/'
+            if (normalizedPath === '') {
+              normalizedPath = '/';
+            }
 
-          parsed.pathname = normalizedPath;
+            parsed.pathname = normalizedPath;
 
-          // Remove fragment
-          parsed.hash = '';
+            // Remove fragment
+            parsed.hash = '';
 
-          // Remove default ports
-          if (
-            (parsed.protocol === 'http:' && parsed.port === '80') ||
-            (parsed.protocol === 'https:' && parsed.port === '443')
-          ) {
-            parsed.port = '';
-          }
+            // Remove default ports
+            if (
+              (parsed.protocol === 'http:' && parsed.port === '80') ||
+              (parsed.protocol === 'https:' && parsed.port === '443')
+            ) {
+              parsed.port = '';
+            }
 
-          // Sort query parameters alphabetically
-          if (parsed.search) {
-            const params = new URLSearchParams(parsed.search);
-            const sortedParams = new URLSearchParams();
-            Array.from(params.keys())
-              .sort()
-              .forEach((key) => {
-                params.getAll(key).forEach((value) => {
-                  sortedParams.append(key, value);
+            // Sort query parameters alphabetically
+            if (parsed.search) {
+              const params = new URLSearchParams(parsed.search);
+              const sortedParams = new URLSearchParams();
+              Array.from(params.keys())
+                .sort()
+                .forEach((key) => {
+                  params.getAll(key).forEach((value) => {
+                    sortedParams.append(key, value);
+                  });
                 });
-              });
-            parsed.search = sortedParams.toString();
-          }
+              parsed.search = sortedParams.toString();
+            }
 
-          return parsed.toString();
-        } catch {
+            return parsed.toString();
+          }),
           // If URL parsing fails, return original
-          return url;
-        }
+          () => Effect.succeed(url)
+        );
       };
 
       return {
         tryAdd: (url: string) =>
           mutex.withPermits(1)(
-            Effect.sync(() => {
-              const normalizedUrl = normalizeUrl(url);
+            Effect.gen(function* () {
+              const normalizedUrl = yield* normalizeUrl(url);
 
               if (MutableHashSet.has(seenUrls, normalizedUrl)) {
                 return false; // Already exists
@@ -132,8 +133,8 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
 
         contains: (url: string) =>
           mutex.withPermits(1)(
-            Effect.sync(() => {
-              const normalizedUrl = normalizeUrl(url);
+            Effect.gen(function* () {
+              const normalizedUrl = yield* normalizeUrl(url);
               return MutableHashSet.has(seenUrls, normalizedUrl);
             })
           ),

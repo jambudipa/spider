@@ -79,11 +79,11 @@ export interface APIScenarioConfig extends BaseScenarioConfig {
   readonly apiPath: string;
   readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   readonly headers?: Record<string, string>;
-  readonly body?: any;
+  readonly body?: unknown;
   readonly responseValidation?: {
     readonly statusCode?: number;
     readonly contentType?: string;
-    readonly schema?: any;
+    readonly schema?: Record<string, unknown>;
   };
 }
 
@@ -131,7 +131,16 @@ export type ScenarioConfig =
 /**
  * Scenario registry for web-scraping.dev scenarios
  */
-export const ScenarioRegistry = {
+export const ScenarioRegistry: {
+  readonly staticPaging: StaticContentConfig;
+  readonly endlessScroll: DynamicContentConfig;
+  readonly apiToken: AuthenticationConfig;
+  readonly cookieAuth: AuthenticationConfig;
+  readonly productData: StaticContentConfig;
+  readonly graphqlApi: APIScenarioConfig;
+  readonly pdfDownload: FileDownloadConfig;
+  readonly blockedPage: ErrorScenarioConfig;
+} = {
   staticPaging: {
     name: 'static-paging',
     description: 'Test static HTML pagination on products page',
@@ -147,7 +156,7 @@ export const ScenarioRegistry = {
       { selector: '.product', minCount: 1 },
       { selector: '.pagination', minCount: 0, maxCount: 1 },
     ],
-  } as StaticContentConfig,
+  },
 
   endlessScroll: {
     name: 'endless-scroll',
@@ -168,7 +177,7 @@ export const ScenarioRegistry = {
         timeout: Duration.seconds(10),
       },
     ],
-  } as DynamicContentConfig,
+  },
 
   apiToken: {
     name: 'api-token',
@@ -180,7 +189,7 @@ export const ScenarioRegistry = {
     tokenExtraction: {
       header: 'X-Secret-Token',
     },
-  } as AuthenticationConfig,
+  },
 
   cookieAuth: {
     name: 'cookie-auth',
@@ -193,7 +202,7 @@ export const ScenarioRegistry = {
       username: 'test',
       password: 'test',
     },
-  } as AuthenticationConfig,
+  },
 
   productData: {
     name: 'product-data',
@@ -208,7 +217,7 @@ export const ScenarioRegistry = {
       { selector: '.product-detail', minCount: 1, maxCount: 1 },
       { selector: 'script[type="application/json"]', minCount: 0 },
     ],
-  } as StaticContentConfig,
+  },
 
   graphqlApi: {
     name: 'graphql-api',
@@ -224,7 +233,7 @@ export const ScenarioRegistry = {
       statusCode: 200,
       contentType: 'application/json',
     },
-  } as APIScenarioConfig,
+  },
 
   pdfDownload: {
     name: 'pdf-download',
@@ -238,7 +247,7 @@ export const ScenarioRegistry = {
       minSize: 1024, // 1KB minimum
       mimeType: 'application/pdf',
     },
-  } as FileDownloadConfig,
+  },
 
   blockedPage: {
     name: 'blocked-page',
@@ -252,5 +261,5 @@ export const ScenarioRegistry = {
       backoffStrategy: 'exponential',
       fallbackAction: 'skip',
     },
-  } as ErrorScenarioConfig,
+  },
 };

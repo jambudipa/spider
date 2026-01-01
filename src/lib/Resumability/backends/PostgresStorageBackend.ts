@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Chunk, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SpiderState,
   SpiderStateKey,
@@ -9,6 +9,12 @@ import {
   StorageBackend,
   StorageCapabilities,
 } from '../types.js';
+
+/**
+ * JSON schemas for serialisation/deserialisation
+ */
+const SpiderStateJsonSchema = Schema.parseJson(SpiderState);
+const StateDeltaJsonSchema = Schema.parseJson(StateDelta);
 
 /**
  * Database client interface for dependency injection.
@@ -22,8 +28,8 @@ import {
 export interface DatabaseClientInterface {
   query<T = unknown>(
     sql: string,
-    params?: unknown[]
-  ): Promise<{ rows: T[]; rowCount: number }>;
+    params?: readonly unknown[]
+  ): Promise<{ rows: readonly T[]; rowCount: number }>;
   transaction?<T>(
     callback: (client: DatabaseClientInterface) => Promise<T>
   ): Promise<T>;
@@ -95,7 +101,7 @@ export class PostgresStorageBackend implements StorageBackend {
   private readonly autoCreateTables: boolean;
 
   constructor(
-    private readonly db: DatabaseClientInterface,
+    readonly db: DatabaseClientInterface,
     config?: PostgresStorageConfig
   ) {
     this.tablePrefix = config?.tablePrefix || 'spider';
@@ -112,8 +118,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
-  cleanup = (): Effect.Effect<void, PersistenceError> =>
-    Effect.succeed(undefined); // Database client cleanup is handled externally
+  cleanup = (): Effect.Effect<void, PersistenceError> => Effect.void; // Database client cleanup is handled externally
 
   // Full state operations
   saveState = (
@@ -122,15 +127,18 @@ export class PostgresStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(SpiderState)(state),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode state: ${error}`,
-            cause: error,
-            operation: 'saveState',
-          }),
-      });
+      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+        state
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode state: ${error}`,
+              cause: error,
+              operation: 'saveState',
+            })
+        )
+      );
 
       const sql = `
         INSERT INTO ${self.getTableName('sessions')} (id, name, created_at, state_data, updated_at)
@@ -147,7 +155,7 @@ export class PostgresStorageBackend implements StorageBackend {
             key.id,
             key.name,
             key.timestamp.toISOString(),
-            JSON.stringify(encoded),
+            jsonContent,
           ]),
         catch: (error) =>
           new PersistenceError({
@@ -161,7 +169,7 @@ export class PostgresStorageBackend implements StorageBackend {
 
   loadState = (
     key: SpiderStateKey
-  ): Effect.Effect<SpiderState | null, PersistenceError> => {
+  ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       const sql = `
@@ -181,7 +189,7 @@ export class PostgresStorageBackend implements StorageBackend {
       });
 
       if (result.rows.length === 0) {
-        return null;
+        return Option.none<SpiderState>();
       }
 
       const decoded = yield* Effect.try({
@@ -195,7 +203,7 @@ export class PostgresStorageBackend implements StorageBackend {
           }),
       });
 
-      return decoded;
+      return Option.some(decoded);
     });
   };
 
@@ -208,21 +216,32 @@ export class PostgresStorageBackend implements StorageBackend {
       if (self.db.transaction) {
         yield* Effect.tryPromise({
           try: () =>
-            self.db.transaction!(async (tx) => {
+            self.db.transaction!((tx) =>
               // Delete in correct order due to foreign key constraints
-              await tx.query(
-                `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
-                [key.id]
-              );
-              await tx.query(
-                `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
-                [key.id]
-              );
-              await tx.query(
-                `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
-                [key.id]
-              );
-            }),
+              // Use Effect.runPromise to execute Effect chain within the Promise callback
+              Effect.runPromise(
+                Effect.gen(function* () {
+                  yield* Effect.promise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
+                      [key.id]
+                    )
+                  );
+                  yield* Effect.promise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
+                      [key.id]
+                    )
+                  );
+                  yield* Effect.promise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
+                      [key.id]
+                    )
+                  );
+                })
+              )
+            ),
           catch: (error) =>
             new PersistenceError({
               message: `Failed to delete state from PostgreSQL: ${error}`,
@@ -279,15 +298,16 @@ export class PostgresStorageBackend implements StorageBackend {
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(StateDelta)(delta),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode delta: ${error}`,
-            cause: error,
-            operation: 'saveDelta',
-          }),
-      });
+      const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(delta).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode delta: ${error}`,
+              cause: error,
+              operation: 'saveDelta',
+            })
+        )
+      );
 
       const sql = `
         INSERT INTO ${self.getTableName('deltas')} (session_id, sequence_number, operation_type, operation_data)
@@ -301,7 +321,7 @@ export class PostgresStorageBackend implements StorageBackend {
             delta.stateKey,
             delta.sequence,
             delta.operation.type,
-            JSON.stringify(encoded),
+            jsonContent,
           ]),
         catch: (error) =>
           new PersistenceError({
@@ -314,48 +334,62 @@ export class PostgresStorageBackend implements StorageBackend {
   };
 
   saveDeltas = (
-    deltas: StateDelta[]
+    deltas: readonly StateDelta[]
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
       if (deltas.length === 0) return;
 
       // Use batch insert with VALUES clause
-      const values: string[] = [];
-      const params: unknown[] = [];
-      let paramIndex = 1;
+      // Build up values and params using immutable Chunk operations
+      const { values, params } = yield* Effect.reduce(
+        deltas,
+        {
+          values: Chunk.empty<string>(),
+          params: Chunk.empty<unknown>(),
+          paramIndex: 1,
+        },
+        (acc, delta) =>
+          Effect.gen(function* () {
+            const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(
+              delta
+            ).pipe(
+              Effect.mapError(
+                (error) =>
+                  new PersistenceError({
+                    message: `Failed to encode delta: ${error}`,
+                    cause: error,
+                    operation: 'saveDeltas',
+                  })
+              )
+            );
 
-      for (const delta of deltas) {
-        const encoded = yield* Effect.try({
-          try: () => Schema.encodeSync(StateDelta)(delta),
-          catch: (error) =>
-            new PersistenceError({
-              message: `Failed to encode delta: ${error}`,
-              cause: error,
-              operation: 'saveDeltas',
-            }),
-        });
+            const valueTemplate = `($${acc.paramIndex}, $${acc.paramIndex + 1}, $${acc.paramIndex + 2}, $${acc.paramIndex + 3})`;
 
-        values.push(
-          `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`
-        );
-        params.push(
-          delta.stateKey,
-          delta.sequence,
-          delta.operation.type,
-          JSON.stringify(encoded)
-        );
-        paramIndex += 4;
-      }
+            return {
+              values: Chunk.append(acc.values, valueTemplate),
+              params: Chunk.appendAll(
+                acc.params,
+                Chunk.make(
+                  delta.stateKey,
+                  delta.sequence,
+                  delta.operation.type,
+                  jsonContent
+                )
+              ),
+              paramIndex: acc.paramIndex + 4,
+            };
+          })
+      );
 
       const sql = `
         INSERT INTO ${self.getTableName('deltas')} (session_id, sequence_number, operation_type, operation_data)
-        VALUES ${values.join(', ')}
+        VALUES ${Chunk.toReadonlyArray(values).join(', ')}
         ON CONFLICT (session_id, sequence_number) DO NOTHING
       `;
 
       yield* Effect.tryPromise({
-        try: () => self.db.query(sql, params),
+        try: () => self.db.query(sql, Chunk.toReadonlyArray(params)),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to save deltas to PostgreSQL: ${error}`,
@@ -393,21 +427,26 @@ export class PostgresStorageBackend implements StorageBackend {
           }),
       });
 
-      const deltas: StateDelta[] = [];
-      for (const row of result.rows) {
-        const decoded = yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(StateDelta)(row.operation_data),
-          catch: (error) =>
-            new PersistenceError({
-              message: `Failed to decode delta data: ${error}`,
-              cause: error,
-              operation: 'loadDeltas',
-            }),
-        });
-        deltas.push(decoded);
-      }
+      const deltasChunk = yield* Effect.reduce(
+        result.rows,
+        Chunk.empty<StateDelta>(),
+        (acc, row) =>
+          Effect.gen(function* () {
+            const decoded = yield* Effect.try({
+              try: () =>
+                Schema.decodeUnknownSync(StateDelta)(row.operation_data),
+              catch: (error) =>
+                new PersistenceError({
+                  message: `Failed to decode delta data: ${error}`,
+                  cause: error,
+                  operation: 'loadDeltas',
+                }),
+            });
+            return Chunk.append(acc, decoded);
+          })
+      );
 
-      return deltas;
+      return [...Chunk.toReadonlyArray(deltasChunk)];
     });
   };
 
@@ -419,15 +458,18 @@ export class PostgresStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const encoded = yield* Effect.try({
-        try: () => Schema.encodeSync(SpiderState)(state),
-        catch: (error) =>
-          new PersistenceError({
-            message: `Failed to encode snapshot state: ${error}`,
-            cause: error,
-            operation: 'saveSnapshot',
-          }),
-      });
+      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+        state
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PersistenceError({
+              message: `Failed to encode snapshot state: ${error}`,
+              cause: error,
+              operation: 'saveSnapshot',
+            })
+        )
+      );
 
       const sql = `
         INSERT INTO ${self.getTableName('snapshots')} (session_id, sequence_number, state_data)
@@ -435,8 +477,7 @@ export class PostgresStorageBackend implements StorageBackend {
       `;
 
       yield* Effect.tryPromise({
-        try: () =>
-          self.db.query(sql, [key.id, sequence, JSON.stringify(encoded)]),
+        try: () => self.db.query(sql, [key.id, sequence, jsonContent]),
         catch: (error) =>
           new PersistenceError({
             message: `Failed to save snapshot to PostgreSQL: ${error}`,
@@ -450,7 +491,7 @@ export class PostgresStorageBackend implements StorageBackend {
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
-    { state: SpiderState; sequence: number } | null,
+    Option.Option<{ state: SpiderState; sequence: number }>,
     PersistenceError
   > => {
     const self = this;
@@ -477,7 +518,7 @@ export class PostgresStorageBackend implements StorageBackend {
       });
 
       if (result.rows.length === 0) {
-        return null;
+        return Option.none<{ state: SpiderState; sequence: number }>();
       }
 
       const row = result.rows[0];
@@ -491,10 +532,10 @@ export class PostgresStorageBackend implements StorageBackend {
           }),
       });
 
-      return {
+      return Option.some({
         state,
         sequence: row.sequence_number,
-      };
+      });
     });
   };
 
@@ -542,16 +583,17 @@ export class PostgresStorageBackend implements StorageBackend {
           }),
       });
 
-      const sessions: SpiderStateKey[] = result.rows.map(
+      const sessionsChunk = Chunk.map(
+        Chunk.fromIterable(result.rows),
         (row) =>
           new SpiderStateKey({
             id: row.id,
             name: row.name,
-            timestamp: new Date(row.created_at),
+            timestamp: DateTime.toDate(DateTime.unsafeMake(row.created_at)),
           })
       );
 
-      return sessions;
+      return [...Chunk.toReadonlyArray(sessionsChunk)];
     });
   };
 

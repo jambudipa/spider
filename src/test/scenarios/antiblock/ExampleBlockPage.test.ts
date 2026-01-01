@@ -52,7 +52,15 @@ class ExampleBlockPageTest extends AntiBlockScenarioBase {
     });
   }
   
-  async extractBlockPageDetails(): Promise<any> {
+  async extractBlockPageDetails(): Promise<{
+    title: string;
+    heading: string | undefined;
+    message: string | undefined;
+    hasForm: boolean;
+    hasCaptcha: boolean;
+    hasContactInfo: boolean;
+    statusCode: string;
+  }> {
     return await this.getPage().evaluate(() => {
       return {
         title: document.title,

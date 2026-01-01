@@ -227,6 +227,47 @@ export class AdapterNotInitialisedError extends Data.TaggedError('AdapterNotInit
 }
 
 /**
+ * Browser operation errors
+ */
+export class BrowserError extends Data.TaggedError('BrowserError')<{
+  readonly operation: 'launch' | 'createContext' | 'createPage' | 'closeContext';
+  readonly cause: unknown;
+  readonly message: string;
+}> {
+  static launch(cause: unknown): BrowserError {
+    return new BrowserError({
+      operation: 'launch',
+      cause,
+      message: `Failed to launch browser: ${cause}`,
+    });
+  }
+
+  static createContext(cause: unknown): BrowserError {
+    return new BrowserError({
+      operation: 'createContext',
+      cause,
+      message: `Failed to create browser context: ${cause}`,
+    });
+  }
+
+  static createPage(cause: unknown): BrowserError {
+    return new BrowserError({
+      operation: 'createPage',
+      cause,
+      message: `Failed to create page: ${cause}`,
+    });
+  }
+
+  static closeContext(cause: unknown): BrowserError {
+    return new BrowserError({
+      operation: 'closeContext',
+      cause,
+      message: `Failed to close context: ${cause}`,
+    });
+  }
+}
+
+/**
  * Browser cleanup errors
  */
 export class BrowserCleanupError extends Data.TaggedError('BrowserCleanupError')<{
@@ -266,4 +307,5 @@ export type SpiderError =
   | ContentTypeError
   | RequestAbortError
   | AdapterNotInitialisedError
+  | BrowserError
   | BrowserCleanupError;

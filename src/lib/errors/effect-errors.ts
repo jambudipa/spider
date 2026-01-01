@@ -3,7 +3,7 @@
  * Comprehensive error hierarchy using Data.TaggedError for type-safe error handling
  */
 
-import { Data } from 'effect';
+import { Data, Option } from 'effect';
 
 // ============================================================================
 // Base Error Types
@@ -18,9 +18,11 @@ export class SpiderError extends Data.TaggedError('SpiderError')<{
   readonly cause?: unknown;
 }> {
   get message(): string {
-    return `Spider operation '${this.operation}' failed${
-      this.details ? `: ${JSON.stringify(this.details)}` : ''
-    }`;
+    const detailsStr = Option.fromNullable(this.details).pipe(
+      Option.map((d) => `: ${String(d)}`),
+      Option.getOrElse(() => '')
+    );
+    return `Spider operation '${this.operation}' failed${detailsStr}`;
   }
 }
 
@@ -246,9 +248,11 @@ export class QueueError extends Data.TaggedError('QueueError')<{
   readonly cause?: unknown;
 }> {
   get message(): string {
-    return `Queue ${this.operation} operation failed${
-      this.queueSize !== undefined ? ` (queue size: ${this.queueSize})` : ''
-    }`;
+    const sizeStr = Option.fromNullable(this.queueSize).pipe(
+      Option.map((size) => ` (queue size: ${size})`),
+      Option.getOrElse(() => '')
+    );
+    return `Queue ${this.operation} operation failed${sizeStr}`;
   }
 }
 

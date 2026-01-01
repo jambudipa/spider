@@ -1,6 +1,9 @@
 import {
+  Chunk,
+  DateTime,
   Effect,
   Fiber,
+  HashMap,
   MutableRef,
   Option,
   PubSub,
@@ -11,6 +14,7 @@ import {
   Stream,
 } from 'effect';
 import * as cheerio from 'cheerio';
+import type { AnyNode, Element as DomElement } from 'domhandler';
 import { SpiderConfig } from '../Config/SpiderConfig.service.js';
 import { UrlDeduplicatorService } from '../UrlDeduplicator/UrlDeduplicator.service.js';
 import { ScraperService } from '../Scraper/Scraper.service.js';
@@ -21,12 +25,63 @@ import {
   LinkExtractorService,
 } from '../LinkExtractor/index.js';
 import { SpiderSchedulerService } from '../Scheduler/SpiderScheduler.service.js';
-import { StateError, ParseError } from '../errors/effect-errors.js';
+import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js';
 import {
   SpiderLogger,
   SpiderLoggerLive,
 } from '../Logging/SpiderLogger.service.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
+
+/**
+ * Configuration for extracting a nested field from an element.
+ *
+ * @group Data Types
+ * @public
+ */
+interface NestedFieldConfig {
+  /** CSS selector to find the nested element */
+  readonly selector: string;
+  /** HTML attribute to extract (if not specified, extracts text content) */
+  readonly attribute?: string;
+}
+
+/**
+ * Configuration for extracting a single field from the page.
+ *
+ * @group Data Types
+ * @public
+ */
+interface FieldExtractionConfig {
+  /** CSS selector to find the element */
+  readonly selector: string;
+  /** Extract text content (default: true) */
+  readonly text?: boolean;
+  /** HTML attribute to extract instead of text */
+  readonly attribute?: string;
+  /** Extract multiple matching elements */
+  readonly multiple?: boolean;
+  /** Check if element exists (returns boolean) */
+  readonly exists?: boolean;
+  /** Nested fields to extract from each matched element */
+  readonly fields?: Record<string, NestedFieldConfig>;
+}
+
+/**
+ * Data extraction configuration - either a simple CSS selector string
+ * or a detailed field extraction configuration.
+ *
+ * @group Data Types
+ * @public
+ */
+type DataExtractionFieldConfig = string | FieldExtractionConfig;
+
+/**
+ * Configuration for extracting structured data from pages.
+ *
+ * @group Data Types
+ * @public
+ */
+type DataExtractionConfig = Record<string, DataExtractionFieldConfig>;
 
 /**
  * Represents a single crawling task with URL and depth information.
@@ -44,7 +99,7 @@ interface CrawlTask {
   /** Optional metadata to be passed through to the result */
   metadata?: Record<string, unknown>;
   /** Optional data extraction configuration */
-  extractData?: Record<string, any>;
+  extractData?: DataExtractionConfig;
 }
 
 /**
@@ -107,7 +162,7 @@ export interface SpiderLinkExtractionOptions {
   /** Whether to replace basic extraction with enhanced extraction (default: true) */
   readonly replaceBasicExtraction?: boolean;
   /** Data extraction configuration for structured data extraction */
-  readonly extractData?: Record<string, any>;
+  readonly extractData?: DataExtractionConfig;
 }
 
 export class SpiderService extends Effect.Service<SpiderService>()(
@@ -123,12 +178,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
       const linkExtractor = yield* LinkExtractorService;
 
       // Try to get SpiderSchedulerService for resumability support
-      const maybeScheduler = yield* Effect.serviceOption(
+      // The scheduler is obtained optionally and kept for future resumability features
+      const _maybeScheduler = yield* Effect.serviceOption(
         SpiderSchedulerService
       );
-      const scheduler = Option.isSome(maybeScheduler)
-        ? maybeScheduler.value
-        : null;
 
       const self = {
         /**
@@ -190,7 +243,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
             if (!config) {
               return yield* Effect.fail(
-                new Error('SpiderConfig is required for crawling operations')
+                new ConfigError({
+                  field: 'SpiderConfig',
+                  reason: 'SpiderConfig is required for crawling operations'
+                })
               );
             }
 
@@ -252,8 +308,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 configOptions.allowedDomains ||
                 configOptions.blockedDomains
               ) {
-                console.warn(
-                  'Warning: Multiple starting URLs detected with allowedDomains/blockedDomains configured. ' +
+                yield* Effect.logWarning(
+                  'Multiple starting URLs detected with allowedDomains/blockedDomains configured. ' +
                     'Domain restrictions will be ignored - each URL will be restricted to its own domain instead.'
                 );
               }
@@ -311,14 +367,11 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           Effect.gen(function* () {
             const config = yield* SpiderConfig;
 
-            // Extract domain from URL
-            let domain: string;
-            try {
-              const url = new URL(urlString);
-              domain = url.hostname;
-            } catch {
-              domain = 'invalid-url';
-            }
+            // Extract domain from URL using Effect error handling
+            const domain = yield* Effect.try({
+              try: () => new URL(urlString).hostname,
+              catch: () => 'invalid-url'
+            });
 
             // Log domain start
             yield* logger.logDomainStart(domain, urlString);
@@ -338,35 +391,47 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Create semaphore for atomic queue operations (mutex with 1 permit)
             const queueMutex = yield* Effect.makeSemaphore(1);
 
-            // Worker health monitoring system
-            const workerHealthChecks = MutableRef.make<Map<string, Date>>(
-              new Map()
+            // Worker health monitoring system - using HashMap and DateTime for Effect-idiomatic code
+            const workerHealthChecks = MutableRef.make<HashMap.HashMap<string, DateTime.Utc>>(
+              HashMap.empty()
             );
 
             const reportWorkerHealth = (workerId: string) =>
-              Effect.sync(() => {
-                const healthMap = MutableRef.get(workerHealthChecks);
-                healthMap.set(workerId, new Date());
-                return healthMap;
+              Effect.gen(function* () {
+                const now = yield* DateTime.now;
+                const currentMap = MutableRef.get(workerHealthChecks);
+                const updatedMap = HashMap.set(currentMap, workerId, now);
+                MutableRef.set(workerHealthChecks, updatedMap);
+                return updatedMap;
               });
 
             const workerHealthMonitor = Effect.gen(function* () {
               const healthMap = MutableRef.get(workerHealthChecks);
-              const now = Date.now();
+              const now = yield* DateTime.now;
               const staleThreshold = 60000; // 60 seconds
 
+              // Iterate over HashMap entries and collect stale workers using Chunk
+              let staleWorkersChunk = Chunk.empty<string>();
               for (const [workerId, lastCheck] of healthMap) {
-                const elapsed = now - lastCheck.getTime();
+                const elapsed = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(lastCheck);
                 if (elapsed > staleThreshold) {
                   yield* logger.logEdgeCase(domain, 'worker_death_detected', {
                     workerId,
                     lastSeen: elapsed + 'ms ago',
                     message: `DEAD WORKER: ${workerId} - No heartbeat for ${Math.round(elapsed / 1000)}s`,
                   });
-
-                  // Remove dead worker from health tracking
-                  healthMap.delete(workerId);
+                  staleWorkersChunk = Chunk.append(staleWorkersChunk, workerId);
                 }
+              }
+
+              // Remove stale workers from health tracking (immutably)
+              const staleWorkers = Chunk.toArray(staleWorkersChunk);
+              if (staleWorkers.length > 0) {
+                let updatedMap = healthMap;
+                for (const workerId of staleWorkers) {
+                  updatedMap = HashMap.remove(updatedMap, workerId);
+                }
+                MutableRef.set(workerHealthChecks, updatedMap);
               }
             }).pipe(
               Effect.repeat(Schedule.fixed('15 seconds')) // Check every 15 seconds
@@ -529,12 +594,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       })
                     ),
                     Effect.tapError((error) =>
-                      logger.logEdgeCase(domain, 'deadlock_detected', {
-                        workerId,
-                        error: String(error),
-                        message:
-                          'DEADLOCK: Task acquisition timed out - worker stuck in atomic operation',
-                        timestamp: new Date().toISOString(),
+                      Effect.gen(function* () {
+                        const now = yield* DateTime.now;
+                        yield* logger.logEdgeCase(domain, 'deadlock_detected', {
+                          workerId,
+                          error: String(error),
+                          message:
+                            'DEADLOCK: Task acquisition timed out - worker stuck in atomic operation',
+                          timestamp: DateTime.formatIso(now),
+                        });
                       })
                     ),
                     Effect.catchAll((error) =>
@@ -586,9 +654,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     break;
                   } else if (result.type === 'empty_but_active') {
                     // Queue empty but other workers active, sleep and retry
-                    // Use exponential backoff to avoid busy-waiting
+                    // Use exponential backoff to avoid busy-waiting using Effect Random service
+                    const randomFactor = yield* Random.nextIntBetween(0, 3);
                     const backoffMs = Math.min(
-                      1000 * Math.pow(2, Math.floor(Math.random() * 3)),
+                      1000 * Math.pow(2, randomFactor),
                       5000
                     );
                     yield* Effect.sleep(`${backoffMs} millis`);
@@ -643,7 +712,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const shouldFollow = yield* config.shouldFollowUrl(
                     task.url,
                     task.fromUrl,
-                    restrictToStartingDomain ? urlString : undefined
+                    restrictToStartingDomain ? urlString : Option.none<string>().pipe(Option.getOrUndefined)
                   );
 
                   yield* logger.logEdgeCase(domain, 'after_shouldFollowUrl', {
@@ -734,13 +803,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const requestDelay = yield* config.getRequestDelay();
                   yield* Effect.sleep(`${requestDelay} millis`);
 
-                  const fetchStartTime = Date.now();
+                  const fetchStartDateTime = yield* DateTime.now;
+                  const fetchStartTime = DateTime.toEpochMillis(fetchStartDateTime);
                   yield* logger.logEdgeCase(domain, 'before_fetch', {
                     workerId,
                     url: task.url,
                     depth: task.depth,
                     message: 'About to fetch and parse page',
-                    timestamp: new Date().toISOString(),
+                    timestamp: DateTime.formatIso(fetchStartDateTime),
                     fetchStartMs: fetchStartTime,
                   });
 
@@ -756,7 +826,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       }),
                       Effect.catchAll((error) =>
                         Effect.gen(function* () {
-                          const fetchDuration = Date.now() - fetchStartTime;
+                          const fetchEndDateTime = yield* DateTime.now;
+                          const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
                           // Log timeouts and errors to help debug worker hangs
                           if (error?.name === 'TimeoutException') {
                             yield* logger.logEdgeCase(domain, 'fetch_timeout', {
@@ -771,61 +842,98 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                               workerId,
                               url: task.url,
                               error: String(error),
-                              errorName: error?.name || 'Unknown',
+                              errorName: error?.name ?? 'Unknown',
                               message: `Fetch operation failed after ${fetchDuration}ms`,
                               durationMs: fetchDuration,
                             });
                           }
-                          return null;
+                          return Option.none<PageData>();
                         })
                       )
                     );
 
-                  if (pageData) {
-                    const fetchDuration = Date.now() - fetchStartTime;
+                  // Handle the Option result from fetchAndParse
+                  const maybePageData = Option.isOption(pageData) ? pageData : Option.some(pageData);
+
+                  if (Option.isSome(maybePageData)) {
+                    const actualPageData = maybePageData.value;
+                    const fetchEndDateTime = yield* DateTime.now;
+                    const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
 
                     // Apply data extraction if configured
+                    // We need to create a mutable copy since PageData is from scraper
+                    let pageDataWithExtraction = actualPageData;
                     if (task.extractData) {
                       const extractedData = yield* Effect.sync(() => {
-                        const $ = cheerio.load(pageData.html);
-                        const result: Record<string, any> = {};
+                        const $ = cheerio.load(actualPageData.html);
+                        const result: Record<string, unknown> = {};
+                        const extractDataConfig = task.extractData;
+                        if (!extractDataConfig) return result;
+
+                        // Type guard function for FieldExtractionConfig
+                        const isFieldExtractionConfig = (
+                          fieldCfg: DataExtractionFieldConfig
+                        ): fieldCfg is FieldExtractionConfig =>
+                          Option.fromNullable(fieldCfg).pipe(
+                            Option.filter((cfg): cfg is FieldExtractionConfig =>
+                              typeof cfg === 'object' && 'selector' in cfg
+                            ),
+                            Option.isSome
+                          );
+
+                        // Type guard for NestedFieldConfig
+                        const isNestedFieldConfig = (
+                          nestedCfg: unknown
+                        ): nestedCfg is NestedFieldConfig =>
+                          Option.fromNullable(nestedCfg).pipe(
+                            Option.filter((cfg): cfg is NestedFieldConfig =>
+                              typeof cfg === 'object' && Object.prototype.hasOwnProperty.call(cfg, 'selector')
+                            ),
+                            Option.isSome
+                          );
+
+                        // Type guard to check if a cheerio node is a DOM Element
+                        const isDomElement = (node: AnyNode): node is DomElement =>
+                          node.type === 'tag' || node.type === 'script' || node.type === 'style';
 
                         for (const [fieldName, fieldConfig] of Object.entries(
-                          task.extractData!
+                          extractDataConfig
                         )) {
                           if (typeof fieldConfig === 'string') {
-                            result[fieldName] =
-                              $(fieldConfig).text().trim() || undefined;
-                          } else if (typeof fieldConfig === 'object') {
-                            const fc = fieldConfig as any;
+                            // Simple selector - extract text
+                            const text = $(fieldConfig).text().trim();
+                            // Store empty string as Option.none, non-empty as Option.some (unwrapped for result)
+                            result[fieldName] = Option.fromNullable(text.length > 0 ? text : Option.none<string>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
+                          } else if (isFieldExtractionConfig(fieldConfig)) {
+                            // FieldExtractionConfig object - no type assertion needed
                             const {
                               selector,
-                              text,
                               attribute,
                               multiple,
                               exists,
-                            } = fc;
+                              fields,
+                            } = fieldConfig;
 
                             if (exists) {
                               result[fieldName] = $(selector).length > 0;
                             } else if (multiple) {
                               const elements = $(selector);
-                              const values: any[] = [];
-                              elements.each((_: number, el: any) => {
+                              let valuesChunk = Chunk.empty<unknown>();
+                              elements.each((_index, el) => {
+                                if (!isDomElement(el)) return;
                                 const $el = $(el);
-                                if (fc.fields) {
+                                if (fields) {
                                   // Handle nested fields extraction
-                                  const nestedResult: Record<string, any> = {};
+                                  const nestedResult: Record<string, unknown> = {};
                                   for (const [
                                     nestedName,
                                     nestedConfig,
-                                  ] of Object.entries(fc.fields)) {
-                                    if (typeof nestedConfig === 'object') {
-                                      const nc = nestedConfig as any;
-                                      const $nested = $el.find(nc.selector);
-                                      if (nc.attribute) {
+                                  ] of Object.entries(fields)) {
+                                    if (isNestedFieldConfig(nestedConfig)) {
+                                      const $nested = $el.find(nestedConfig.selector);
+                                      if (nestedConfig.attribute) {
                                         nestedResult[nestedName] = $nested.attr(
-                                          nc.attribute
+                                          nestedConfig.attribute
                                         );
                                       } else {
                                         nestedResult[nestedName] = $nested
@@ -834,22 +942,24 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                                       }
                                     }
                                   }
-                                  values.push(nestedResult);
+                                  valuesChunk = Chunk.append(valuesChunk, nestedResult);
                                 } else if (attribute) {
-                                  values.push($el.attr(attribute));
+                                  valuesChunk = Chunk.append(valuesChunk, $el.attr(attribute));
                                 } else {
-                                  values.push($el.text().trim());
+                                  valuesChunk = Chunk.append(valuesChunk, $el.text().trim());
                                 }
                               });
-                              result[fieldName] =
-                                values.length > 0 ? values : undefined;
+                              const values = Chunk.toArray(valuesChunk);
+                              // Store empty array as Option.none, non-empty as Option.some (unwrapped for result)
+                              result[fieldName] = Option.fromNullable(values.length > 0 ? values : Option.none<unknown[]>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
                             } else {
                               const $el = $(selector);
                               if (attribute) {
                                 result[fieldName] = $el.attr(attribute);
                               } else {
-                                result[fieldName] =
-                                  $el.text().trim() || undefined;
+                                const text = $el.text().trim();
+                                // Store empty string as Option.none, non-empty as Option.some (unwrapped for result)
+                                result[fieldName] = Option.fromNullable(text.length > 0 ? text : Option.none<string>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
                               }
                             }
                           }
@@ -858,7 +968,11 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         return result;
                       });
 
-                      (pageData as any).extractedData = extractedData;
+                      // Create a new PageData object with extractedData
+                      pageDataWithExtraction = {
+                        ...actualPageData,
+                        extractedData,
+                      };
                     }
 
                     // Get current page count for logging
@@ -880,10 +994,11 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     );
 
                     // Publish result
+                    const crawlTimestamp = yield* DateTime.now;
                     yield* PubSub.publish(resultPubSub, {
-                      pageData,
+                      pageData: pageDataWithExtraction,
                       depth: task.depth,
-                      timestamp: new Date(),
+                      timestamp: DateTime.toDateUtc(crawlTimestamp),
                       metadata: task.metadata,
                     });
 
@@ -897,14 +1012,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       const extractionResult = linkExtractor
                         ? yield* (() => {
                             const extractorConfig =
-                              options?.linkExtractorConfig || {};
+                              options?.linkExtractorConfig ?? {};
                             return (
                               linkExtractor
                                 // NOTE: We use the service interface (.extractLinks) rather than the pure function
                                 // (extractRawLinks) to allow for dependency injection and alternative implementations.
                                 // The service wraps the pure function with Effect error handling and enables
                                 // testing with mock implementations or enhanced extractors with different capabilities.
-                                .extractLinks(pageData.html, extractorConfig)
+                                .extractLinks(pageDataWithExtraction.html, extractorConfig)
                                 .pipe(
                                   Effect.catchAll(() =>
                                     Effect.succeed({
@@ -922,17 +1037,22 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                             extractionBreakdown: {},
                           };
 
-                      // Resolve raw URLs to absolute URLs
-                      linksToProcess = extractionResult.links
-                        .map((url) => {
-                          try {
-                            return new URL(url, pageData.url).toString();
-                          } catch {
-                            // Skip invalid URLs
-                            return null;
-                          }
-                        })
-                        .filter((url): url is string => url !== null);
+                      // Resolve raw URLs to absolute URLs using Effect error handling
+                      const resolvedLinks = yield* Effect.forEach(
+                        extractionResult.links,
+                        (url) =>
+                          Effect.try({
+                            try: () => new URL(url, pageDataWithExtraction.url).toString(),
+                            catch: () => Option.none<string>()
+                          }).pipe(
+                            Effect.map(Option.some),
+                            Effect.catchAll(() => Effect.succeed(Option.none<string>()))
+                          ),
+                        { concurrency: 'unbounded' }
+                      );
+                      linksToProcess = resolvedLinks
+                        .filter(Option.isSome)
+                        .map((opt) => opt.value);
 
                       // Note: These counters could be used for debugging/metrics in the future
                       // Statistics tracking would go here
@@ -942,7 +1062,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         const linkShouldFollow = yield* config.shouldFollowUrl(
                           link,
                           task.url,
-                          restrictToStartingDomain ? urlString : undefined
+                          restrictToStartingDomain ? urlString : Option.none<string>().pipe(Option.getOrUndefined)
                         );
                         if (!linkShouldFollow.follow) {
                           // URL filtered by robots.txt
@@ -1072,11 +1192,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 // Add catchAll to handle any unhandled errors
                 Effect.catchAll((error) =>
                   Effect.gen(function* () {
+                    const errorTime = yield* DateTime.now;
                     yield* logger.logEdgeCase(domain, 'worker_crash', {
                       workerId,
                       error: String(error),
                       message: `Worker ${workerId} crashed with error: ${error}`,
-                      timestamp: new Date().toISOString(),
+                      timestamp: DateTime.formatIso(errorTime),
                     });
 
                     // Mark worker as exited due to error
@@ -1106,9 +1227,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               details: { queueSize: 1, initialUrl: urlString },
             });
 
-            // Start workers with unique IDs
+            // Start workers with unique IDs using Chunk for immutable collection
             const maxWorkers = yield* config.getMaxConcurrentWorkers();
-            const workerFibers: Fiber.RuntimeFiber<void, unknown>[] = [];
+            let workerFibersChunk = Chunk.empty<Fiber.RuntimeFiber<void, unknown>>();
             for (let i = 0; i < maxWorkers; i++) {
               const workerId = yield* generateWorkerId();
 
@@ -1117,7 +1238,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 workerId,
                 domain,
                 'created',
-                undefined,
+                Option.none<string>().pipe(Option.getOrUndefined),
                 {
                   workerIndex: i,
                   totalWorkers: maxWorkers,
@@ -1126,8 +1247,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
               // Workers start idle, they'll mark themselves active when processing tasks
               const fiber = yield* Effect.fork(worker(workerId));
-              workerFibers.push(fiber);
+              workerFibersChunk = Chunk.append(workerFibersChunk, fiber);
             }
+            const workerFibers = Chunk.toArray(workerFibersChunk);
 
             // Start worker health monitoring
             const healthMonitorFiber = yield* Effect.fork(workerHealthMonitor);
@@ -1306,9 +1428,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
          */
         resume: <A, E, R>(
           stateKey: import('../Scheduler/SpiderScheduler.service.js').SpiderStateKey,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          _sink: Sink.Sink<A, CrawlResult, E, R>,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          resumeSink: Sink.Sink<A, CrawlResult, E, R>,
           _persistence?: import('../Scheduler/SpiderScheduler.service.js').StatePersistence
         ) =>
           Effect.gen(function* () {
@@ -1316,46 +1436,54 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
             if (!config) {
               return yield* Effect.fail(
-                new Error(
-                  'SpiderConfig is required for resumability operations'
-                )
+                new ConfigError({
+                  field: 'SpiderConfig',
+                  reason: 'SpiderConfig is required for resumability operations'
+                })
               );
             }
 
             const resumabilityEnabled = yield* config.isResumabilityEnabled();
             if (!resumabilityEnabled) {
               return yield* Effect.fail(
-                new Error(
-                  'Resume functionality requires resumability to be enabled in SpiderConfig. ' +
+                new ConfigError({
+                  field: 'enableResumability',
+                  reason: 'Resume functionality requires resumability to be enabled in SpiderConfig. ' +
                     'Set enableResumability: true in your spider configuration.'
-                )
+                })
               );
             }
 
             // Implement resume logic using Effect patterns
-            const scheduler = yield* SpiderSchedulerService;
-            const logger = yield* SpiderLogger;
-            
-            yield* logger.logSpiderLifecycle('start' as any, {
+            const resumeScheduler = yield* SpiderSchedulerService;
+            const resumeLogger = yield* SpiderLogger;
+
+            const startTime = yield* DateTime.now;
+            yield* resumeLogger.logSpiderLifecycle('start', {
               sessionId: stateKey.id,
-              timestamp: new Date().toISOString()
+              timestamp: DateTime.formatIso(startTime)
             });
-            
-            // Load the saved state
-            const savedState = yield* Effect.tryPromise({
-              try: async () => {
-                // Note: In a full implementation, this would use ResumabilityService
-                // For now, we'll use the scheduler's state management
-                return scheduler.getState ? await Effect.runPromise(scheduler.getState()) : null;
-              },
-              catch: (error) => new StateError({
-                operation: 'load',
-                stateKey: stateKey.id,
-                cause: error
-              })
-            });
-            
-            if (!savedState) {
+
+            // Load the saved state using Effect patterns
+            const savedStateOption = yield* Effect.gen(function* () {
+              // Note: In a full implementation, this would use ResumabilityService
+              // For now, we'll use the scheduler's state management
+              if (resumeScheduler.getState) {
+                const state = yield* resumeScheduler.getState();
+                return Option.fromNullable(state);
+              }
+              return Option.none<unknown>();
+            }).pipe(
+              Effect.catchAll((error) =>
+                Effect.fail(new StateError({
+                  operation: 'load',
+                  stateKey: stateKey.id,
+                  cause: error
+                }))
+              )
+            );
+
+            if (Option.isNone(savedStateOption)) {
               return yield* Effect.fail(
                 new StateError({
                   operation: 'load',
@@ -1364,23 +1492,34 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 })
               );
             }
-            
-            // Restore the crawl state
+
+            const savedState = savedStateOption.value;
+
+            // Restore the crawl state using Chunk for immutable collection building
+            // Type guard for state record using Option pattern
+            const isStateRecord = (value: unknown): value is Record<string, unknown> =>
+              Option.fromNullable(value).pipe(
+                Option.filter((v): v is Record<string, unknown> => typeof v === 'object'),
+                Option.isSome
+              );
+
             const restoredUrls = yield* Effect.try({
               try: () => {
                 // Extract URLs from saved state
-                const urls: string[] = [];
-                if (savedState && typeof savedState === 'object') {
+                let urlsChunk = Chunk.empty<string>();
+                if (isStateRecord(savedState)) {
                   // Extract pending URLs from state
                   if ('pendingUrls' in savedState && Array.isArray(savedState.pendingUrls)) {
-                    urls.push(...savedState.pendingUrls);
+                    for (const url of savedState.pendingUrls) {
+                      if (typeof url === 'string') {
+                        urlsChunk = Chunk.append(urlsChunk, url);
+                      }
+                    }
                   }
                   // Extract visited URLs to avoid re-crawling
-                  if ('visitedUrls' in savedState && Array.isArray(savedState.visitedUrls)) {
-                    // These would be marked as already processed
-                  }
+                  // These would be marked as already processed
                 }
-                return urls;
+                return Chunk.toArray(urlsChunk);
               },
               catch: (error) => new ParseError({
                 input: 'saved state',
@@ -1388,35 +1527,37 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 cause: error
               })
             });
-            
-            yield* logger.logSpiderLifecycle('start' as any, {
+
+            const loadTime = yield* DateTime.now;
+            yield* resumeLogger.logSpiderLifecycle('start', {
               sessionId: stateKey.id,
               pendingUrls: restoredUrls.length,
-              timestamp: new Date().toISOString()
+              timestamp: DateTime.formatIso(loadTime)
             });
-            
+
             // Resume crawling with restored URLs
             if (restoredUrls.length > 0) {
               // Use the crawl method with restored URLs
               const crawlResult = yield* self.crawl(
                 restoredUrls,
-                _sink as any,
-                {} as any
+                resumeSink,
+                {}
               );
-              
-              yield* logger.logSpiderLifecycle('complete' as any, {
+
+              const completeTime = yield* DateTime.now;
+              yield* resumeLogger.logSpiderLifecycle('complete', {
                 sessionId: stateKey.id,
                 urlsProcessed: restoredUrls.length,
-                timestamp: new Date().toISOString()
+                timestamp: DateTime.formatIso(completeTime)
               });
-              
+
               return {
                 ...crawlResult,
                 resumed: true,
                 sessionId: stateKey.id
               };
             }
-            
+
             return {
               completed: true,
               resumed: true,
@@ -1434,7 +1575,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
          * This is currently a placeholder implementation. In a future version,
          * this will return the actual list of visited URLs from the current session.
          */
-        getVisitedUrls: () => Effect.sync(() => [] as string[]),
+        getVisitedUrls: (): Effect.Effect<string[]> => Effect.sync(() => []),
       };
 
       return self;

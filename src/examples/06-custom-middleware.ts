@@ -62,10 +62,8 @@ const TimingMiddleware: SpiderMiddleware = {
     yield* Effect.logInfo(`Request failed: ${request.task.url}`);
     yield* Effect.logInfo(`   Error: ${error.message}`);
 
-    // Return Option.none() and extract to null to propagate the error
-    // The interface uses null, but we use Option for type-safe handling
-    const result: Option.Option<SpiderResponse> = Option.none();
-    return Option.getOrNull(result);
+    // Return Option.none() to propagate the error
+    return Option.none<SpiderResponse>();
   })
 };
 

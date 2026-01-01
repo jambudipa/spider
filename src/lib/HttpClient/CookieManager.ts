@@ -3,9 +3,24 @@
  * Manages HTTP cookies for session persistence across requests
  */
 
-import { Context, Data, Effect, Layer, Option, Ref } from 'effect';
+import { Context, Data, Effect, Layer, Option, Ref, Schema } from 'effect';
 import { Cookie, CookieJar, SerializedCookieJar } from 'tough-cookie';
 import { JsonUtils, JsonParseError } from '../utils/JsonUtils.js';
+
+// ============================================================================
+// Schema for SerializedCookieJar (tough-cookie format)
+// ============================================================================
+
+/**
+ * Schema for tough-cookie's SerializedCookieJar format.
+ * We use a permissive schema since tough-cookie handles its own validation.
+ */
+const SerializedCookieJarSchema = Schema.Struct({
+  version: Schema.String,
+  storeType: Schema.String,
+  rejectPublicSuffixes: Schema.Boolean,
+  cookies: Schema.Array(Schema.Unknown),
+});
 
 // ============================================================================
 // Error Types
@@ -157,8 +172,8 @@ export const makeCookieManager = (): Effect.Effect<CookieManagerService> =>
 
       deserialize: (data: string) =>
         Effect.gen(function* () {
-          // Parse JSON data using JsonUtils
-          const parsed = yield* JsonUtils.parse<SerializedCookieJar>(data);
+          // Parse JSON data using JsonUtils with schema validation
+          const parsed = yield* JsonUtils.parse(data, SerializedCookieJarSchema);
 
           // Deserialize cookie jar with error handling
           const newJar = yield* Effect.tryPromise({

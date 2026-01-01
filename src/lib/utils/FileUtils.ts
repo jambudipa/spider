@@ -3,7 +3,7 @@
  * Effect-based file operations with proper error handling
  */
 
-import { Effect, Data, Option, Chunk, Random, DateTime, Config } from 'effect';
+import { Effect, Data, Option, Chunk, Random, DateTime, Config, Schema } from 'effect';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { JsonUtils } from './JsonUtils.js';
@@ -172,17 +172,18 @@ export const FileUtils = {
     }),
 
   /**
-   * Read JSON file
-   * 
+   * Read JSON file with schema validation
+   *
    * @example
    * ```ts
-   * const config = yield* FileUtils.readJson<Config>('/path/to/config.json');
+   * const ConfigSchema = Schema.Struct({ debug: Schema.Boolean });
+   * const config = yield* FileUtils.readJson('/path/to/config.json', ConfigSchema);
    * ```
    */
-  readJson: <T = unknown>(filePath: string) =>
+  readJson: <A, I = A, R = never>(filePath: string, schema: Schema.Schema<A, I, R>) =>
     Effect.gen(function* () {
       const content = yield* FileUtils.readText(filePath);
-      return yield* JsonUtils.parse<T>(content);
+      return yield* JsonUtils.parse(content, schema);
     }),
 
   /**
@@ -398,18 +399,20 @@ export const FileUtils = {
     ),
 
   /**
-   * Read JSON or return default value
-   * 
+   * Read JSON with schema validation or return default value
+   *
    * @example
    * ```ts
+   * const ConfigSchema = Schema.Struct({ debug: Schema.Boolean });
    * const config = yield* FileUtils.readJsonOrDefault(
    *   '/path/to/config.json',
+   *   ConfigSchema,
    *   { debug: false }
    * );
    * ```
    */
-  readJsonOrDefault: <T>(filePath: string, defaultValue: T) =>
-    FileUtils.readJson<T>(filePath).pipe(
+  readJsonOrDefault: <A, I = A, R = never>(filePath: string, schema: Schema.Schema<A, I, R>, defaultValue: A) =>
+    FileUtils.readJson(filePath, schema).pipe(
       Effect.catchAll(() => Effect.succeed(defaultValue))
     ),
 

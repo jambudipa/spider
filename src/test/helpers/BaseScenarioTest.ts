@@ -6,7 +6,7 @@
 import { expect } from 'vitest';
 import { Page, Cookie } from 'playwright';
 import { Data, Effect, HashMap, Option, Random } from 'effect';
-import { TestHelper, TestContext } from './TestHelper';
+import { TestHelper, TestContext, TestSetupError, TestCleanupError, ScreenshotError } from './TestHelper';
 import { DataExtractor } from './DataExtractor';
 import { AdapterNotInitialisedError } from '../../lib/errors';
 
@@ -88,10 +88,10 @@ export abstract class BaseScenarioTest {
   /**
    * Setup test context
    */
-  setup(): Effect.Effect<void, PageInitError> {
+  setup(): Effect.Effect<void, PageInitError | TestSetupError> {
     const self = this;
     return Effect.gen(function* () {
-      self.context = yield* Effect.promise(() => TestHelper.createTestContext(self.scenarioName));
+      self.context = yield* TestHelper.createTestContext(self.scenarioName);
       const pageOption = self.context.adapter.getPage();
       if (Option.isNone(pageOption)) {
         return yield* Effect.fail(PageInitError.create('Failed to get page from adapter'));
@@ -107,7 +107,7 @@ export abstract class BaseScenarioTest {
     const self = this;
     return Effect.gen(function* () {
       if (self.context) {
-        yield* Effect.promise(() => TestHelper.cleanupTestContext(self.context));
+        yield* TestHelper.cleanupTestContext(self.context);
       }
     });
   }
@@ -115,11 +115,11 @@ export abstract class BaseScenarioTest {
   /**
    * Handle test failure
    */
-  handleFailure<E extends Error>(testName: string, error: E): Effect.Effect<never, E> {
+  handleFailure<E extends Error>(testName: string, error: E): Effect.Effect<never, E | ScreenshotError> {
     const self = this;
     return Effect.gen(function* () {
       if (self.page) {
-        yield* Effect.promise(() => TestHelper.captureFailureScreenshot(self.page, testName, error));
+        yield* TestHelper.captureFailureScreenshot(self.page, testName, error);
       }
       return yield* Effect.fail(error);
     });
@@ -291,7 +291,7 @@ export class DynamicScenarioBase extends BaseScenarioTest {
 
 export class AuthScenarioBase extends BaseScenarioTest {
   protected cookies: readonly Cookie[] = [];
-  protected tokens: HashMap.HashMap<string, string> = HashMap.empty();
+  protected tokens: HashMap.HashMap<string, string> = HashMap.empty<string, string>();
 
   /**
    * Perform login
@@ -347,7 +347,7 @@ export class AuthScenarioBase extends BaseScenarioTest {
   extractCSRFToken(): Effect.Effect<string> {
     const self = this;
     return Effect.gen(function* () {
-      const token = yield* Effect.promise(() => DataExtractor.extractCSRFToken(self.page));
+      const token = yield* DataExtractor.extractCSRFToken(self.page);
       if (token) {
         self.tokens = HashMap.set(self.tokens, 'csrf', token);
       }
@@ -361,7 +361,7 @@ export class AuthScenarioBase extends BaseScenarioTest {
   extractAPIToken(): Effect.Effect<string> {
     const self = this;
     return Effect.gen(function* () {
-      const token = yield* Effect.promise(() => DataExtractor.extractAPIToken(self.page));
+      const token = yield* DataExtractor.extractAPIToken(self.page);
       if (token) {
         self.tokens = HashMap.set(self.tokens, 'api', token);
       }

@@ -66,11 +66,12 @@ jobs:
 
     - name: Publish test results
       uses: dorny/test-reporter@v1
-      if: always()
+      if: always() && hashFiles('junit-scenarios.xml') != ''
       with:
         name: Scenario Tests (Node ${{ matrix.node-version }})
         path: junit-scenarios.xml
         reporter: jest-junit
+      continue-on-error: true
 
   test-coverage:
     name: Test Coverage

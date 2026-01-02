@@ -5,8 +5,8 @@
 
 import { expect } from 'vitest';
 import { Page, Cookie } from 'playwright';
-import { Data, Effect, HashMap, Option, Random, Exit } from 'effect';
-import { TestHelper, TestContext, TestSetupError, TestCleanupError, ScreenshotError } from './TestHelper';
+import { Data, Effect, HashMap, Option, Random } from 'effect';
+import { TestHelper, TestContext, TestSetupError, ScreenshotError } from './TestHelper';
 import { DataExtractor } from './DataExtractor';
 import { AdapterNotInitialisedError } from '../../lib/errors';
 

@@ -4,7 +4,7 @@
  */
 
 import { Context, Data, Effect, Layer, Option, Ref, Schema } from 'effect';
-import { Cookie, CookieJar, SerializedCookieJar } from 'tough-cookie';
+import { Cookie, CookieJar } from 'tough-cookie';
 import { JsonUtils, JsonParseError } from '../utils/JsonUtils.js';
 
 // ============================================================================

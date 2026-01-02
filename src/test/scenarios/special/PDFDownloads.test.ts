@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError } from '../../helpers/BaseScenarioTest';
+import { Effect } from 'effect';
+import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError, runEffect } from '../../helpers/BaseScenarioTest';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';

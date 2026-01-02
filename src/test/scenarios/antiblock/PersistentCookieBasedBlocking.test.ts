@@ -5,8 +5,7 @@
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { Cookie } from 'playwright';
-import { AntiBlockScenarioBase } from '../../helpers/BaseScenarioTest';
-import { runTest } from '../../infrastructure/EffectTestUtils';
+import { AntiBlockScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 
 interface BlockingDetails {
   url: string;
@@ -23,7 +22,7 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
   }
   
   async getBlockingCookies(): Promise<Cookie[]> {
-    const cookies = await runTest(this.getContext().adapter.getCookies());
+    const cookies = await runEffect(this.getContext().adapter.getCookies());
     return [...cookies].filter(cookie =>
       cookie.name.toLowerCase().includes('block') ||
       cookie.name.toLowerCase().includes('ban') ||
@@ -31,9 +30,9 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
       cookie.name.toLowerCase().includes('persist')
     );
   }
-  
+
   async setBlockingCookie(name: string, value: string): Promise<void> {
-    await runTest(this.getContext().adapter.setCookies([{
+    await runEffect(this.getContext().adapter.setCookies([{
       name,
       value,
       domain: '.web-scraping.dev',
@@ -44,13 +43,13 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
       sameSite: 'Lax'
     }]));
   }
-  
+
   async clearBlockingCookies(): Promise<void> {
     const blockingCookies = await this.getBlockingCookies();
 
     // Clear each blocking cookie
     for (const cookie of blockingCookies) {
-      await runTest(this.getContext().adapter.setCookies([{
+      await runEffect(this.getContext().adapter.setCookies([{
         name: cookie.name,
         value: '',
         domain: cookie.domain,
@@ -63,9 +62,9 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
     }
 
     // Also try clearing all cookies
-    await runTest(this.getContext().adapter.clearCookies());
+    await runEffect(this.getContext().adapter.clearCookies());
   }
-  
+
   async testPersistence(): Promise<{
     initialBlocked: boolean;
     afterReload: boolean;
@@ -73,17 +72,17 @@ class PersistentCookieBasedBlockingTest extends AntiBlockScenarioBase {
     hasPersistentCookie: boolean;
   }> {
     // Initial state
-    const initialBlocked = await runTest(this.isBlocked());
+    const initialBlocked = await this.isBlocked();
 
     // Reload page
     await this.getPage().reload();
     await this.getPage().waitForLoadState('networkidle');
-    const afterReload = await runTest(this.isBlocked());
+    const afterReload = await this.isBlocked();
 
     // Navigate away and back
-    await runTest(this.navigateToScenario('/'));
-    await runTest(this.navigateToScenario('/blocked?persist='));
-    const afterNavigation = await runTest(this.isBlocked());
+    await this.navigateToScenario('/');
+    await this.navigateToScenario('/blocked?persist=');
+    const afterNavigation = await this.isBlocked();
 
     // Check for persistent cookies
     const cookies = await this.getBlockingCookies();
@@ -117,17 +116,17 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
   
   beforeAll(async () => {
     test = new PersistentCookieBasedBlockingTest();
-    await runTest(test.setup());
+    await test.setup();
   }, 30000);
 
   afterAll(async () => {
     // Clean up any blocking cookies
     await test.clearBlockingCookies();
-    await runTest(test.cleanup());
+    await test.cleanup();
   });
-  
+
   it('should detect persistent blocking', async () => {
-    await runTest(test.navigateToScenario('/blocked?persist='));
+    await test.navigateToScenario('/blocked?persist=');
 
     const details = await test.extractBlockingDetails();
 
@@ -137,9 +136,9 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
     expect(details.hasBlockMessage).toBe(true);
     expect(details.url).toContain('persist');
   });
-  
+
   it('should set persistent blocking cookies', async () => {
-    await runTest(test.navigateToScenario('/blocked?persist=true'));
+    await test.navigateToScenario('/blocked?persist=true');
 
     const cookies = await test.getBlockingCookies();
 
@@ -161,7 +160,7 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
   });
   
   it('should maintain block across page reloads', async () => {
-    await runTest(test.navigateToScenario('/blocked?persist=true'));
+    await test.navigateToScenario('/blocked?persist=true');
 
     const persistence = await test.testPersistence();
 
@@ -175,20 +174,20 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
       expect(persistence.afterNavigation).toBe(true);
     }
   });
-  
+
   it('should test cookie-based unblocking', async () => {
     // First get blocked with persistence
-    await runTest(test.navigateToScenario('/blocked?persist=true'));
+    await test.navigateToScenario('/blocked?persist=true');
 
-    const beforeClear = await runTest(test.isBlocked());
+    const beforeClear = await test.isBlocked();
     expect(beforeClear).toBe(true);
 
     // Clear blocking cookies
     await test.clearBlockingCookies();
 
     // Try accessing again
-    await runTest(test.navigateToScenario('/products'));
-    const afterClear = await runTest(test.isBlocked());
+    await test.navigateToScenario('/products');
+    const afterClear = await test.isBlocked();
 
     console.log('Block status after clearing cookies:', {
       beforeClear,
@@ -199,16 +198,16 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
     // Should be able to access other pages after clearing
     expect(test.getPage().url()).toContain('/products');
   });
-  
+
   it('should handle different persist parameter values', async () => {
     const testValues = ['true', '1', 'yes', '', 'false', '0'];
     const results: { value: string; isBlocked: boolean; hasCookies: boolean }[] = [];
 
     for (const value of testValues) {
-      await runTest(test.navigateToScenario(`/blocked?persist=${value}`));
+      await test.navigateToScenario(`/blocked?persist=${value}`);
 
       const cookies = await test.getBlockingCookies();
-      const isBlocked = await runTest(test.isBlocked());
+      const isBlocked = await test.isBlocked();
 
       results.push({
         value,
@@ -229,11 +228,11 @@ describe('Persistent Cookie-Based Blocking Scenario - /blocked?persist=', () => 
     const withCookies = results.filter(r => r.hasCookies);
     console.log(`${withCookies.length} of ${results.length} set cookies`);
   });
-  
-  it('should test blocking cookie attributes', async () => {
-    await runTest(test.navigateToScenario('/blocked?persist=true'));
 
-    const cookies = await runTest(test.getContext().adapter.getCookies());
+  it('should test blocking cookie attributes', async () => {
+    await test.navigateToScenario('/blocked?persist=true');
+
+    const cookies = await runEffect(test.getContext().adapter.getCookies());
     const blockingCookies = [...cookies].filter(c =>
       c.name.toLowerCase().includes('block') ||
       c.name.toLowerCase().includes('persist')

@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { Effect } from 'effect';
-import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
+import { DynamicScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 interface InterceptedRequest {
@@ -52,7 +52,7 @@ class GraphQLTest extends DynamicScenarioBase {
   }
 
   async setupAsync(): Promise<void> {
-    await Effect.runPromise(super.setup());
+    await super.setup();
 
     // Set up request/response interception
     this.getPage().on('request', request => {
@@ -117,7 +117,7 @@ class GraphQLTest extends DynamicScenarioBase {
   }
 
   async validateScenarioAsync(): Promise<void> {
-    await Effect.runPromise(super.validateScenario());
+    await runEffect(super.validateScenario());
 
     // Verify we're on the reviews page
     const url = this.getPage().url();
@@ -125,11 +125,11 @@ class GraphQLTest extends DynamicScenarioBase {
   }
 
   async cleanupAsync(): Promise<void> {
-    await Effect.runPromise(super.cleanup());
+    await super.cleanup();
   }
 
   async navigateToScenarioAsync(path: string): Promise<void> {
-    await Effect.runPromise(super.navigateToScenario(path));
+    await super.navigateToScenario(path);
   }
 
   async waitForContentAsync(selector: string, timeout?: number): Promise<void> {

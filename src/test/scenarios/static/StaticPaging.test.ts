@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
-import { StaticScenarioBase } from '../../helpers/BaseScenarioTest';
+import { StaticScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor, Product } from '../../helpers/DataExtractor';
 import { TestHelper } from '../../helpers/TestHelper';
 
@@ -25,24 +25,24 @@ class StaticPagingTest extends StaticScenarioBase {
   }
   
   async extractProductsFromCurrentPage(): Promise<Product[]> {
-    return await DataExtractor.extractProducts(this.page);
+    return await runEffect(DataExtractor.extractProducts(this.page));
   }
-  
+
   async extractPaginationLinks(): Promise<string[]> {
-    return await DataExtractor.extractPaginationLinks(this.page);
+    return await runEffect(DataExtractor.extractPaginationLinks(this.page));
   }
   
   async navigateAllPages(): Promise<void> {
     const visitedUrls = new Set<string>();
     const toVisit: string[] = [`${this.getBaseUrl()}/products`];
-    
+
     while (toVisit.length > 0) {
       const url = toVisit.shift()!;
-      
+
       if (visitedUrls.has(url)) continue;
       visitedUrls.add(url);
-      
-      await this.getContext().adapter.goto(url);
+
+      await runEffect(this.getContext().adapter.goto(url));
       
       // Extract products from current page
       const pageProducts = await this.extractProductsFromCurrentPage();
@@ -64,7 +64,7 @@ class StaticPagingTest extends StaticScenarioBase {
   }
   
   async validateScenario(): Promise<void> {
-    await super.validateScenario();
+    await runEffect(super.validateScenario());
     
     // Validate we found products
     expect(this.products.length).toBeGreaterThan(0);
@@ -119,8 +119,8 @@ describe('StaticPaging Scenario Tests - Real Site', () => {
   
   it('should extract product details', async () => {
     await test.navigateToScenario('/product/1');
-    const productDetails = await DataExtractor.extractProductDetails(test.getPage());
-    
+    const productDetails = await runEffect(DataExtractor.extractProductDetails(test.getPage()));
+
     expect(productDetails).toBeDefined();
     expect(productDetails.title).toBeTruthy();
     expect(productDetails.price).toBeGreaterThan(0);

@@ -5,10 +5,16 @@
 
 import { expect } from 'vitest';
 import { Page, Cookie } from 'playwright';
-import { Data, Effect, HashMap, Option, Random } from 'effect';
+import { Data, Effect, HashMap, Option, Random, Exit } from 'effect';
 import { TestHelper, TestContext, TestSetupError, TestCleanupError, ScreenshotError } from './TestHelper';
 import { DataExtractor } from './DataExtractor';
 import { AdapterNotInitialisedError } from '../../lib/errors';
+
+/**
+ * Run an Effect and return a Promise for use in vitest async tests
+ */
+export const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromise(effect.pipe(Effect.catchAll((e) => Effect.die(e))));
 
 /**
  * Error for page initialisation failures
@@ -86,9 +92,9 @@ export abstract class BaseScenarioTest {
   }
 
   /**
-   * Setup test context
+   * Setup test context (Effect version - for internal use)
    */
-  setup(): Effect.Effect<void, PageInitError | TestSetupError> {
+  protected _setup(): Effect.Effect<void, PageInitError | TestSetupError> {
     const self = this;
     return Effect.gen(function* () {
       self.context = yield* TestHelper.createTestContext(self.scenarioName);
@@ -101,15 +107,29 @@ export abstract class BaseScenarioTest {
   }
 
   /**
-   * Cleanup test context
+   * Setup test context (Promise version for vitest)
    */
-  cleanup(): Effect.Effect<void> {
+  setup(): Promise<void> {
+    return runEffect(this._setup());
+  }
+
+  /**
+   * Cleanup test context (Effect version - for internal use)
+   */
+  protected _cleanup(): Effect.Effect<void> {
     const self = this;
     return Effect.gen(function* () {
       if (self.context) {
         yield* TestHelper.cleanupTestContext(self.context);
       }
     });
+  }
+
+  /**
+   * Cleanup test context (Promise version for vitest)
+   */
+  cleanup(): Promise<void> {
+    return runEffect(this._cleanup());
   }
 
   /**
@@ -126,9 +146,9 @@ export abstract class BaseScenarioTest {
   }
 
   /**
-   * Navigate to scenario URL
+   * Navigate to scenario URL (Effect version - for internal use)
    */
-  navigateToScenario(path: string): Effect.Effect<void, NavigationError> {
+  protected _navigateToScenario(path: string): Effect.Effect<void, NavigationError> {
     const self = this;
     return Effect.gen(function* () {
       const url = `${self.baseUrl}${path}`;
@@ -144,6 +164,13 @@ export abstract class BaseScenarioTest {
         return yield* Effect.fail(NavigationError.create(url, Option.some(response.status())));
       }
     });
+  }
+
+  /**
+   * Navigate to scenario URL (Promise version for vitest)
+   */
+  navigateToScenario(path: string): Promise<void> {
+    return runEffect(this._navigateToScenario(path));
   }
 
   /**
@@ -294,13 +321,13 @@ export class AuthScenarioBase extends BaseScenarioTest {
   protected tokens: HashMap.HashMap<string, string> = HashMap.empty<string, string>();
 
   /**
-   * Perform login
+   * Perform login (Effect version - for internal use)
    */
-  login(username: string, password: string): Effect.Effect<void, NavigationError> {
+  protected _login(username: string, password: string): Effect.Effect<void, NavigationError> {
     const self = this;
     return Effect.gen(function* () {
       // Navigate to login page
-      yield* self.navigateToScenario('/login');
+      yield* self._navigateToScenario('/login');
 
       // Fill login form
       yield* self.context.adapter.fill('input[name="username"], #username', username).pipe(
@@ -325,9 +352,16 @@ export class AuthScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Check if authenticated
+   * Perform login (Promise version for vitest)
    */
-  isAuthenticated(): Effect.Effect<boolean> {
+  login(username: string, password: string): Promise<void> {
+    return runEffect(this._login(username, password));
+  }
+
+  /**
+   * Check if authenticated (Effect version)
+   */
+  protected _isAuthenticated(): Effect.Effect<boolean> {
     const self = this;
     return Effect.sync(() => {
       // Check for auth cookie
@@ -342,9 +376,16 @@ export class AuthScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Extract and store CSRF token
+   * Check if authenticated (Promise version for vitest)
    */
-  extractCSRFToken(): Effect.Effect<string> {
+  isAuthenticated(): Promise<boolean> {
+    return runEffect(this._isAuthenticated());
+  }
+
+  /**
+   * Extract and store CSRF token (Effect version - for internal use)
+   */
+  protected _extractCSRFToken(): Effect.Effect<string> {
     const self = this;
     return Effect.gen(function* () {
       const token = yield* DataExtractor.extractCSRFToken(self.page);
@@ -356,9 +397,16 @@ export class AuthScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Extract and store API token
+   * Extract and store CSRF token (Promise version for vitest)
    */
-  extractAPIToken(): Effect.Effect<string> {
+  extractCSRFToken(): Promise<string> {
+    return runEffect(this._extractCSRFToken());
+  }
+
+  /**
+   * Extract and store API token (Effect version - for internal use)
+   */
+  protected _extractAPIToken(): Effect.Effect<string> {
     const self = this;
     return Effect.gen(function* () {
       const token = yield* DataExtractor.extractAPIToken(self.page);
@@ -370,11 +418,25 @@ export class AuthScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Set authentication headers
+   * Extract and store API token (Promise version for vitest)
    */
-  setAuthHeaders(headers: Record<string, string>): Effect.Effect<void> {
+  extractAPIToken(): Promise<string> {
+    return runEffect(this._extractAPIToken());
+  }
+
+  /**
+   * Set authentication headers (Effect version - for internal use)
+   */
+  protected _setAuthHeaders(headers: Record<string, string>): Effect.Effect<void> {
     const self = this;
     return Effect.promise(() => self.page.setExtraHTTPHeaders(headers));
+  }
+
+  /**
+   * Set authentication headers (Promise version for vitest)
+   */
+  setAuthHeaders(headers: Record<string, string>): Promise<void> {
+    return runEffect(this._setAuthHeaders(headers));
   }
 
   /**
@@ -383,7 +445,7 @@ export class AuthScenarioBase extends BaseScenarioTest {
   validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
     const self = this;
     return Effect.gen(function* () {
-      const authenticated = yield* self.isAuthenticated();
+      const authenticated = yield* self._isAuthenticated();
       expect(authenticated).toBe(true);
     });
   }
@@ -391,9 +453,9 @@ export class AuthScenarioBase extends BaseScenarioTest {
 
 export class AntiBlockScenarioBase extends BaseScenarioTest {
   /**
-   * Apply stealth techniques
+   * Apply stealth techniques (Effect version)
    */
-  applyStealthMode(): Effect.Effect<void> {
+  protected _applyStealthMode(): Effect.Effect<void> {
     const self = this;
     return Effect.promise(() =>
       self.page.addInitScript(() => {
@@ -421,17 +483,31 @@ export class AntiBlockScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Set custom headers
+   * Apply stealth techniques (Promise version for vitest)
    */
-  setCustomHeaders(headers: Record<string, string>): Effect.Effect<void> {
+  applyStealthMode(): Promise<void> {
+    return runEffect(this._applyStealthMode());
+  }
+
+  /**
+   * Set custom headers (Effect version)
+   */
+  protected _setCustomHeaders(headers: Record<string, string>): Effect.Effect<void> {
     const self = this;
     return Effect.promise(() => self.page.setExtraHTTPHeaders(headers));
   }
 
   /**
-   * Rotate user agent
+   * Set custom headers (Promise version for vitest)
    */
-  rotateUserAgent(): Effect.Effect<void> {
+  setCustomHeaders(headers: Record<string, string>): Promise<void> {
+    return runEffect(this._setCustomHeaders(headers));
+  }
+
+  /**
+   * Rotate user agent (Effect version)
+   */
+  protected _rotateUserAgent(): Effect.Effect<void> {
     const self = this;
     return Effect.gen(function* () {
       const userAgents = [
@@ -451,9 +527,16 @@ export class AntiBlockScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Check if blocked
+   * Rotate user agent (Promise version for vitest)
    */
-  isBlocked(): Effect.Effect<boolean> {
+  rotateUserAgent(): Promise<void> {
+    return runEffect(this._rotateUserAgent());
+  }
+
+  /**
+   * Check if blocked (Effect version)
+   */
+  protected _isBlocked(): Effect.Effect<boolean> {
     const self = this;
     return Effect.gen(function* () {
       const url = self.page.url();
@@ -467,19 +550,26 @@ export class AntiBlockScenarioBase extends BaseScenarioTest {
   }
 
   /**
-   * Bypass block attempt
+   * Check if blocked (Promise version for vitest)
    */
-  bypassBlock(): Effect.Effect<void, AdapterNotInitialisedError> {
+  isBlocked(): Promise<boolean> {
+    return runEffect(this._isBlocked());
+  }
+
+  /**
+   * Bypass block attempt (Effect version)
+   */
+  protected _bypassBlock(): Effect.Effect<void, AdapterNotInitialisedError> {
     const self = this;
     return Effect.gen(function* () {
-      yield* self.applyStealthMode();
-      yield* self.rotateUserAgent();
+      yield* self._applyStealthMode();
+      yield* self._rotateUserAgent();
 
       // Clear cookies that might flag us
       yield* self.context.adapter.clearCookies().pipe(Effect.asVoid);
 
       // Add legitimate-looking headers
-      yield* self.setCustomHeaders({
+      yield* self._setCustomHeaders({
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-GB,en;q=0.5',
         'Accept-Encoding': 'gzip, deflate, br',
@@ -491,12 +581,19 @@ export class AntiBlockScenarioBase extends BaseScenarioTest {
   }
 
   /**
+   * Bypass block attempt (Promise version for vitest)
+   */
+  bypassBlock(): Promise<void> {
+    return runEffect(this._bypassBlock());
+  }
+
+  /**
    * Default validation for anti-block scenarios
    */
   validateScenario(): Effect.Effect<void, PageInitError | NavigationError | ElementNotFoundError> {
     const self = this;
     return Effect.gen(function* () {
-      const blocked = yield* self.isBlocked();
+      const blocked = yield* self._isBlocked();
       expect(blocked).toBe(false);
     });
   }

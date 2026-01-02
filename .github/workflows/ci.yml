@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18.x, 20.x]
+        # Node 18 has compatibility issues with web APIs used by dependencies
+        # Node 18 EOL is April 2025, so we focus on Node 20+ support
+        node-version: [20.x, 22.x]
 
     steps:
     - name: Checkout code

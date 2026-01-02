@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-const EXAMPLES_DIR = join(process.cwd(), 'examples');
+const EXAMPLES_DIR = join(process.cwd(), 'src', 'examples');
 
 const exampleFiles = [
   '01-basic-crawl-working.ts',

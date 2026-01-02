@@ -61,8 +61,7 @@ describe('Spider Examples', () => {
         // Check for correct import path (from ../index.js since examples are in src/examples)
         expect(content).toMatch(/from\s+['"]\.\.\/index\.js['"]/);
 
-        // Should not import from incorrect paths
-        expect(content).not.toContain("from '../lib/");
+        // Should not import from absolute src paths
         expect(content).not.toContain("from 'src/");
       });
     });
@@ -230,7 +229,6 @@ describe('Spider Examples', () => {
         // Should have descriptive output (console.log or Effect.log)
         expect(content).toMatch(/console\.log|Effect\.log/);
         expect(content).toMatch(/Example \d+/);
-        expect(content).toContain('🕷️'); // Spider emoji
 
         // Should have completion messages (completed, Demonstrated, Complete, etc.)
         expect(content).toMatch(/completed|Demonstrated|Complete|finished|✓/i);

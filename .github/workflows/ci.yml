@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
   schedule:
     # Run tests daily at 2 AM UTC to verify scenarios still work
     - cron: '0 2 * * *'

@@ -1,7 +1,7 @@
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
-import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors.js';
+import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors/effect-errors.js';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 
 /**

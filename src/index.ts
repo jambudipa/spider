@@ -106,8 +106,25 @@ export {
   MiddlewareError,
   FileSystemError,
   PersistenceError,
-} from './lib/errors.js';
-export type { SpiderError } from './lib/errors.js';
+  ContentTypeError,
+  RequestAbortError,
+  AdapterNotInitialisedError,
+  BrowserError,
+  BrowserCleanupError,
+  TimeoutError,
+  ParseError,
+  ValidationError,
+  PageError,
+  StateError,
+  SessionError,
+  CrawlError,
+  QueueError,
+  ConfigError,
+  isSpiderError,
+  isNetworkError,
+  isBrowserError,
+} from './lib/errors/effect-errors.js';
+export type { SpiderError, AllSpiderErrors } from './lib/errors/effect-errors.js';
 
 // Export Logging types and service
 export type {

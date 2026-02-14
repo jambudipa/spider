@@ -3,6 +3,9 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/test"
+    "src/test",
+    "src/examples",
+    "src/browser",
+    "src/**/*.test.ts"
   ]
 }

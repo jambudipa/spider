@@ -215,33 +215,28 @@ export class PostgresStorageBackend implements StorageBackend {
       // Use transaction if available for consistency
       if (self.db.transaction) {
         yield* Effect.tryPromise({
+          // pg transaction callback requires a Promise, not Effect — .then() chains are intentional
+          /* eslint-disable effect/no-promise-then-catch */
           try: () =>
             self.db.transaction!((tx) =>
-              // Delete in correct order due to foreign key constraints
-              // Use Effect.runPromise to execute Effect chain within the Promise callback
-              Effect.runPromise(
-                Effect.gen(function* () {
-                  yield* Effect.promise(() =>
-                    tx.query(
-                      `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
-                      [key.id]
-                    )
-                  );
-                  yield* Effect.promise(() =>
-                    tx.query(
-                      `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
-                      [key.id]
-                    )
-                  );
-                  yield* Effect.promise(() =>
-                    tx.query(
-                      `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
-                      [key.id]
-                    )
-                  );
-                })
+              tx.query(
+                `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
+                [key.id]
               )
+                .then(() =>
+                  tx.query(
+                    `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
+                    [key.id]
+                  )
+                )
+                .then(() =>
+                  tx.query(
+                    `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
+                    [key.id]
+                  )
+                )
             ),
+          /* eslint-enable effect/no-promise-then-catch */
           catch: (error) =>
             new PersistenceError({
               message: `Failed to delete state from PostgreSQL: ${error}`,

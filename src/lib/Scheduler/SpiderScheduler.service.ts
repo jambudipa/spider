@@ -1,6 +1,6 @@
 import { DateTime, Effect, MutableHashMap, Option, Queue, Schema } from 'effect';
 import { CrawlTask } from '../Spider/Spider.service.js';
-import { ConfigurationError } from '../errors.js';
+import { ConfigurationError } from '../errors/effect-errors.js';
 import { SpiderConfig } from '../Config/SpiderConfig.service.js';
 
 /**
@@ -185,20 +185,17 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
                 normalizedPath = '/';
               }
 
-              parsed.pathname = normalizedPath;
-
-              // Remove fragment
-              parsed.hash = '';
-
               // Remove default ports
+              let port = parsed.port;
               if (
                 (parsed.protocol === 'http:' && parsed.port === '80') ||
                 (parsed.protocol === 'https:' && parsed.port === '443')
               ) {
-                parsed.port = '';
+                port = '';
               }
 
               // Sort query parameters alphabetically
+              let search = parsed.search;
               if (parsed.search) {
                 const params = new URLSearchParams(parsed.search);
                 const sortedParams = new URLSearchParams();
@@ -209,10 +206,14 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
                       sortedParams.append(key, value);
                     });
                   });
-                parsed.search = sortedParams.toString();
+                const sortedStr = sortedParams.toString();
+                search = sortedStr ? `?${sortedStr}` : '';
               }
 
-              return parsed.toString();
+              // Build normalized URL from parts (no mutation of URL object)
+              const auth = parsed.username ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@` : '';
+              const portStr = port ? `:${port}` : '';
+              return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}`;
             }
           }
         );

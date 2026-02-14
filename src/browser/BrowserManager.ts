@@ -5,7 +5,7 @@
 
 import { Effect, Either, MutableHashMap, Option } from 'effect';
 import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
-import { BrowserCleanupError, BrowserError } from '../lib/errors';
+import { BrowserCleanupError, BrowserError } from '../lib/errors/effect-errors.js';
 
 export interface BrowserConfig {
   headless?: boolean;

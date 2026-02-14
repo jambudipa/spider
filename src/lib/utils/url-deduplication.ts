@@ -91,10 +91,8 @@ export const normalizeUrl = (
   Effect.gen(function* () {
     const parsed = yield* parseUrl(url);
     
-    // Handle protocol
-    if (strategy.protocolHandling === 'prefer-https') {
-      parsed.protocol = 'https:';
-    }
+    // Read properties (safe — getters work fine even after bundling)
+    const protocol = strategy.protocolHandling === 'prefer-https' ? 'https:' : parsed.protocol;
     
     // Handle www subdomain
     let domain = parsed.hostname.toLowerCase();
@@ -105,12 +103,10 @@ export const normalizeUrl = (
       case 'ignore':
       case 'prefer-non-www':
         domain = domainWithoutWww;
-        parsed.hostname = domain;
         break;
       case 'prefer-www':
         if (!hasWww) {
           domain = `www.${domain}`;
-          parsed.hostname = domain;
         }
         break;
       case 'preserve':
@@ -119,27 +115,35 @@ export const normalizeUrl = (
     }
     
     // Handle trailing slash
+    let pathname = parsed.pathname;
     if (strategy.trailingSlashHandling === 'ignore') {
-      parsed.pathname = parsed.pathname.replace(/\/$/, '') || '/';
+      pathname = pathname.replace(/\/$/, '') || '/';
     }
     
     // Handle query parameters
+    let search = '';
     if (strategy.queryParamHandling === 'ignore') {
-      parsed.search = '';
+      search = '';
     } else if (strategy.queryParamHandling === 'sort') {
       const params = new URLSearchParams(parsed.search);
       const sorted = Array.from(params.entries()).sort(([a], [b]) => a.localeCompare(b));
-      parsed.search = new URLSearchParams(sorted).toString();
+      const sortedSearch = new URLSearchParams(sorted).toString();
+      search = sortedSearch ? `?${sortedSearch}` : '';
+    } else {
+      search = parsed.search;
     }
     
     // Handle fragment
-    if (strategy.fragmentHandling === 'ignore') {
-      parsed.hash = '';
-    }
+    const hash = strategy.fragmentHandling === 'ignore' ? '' : parsed.hash;
+    
+    // Build normalized URL from parts (no mutation of URL object)
+    const auth = parsed.username ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@` : '';
+    const port = parsed.port ? `:${parsed.port}` : '';
+    const normalized = `${protocol}//${auth}${domain}${port}${pathname}${search}${hash}`;
     
     return {
       original: url,
-      normalized: parsed.toString(),
+      normalized,
       domain: domainWithoutWww
     };
   });

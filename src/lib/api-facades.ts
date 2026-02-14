@@ -20,7 +20,7 @@ import {
   SpiderRequest,
   SpiderResponse,
 } from './Middleware/SpiderMiddleware.js';
-import { MiddlewareError } from './errors.js';
+import { MiddlewareError } from './errors/effect-errors.js';
 
 /**
  * The main Spider service interface for web crawling.

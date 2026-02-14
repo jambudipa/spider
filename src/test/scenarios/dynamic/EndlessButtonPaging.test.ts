@@ -4,16 +4,20 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
+import { Effect } from 'effect';
+import { DynamicScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 class ButtonLoadingTest extends DynamicScenarioBase {
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
-    
-    // Verify we're on the reviews page
-    const url = this.getPage().url();
-    expect(url).toContain('/reviews');
+  validateScenario() {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* DynamicScenarioBase.prototype.validateScenario.call(self);
+
+      // Verify we're on the reviews page
+      const url = self.getPage().url();
+      expect(url).toContain('/reviews');
+    });
   }
 }
 
@@ -85,7 +89,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
   it('should load content on button click', async () => {
     try {
       // Get initial reviews count
-      const initialReviews = await DataExtractor.extractReviews(test.getPage());
+      const initialReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
       const initialCount = initialReviews.length;
       
       expect(initialCount).toBeGreaterThan(0);
@@ -119,7 +123,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         await test.getPage().waitForTimeout(3000);
         
         // Check if new content loaded
-        const afterClickReviews = await DataExtractor.extractReviews(test.getPage());
+        const afterClickReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
         const afterClickCount = afterClickReviews.length;
         
         if (afterClickCount > initialCount) {
@@ -162,7 +166,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       const maxClicks = 3;
       
       // Get initial count
-      let currentReviews = await DataExtractor.extractReviews(test.getPage());
+      let currentReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
       reviewCounts.push(currentReviews.length);
       
       // Try multiple button clicks
@@ -200,7 +204,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         await test.getPage().waitForTimeout(2000);
         
         // Count reviews after click
-        currentReviews = await DataExtractor.extractReviews(test.getPage());
+        currentReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
         reviewCounts.push(currentReviews.length);
       }
       
@@ -289,7 +293,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       }
       
       // Get final review count
-      const finalReviews = await DataExtractor.extractReviews(test.getPage());
+      const finalReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
       expect(finalReviews.length).toBeGreaterThan(0);
       
     } catch (error) {
@@ -334,14 +338,14 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         }
         
         // Count current reviews
-        const reviews = await DataExtractor.extractReviews(test.getPage());
+        const reviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
         currentCount = reviews.length;
         attempts++;
         
       } while (currentCount > previousCount && attempts < maxAttempts);
       
       // Extract all final reviews
-      const allReviews = await DataExtractor.extractReviews(test.getPage());
+      const allReviews = await runEffect(DataExtractor.extractReviews(test.getPage()));
       
       expect(allReviews.length).toBeGreaterThan(0);
       

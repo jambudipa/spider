@@ -7,7 +7,7 @@ import { Chunk, Data, Effect, Option, Stream } from 'effect';
 import type { Readable } from 'node:stream';
 import { Page, Response as PlaywrightResponse, Route, Cookie, Request as PlaywrightRequest } from 'playwright';
 import { BrowserManager } from './BrowserManager';
-import { AdapterNotInitialisedError } from '../lib/errors';
+import { AdapterNotInitialisedError } from '../lib/errors/effect-errors.js';
 
 export type RequestHandler = (request: PlaywrightRequest) => void;
 export type ResponseHandler = (response: PlaywrightResponse) => void;

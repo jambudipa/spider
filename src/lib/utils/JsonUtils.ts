@@ -51,9 +51,10 @@ export class JsonSchemaValidationError extends Data.TaggedError('JsonSchemaValid
 
 /**
  * Check if a value is a non-null object (not an array)
+ * Uses Option to handle the null case idiomatically
  */
 const isNonNullObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && !Array.isArray(value) && Option.fromNullable(value)._tag === 'Some';
+  typeof value === 'object' && !Array.isArray(value) && Option.isSome(Option.fromNullable(value));
 
 /**
  * Apply a replacer function to traverse and transform an object recursively

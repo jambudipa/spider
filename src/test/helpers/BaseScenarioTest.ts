@@ -8,7 +8,7 @@ import { Page, Cookie } from 'playwright';
 import { Data, Effect, HashMap, Option, Random } from 'effect';
 import { TestHelper, TestContext, TestSetupError, ScreenshotError } from './TestHelper';
 import { DataExtractor } from './DataExtractor';
-import { AdapterNotInitialisedError } from '../../lib/errors';
+import { AdapterNotInitialisedError } from '../../lib/errors/effect-errors.js';
 
 /**
  * Run an Effect and return a Promise for use in vitest async tests

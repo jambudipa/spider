@@ -11,8 +11,8 @@ import {
   createUrlDeduplicator,
   DEFAULT_DEDUPLICATION_STRATEGY,
   type DeduplicationStrategy
-} from './url-deduplication.js';
-import { runTestSync } from '../../test/infrastructure/EffectTestUtils.js';
+} from '../../../lib/utils/url-deduplication.js';
+import { runTestSync } from '../../infrastructure/EffectTestUtils.js';
 
 describe('URL Deduplication', () => {
   describe('parseUrl', () => {

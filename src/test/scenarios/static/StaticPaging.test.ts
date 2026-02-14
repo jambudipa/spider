@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { Effect } from 'effect';
 import { StaticScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor, Product } from '../../helpers/DataExtractor';
 import { TestHelper } from '../../helpers/TestHelper';
@@ -63,17 +64,20 @@ class StaticPagingTest extends StaticScenarioBase {
     }
   }
   
-  async validateScenario(): Promise<void> {
-    await runEffect(super.validateScenario());
-    
-    // Validate we found products
-    expect(this.products.length).toBeGreaterThan(0);
-    
-    // Validate product structure
-    for (const product of this.products.slice(0, 5)) {
-      expect(product.title).toBeTruthy();
-      expect(product.price).toBeGreaterThan(0);
-    }
+  validateScenario() {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* StaticScenarioBase.prototype.validateScenario.call(self);
+
+      // Validate we found products
+      expect(self.products.length).toBeGreaterThan(0);
+
+      // Validate product structure
+      for (const product of self.products.slice(0, 5)) {
+        expect(product.title).toBeTruthy();
+        expect(product.price).toBeGreaterThan(0);
+      }
+    });
   }
 }
 
@@ -145,7 +149,7 @@ describe('StaticPaging Scenario Tests - Real Site', () => {
     const products = await test.extractProductsFromCurrentPage();
     
     for (const product of products) {
-      const validation = TestHelper.validateDataStructure(product, ['title', 'price']);
+      const validation = TestHelper.validateDataStructure(product as unknown as Record<string, unknown>, ['title', 'price']);
       expect(validation.valid).toBe(true);
       expect(validation.missing).toHaveLength(0);
     }

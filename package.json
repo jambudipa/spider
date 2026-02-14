@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "A comprehensive web scraping library with resumable operations, middleware support, and built-in rate limiting",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,9 +42,8 @@
     "version": "changeset version",
     "release": "npm run build && changeset publish",
     "docs:api": "typedoc",
-    "docs:build": "npm run docs:api && npm run examples:validate",
+    "docs:build": "npm run docs:api",
     "examples:run": "tsx",
-    "examples:validate": "tsx scripts/analyse-exports.ts",
     "examples:run-all": "tsx examples/run-all.ts",
     "test:examples": "vitest run tests/examples.test.ts",
     "test:core": "vitest run tests/core",
@@ -75,7 +74,6 @@
   },
   "homepage": "https://github.com/jambudipa/spider#readme",
   "peerDependencies": {
-    "@types/tough-cookie": "^4.0.5",
     "cheerio": "^1.1.2",
     "domhandler": "^5.0.3",
     "effect": "^3.16.16",
@@ -83,8 +81,10 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
     "@changesets/cli": "^2.29.5",
     "@playwright/test": "^1.54.2",
+    "@types/cli-progress": "^3.11.6",
     "@types/node": "^20.19.11",
     "@types/tough-cookie": "^4.0.5",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
@@ -94,6 +94,8 @@
     "@vitest/eslint-plugin": "^1.6.4",
     "@vitest/ui": "^1.6.0",
     "cheerio": "^1.1.2",
+    "cli-progress": "^3.12.0",
+    "commander": "^14.0.2",
     "domhandler": "^5.0.3",
     "effect": "^3.16.16",
     "eslint": "^9.39.2",
@@ -116,10 +118,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
-    "@types/cli-progress": "^3.11.6",
-    "cli-progress": "^3.12.0",
-    "commander": "^14.0.2"
-  }
+  "dependencies": {}
 }

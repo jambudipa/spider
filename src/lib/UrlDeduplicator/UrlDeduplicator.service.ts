@@ -82,20 +82,20 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
               normalizedPath = '/';
             }
 
-            parsed.pathname = normalizedPath;
-
             // Remove fragment
-            parsed.hash = '';
+            const hash = '';
 
             // Remove default ports
+            let port = parsed.port;
             if (
               (parsed.protocol === 'http:' && parsed.port === '80') ||
               (parsed.protocol === 'https:' && parsed.port === '443')
             ) {
-              parsed.port = '';
+              port = '';
             }
 
             // Sort query parameters alphabetically
+            let search = parsed.search;
             if (parsed.search) {
               const params = new URLSearchParams(parsed.search);
               const sortedParams = new URLSearchParams();
@@ -106,10 +106,14 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
                     sortedParams.append(key, value);
                   });
                 });
-              parsed.search = sortedParams.toString();
+              const sortedStr = sortedParams.toString();
+              search = sortedStr ? `?${sortedStr}` : '';
             }
 
-            return parsed.toString();
+            // Build normalized URL from parts (no mutation of URL object)
+            const auth = parsed.username ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@` : '';
+            const portStr = port ? `:${port}` : '';
+            return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}${hash}`;
           }),
           // If URL parsing fails, return original
           () => Effect.succeed(url)

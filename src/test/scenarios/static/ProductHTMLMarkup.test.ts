@@ -4,16 +4,20 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { StaticScenarioBase } from '../../helpers/BaseScenarioTest';
+import { Effect } from 'effect';
+import { StaticScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 class ProductMarkupTest extends StaticScenarioBase {
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
-    
-    // Verify we're on the correct product page
-    const url = this.getPage().url();
-    expect(url).toContain('/product/1');
+  validateScenario() {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* StaticScenarioBase.prototype.validateScenario.call(self);
+
+      // Verify we're on the correct product page
+      const url = self.getPage().url();
+      expect(url).toContain('/product/1');
+    });
   }
 }
 
@@ -211,7 +215,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
   it('should validate structured data', async () => {
     try {
       // Extract product details using DataExtractor
-      const productDetails = await DataExtractor.extractProductDetails(test.getPage());
+      const productDetails = await runEffect(DataExtractor.extractProductDetails(test.getPage()));
       
       expect(productDetails).toBeTruthy();
       expect(productDetails.title).toBeTruthy();

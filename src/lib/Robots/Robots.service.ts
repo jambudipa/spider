@@ -1,5 +1,5 @@
 import { Effect, MutableHashMap, MutableHashSet, Option } from 'effect';
-import { RobotsTxtError } from '../errors.js';
+import { RobotsTxtError } from '../errors/effect-errors.js';
 
 /**
  * Parsed robots.txt rules for a specific user agent.

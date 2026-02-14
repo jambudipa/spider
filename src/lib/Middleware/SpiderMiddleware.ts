@@ -1,5 +1,5 @@
 import { DateTime, Effect, MutableHashMap, Option } from 'effect';
-import { MiddlewareError } from '../errors.js';
+import { MiddlewareError } from '../errors/effect-errors.js';
 import { SpiderRequest, SpiderResponse } from './types.js';
 
 export { SpiderRequest, SpiderResponse } from './types.js';

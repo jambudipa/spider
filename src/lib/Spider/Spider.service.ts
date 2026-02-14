@@ -31,6 +31,7 @@ import {
   SpiderLoggerLive,
 } from '../Logging/SpiderLogger.service.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
+import { SPIDER_DEFAULTS } from './Spider.defaults.js';
 
 /**
  * Configuration for extracting a nested field from an element.
@@ -408,7 +409,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             const workerHealthMonitor = Effect.gen(function* () {
               const healthMap = MutableRef.get(workerHealthChecks);
               const now = yield* DateTime.now;
-              const staleThreshold = 60000; // 60 seconds
+              const staleThreshold = SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS;
 
               // Iterate over HashMap entries and collect stale workers using Chunk
               let staleWorkersChunk = Chunk.empty<string>();
@@ -434,7 +435,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 MutableRef.set(workerHealthChecks, updatedMap);
               }
             }).pipe(
-              Effect.repeat(Schedule.fixed('15 seconds')) // Check every 15 seconds
+              Effect.repeat(Schedule.fixed(SPIDER_DEFAULTS.HEALTH_CHECK_INTERVAL))
             );
 
             // Atomic queue manager - synchronizes queue operations with worker state using semaphore
@@ -553,8 +554,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const memUsage = process.memoryUsage();
 
                   // Log warnings for concerning resource usage
-                  if (memUsage.heapUsed > 1024 * 1024 * 1024) {
-                    // > 1GB
+                  if (memUsage.heapUsed > SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES) {
                     yield* logger.logEdgeCase(domain, 'high_memory_usage', {
                       workerId,
                       heapUsed:
@@ -565,7 +565,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     });
                   }
 
-                  if (queueSize > 10000) {
+                  if (queueSize > SPIDER_DEFAULTS.QUEUE_SIZE_THRESHOLD) {
                     yield* logger.logEdgeCase(domain, 'excessive_queue_size', {
                       workerId,
                       queueSize,
@@ -586,7 +586,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                   // Use atomic take-or-complete operation with timeout detection
                   const result = yield* queueManager.takeTaskOrComplete.pipe(
-                    Effect.timeout('10 seconds'),
+                    Effect.timeout(SPIDER_DEFAULTS.TASK_ACQUISITION_TIMEOUT),
                     Effect.tap(() =>
                       logger.logEdgeCase(domain, 'task_acquisition_success', {
                         workerId,
@@ -709,10 +709,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     message: 'About to check shouldFollowUrl',
                   });
 
+                  const restrictToStartingDomainOption = restrictToStartingDomain
+                    ? Option.some(urlString)
+                    : Option.none<string>();
                   const shouldFollow = yield* config.shouldFollowUrl(
                     task.url,
                     task.fromUrl,
-                    restrictToStartingDomain ? urlString : Option.none<string>().pipe(Option.getOrUndefined)
+                    Option.getOrUndefined(restrictToStartingDomainOption)
                   );
 
                   yield* logger.logEdgeCase(domain, 'after_shouldFollowUrl', {
@@ -819,9 +822,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     .fetchAndParse(task.url, task.depth)
                     .pipe(
                       // Add overall timeout to prevent workers from hanging
-                      Effect.timeout('45 seconds'),
+                      Effect.timeout(SPIDER_DEFAULTS.FETCH_TIMEOUT),
                       Effect.retry({
-                        times: 2, // Reduced retries to prevent long hangs
+                        times: SPIDER_DEFAULTS.FETCH_RETRY_COUNT,
                         schedule: Schedule.exponential('1 second'),
                       }),
                       Effect.catchAll((error) =>
@@ -1059,10 +1062,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                       for (const link of linksToProcess) {
                         // Use config to validate each link first
+                        const linkRestrictOption = restrictToStartingDomain
+                          ? Option.some(urlString)
+                          : Option.none<string>();
                         const linkShouldFollow = yield* config.shouldFollowUrl(
                           link,
                           task.url,
-                          restrictToStartingDomain ? urlString : Option.none<string>().pipe(Option.getOrUndefined)
+                          Option.getOrUndefined(linkRestrictOption)
                         );
                         if (!linkShouldFollow.follow) {
                           // URL filtered by robots.txt
@@ -1268,7 +1274,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               let stuckIterations = 0;
 
               while (!MutableRef.get(domainCompleted)) {
-                yield* Effect.sleep('30 seconds'); // Check every 30 seconds
+                yield* Effect.sleep(SPIDER_DEFAULTS.FAILURE_DETECTOR_INTERVAL);
 
                 const pageCount = yield* localDeduplicator.size();
                 const queueSize = yield* queueManager.size();
@@ -1356,8 +1362,6 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               message: `[QUEUE_STATE] Shutting down queue for domain completion`,
               details: { finalQueueSize: yield* queueManager.size() },
             });
-            // yield* Queue.shutdown(urlQueue);
-
             // Log final page count
             const finalPageCount = yield* localDeduplicator.size();
             const maxPages = yield* config.getMaxPages();
@@ -1566,16 +1570,6 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             };
           }),
 
-        /**
-         * Returns the list of URLs that have been visited during crawling.
-         *
-         * @returns Effect containing array of visited URLs
-         *
-         * @remarks
-         * This is currently a placeholder implementation. In a future version,
-         * this will return the actual list of visited URLs from the current session.
-         */
-        getVisitedUrls: (): Effect.Effect<string[]> => Effect.sync(() => []),
       };
 
       return self;

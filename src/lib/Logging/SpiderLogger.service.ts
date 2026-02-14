@@ -169,9 +169,9 @@ export const makeSpiderLogger = (logDir = './spider-logs'): SpiderLoggerService 
   };
 
   const writeLogEvent = (event: SpiderLogEvent) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const logLine = stringifyForLog(event) + '\n';
-      fs.appendFileSync(logFilePath, logLine);
+      yield* Effect.sync(() => fs.appendFileSync(logFilePath, logLine));
 
       // Only log important events to console to prevent memory overflow
       const importantTypes = [
@@ -183,9 +183,7 @@ export const makeSpiderLogger = (logDir = './spider-logs'): SpiderLoggerService 
       if (importantTypes.includes(event.type)) {
         const prefix = `[${event.type}]`;
         const domainInfo = event.domain ? ` [${event.domain}]` : '';
-        Console.log(`${prefix}${domainInfo} ${event.message}`).pipe(
-          Effect.runSync
-        );
+        yield* Console.log(`${prefix}${domainInfo} ${event.message}`);
       }
     });
 

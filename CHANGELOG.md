@@ -1,5 +1,23 @@
 # @jambudipa/spider
 
+## 0.3.0
+
+### Minor Changes
+
+- ### Bug Fixes
+  - Fix critical URL deduplication crash ("Cannot read private member #context") by eliminating URL object mutations in normalizeUrl across all 4 call sites
+
+  ### Test Suite Overhaul
+  - Rewrite all stub test files with real assertions (Spider, Scraper, SpiderMiddleware, PageData, Robots, UrlDeduplicator)
+  - Add new utility test suites: UrlUtils (23 tests), JsonUtils (16 tests), RegexUtils (18 tests)
+  - Remove 3 dead stub test files (BrowserManager, CSRFTokenLocks, SecretAPIToken)
+  - Fix all pre-existing TypeScript type errors across scenario test files
+
+  ### Structural Cleanup
+  - Fix Effect layer composition patterns (Layer.mergeAll vs Layer.provide)
+  - Fix Effect.Service access patterns in middleware tests
+  - Extract Spider operational defaults to Spider.defaults.ts
+
 ## 0.2.1
 
 ### Patch Changes

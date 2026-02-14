@@ -98,35 +98,40 @@ export const UrlUtils = {
     Effect.gen(function* () {
       const url = yield* UrlUtils.parse(input);
       
+      // Read properties (safe — getters work even after bundling)
       // Remove trailing slash except for root path
-      if (url.pathname.endsWith('/') && url.pathname !== '/') {
-        url.pathname = url.pathname.slice(0, -1);
+      let pathname = url.pathname;
+      if (pathname.endsWith('/') && pathname !== '/') {
+        pathname = pathname.slice(0, -1);
       }
       
       // Sort query parameters alphabetically
+      let search = url.search;
       if (url.search) {
         const params = new URLSearchParams(url.search);
         const sorted = new URLSearchParams(
           [...params.entries()].sort(([a], [b]) => a.localeCompare(b))
         );
-        url.search = sorted.toString();
+        const sortedStr = sorted.toString();
+        search = sortedStr ? `?${sortedStr}` : '';
       }
       
       // Remove default ports
+      let port = url.port;
       if (
         (url.protocol === 'http:' && url.port === '80') ||
         (url.protocol === 'https:' && url.port === '443')
       ) {
-        url.port = '';
+        port = '';
       }
       
       // Lowercase hostname
-      url.hostname = url.hostname.toLowerCase();
+      const hostname = url.hostname.toLowerCase();
       
-      // Remove fragment for comparison
-      url.hash = '';
-      
-      return url.toString();
+      // Build normalised URL from parts (no mutation of URL object)
+      const auth = url.username ? `${url.username}${url.password ? ':' + url.password : ''}@` : '';
+      const portStr = port ? `:${port}` : '';
+      return `${url.protocol}//${auth}${hostname}${portStr}${pathname}${search}`;
     }),
 
   /**

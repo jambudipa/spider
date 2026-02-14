@@ -472,7 +472,7 @@ export default [
 
   // Relax rules for CLI scripts (utility code with console output, process.env, etc.)
   {
-    files: ['scripts/**/*.ts', 'examples/**/*.ts'],
+    files: ['scripts/**/*.ts'],
     rules: {
       ...EFFECT_RULE_EXEMPTIONS,
       ...TYPE_AWARE_EXEMPTIONS,

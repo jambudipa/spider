@@ -16,8 +16,7 @@ import {
   TokenType,
 } from '../StateManager/StateManager.service.js';
 import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
-import { NetworkError } from '../errors.js';
-import { ParseError, TimeoutError } from '../errors/effect-errors.js';
+import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 import { JsonStringifyError } from '../utils/JsonUtils.js';
 
 // ============================================================================

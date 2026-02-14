@@ -4,15 +4,19 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { Effect } from 'effect';
 import { AuthScenarioBase } from '../../helpers/BaseScenarioTest';
 
 class CookieAuthTest extends AuthScenarioBase {
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
-    
-    // For login page, we expect to either be on login page or redirected after auth
-    const url = this.getPage().url();
-    expect(url).toMatch(/\/(login|dashboard|home|profile)/);
+  validateScenario() {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* AuthScenarioBase.prototype.validateScenario.call(self);
+
+      // For login page, we expect to either be on login page or redirected after auth
+      const url = self.getPage().url();
+      expect(url).toMatch(/\/(login|dashboard|home|profile)/);
+    });
   }
 }
 

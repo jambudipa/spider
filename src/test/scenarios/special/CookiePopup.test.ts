@@ -4,15 +4,19 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { Effect } from 'effect';
 import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
 
 class ModalPopupTest extends DynamicScenarioBase {
-  async validateScenario(): Promise<void> {
-    await super.validateScenario();
-    
-    // Verify we can access the page even with modals
-    const url = this.getPage().url();
-    expect(url).toContain('web-scraping.dev');
+  validateScenario() {
+    const self = this;
+    return Effect.gen(function* () {
+      yield* DynamicScenarioBase.prototype.validateScenario.call(self);
+
+      // Verify we can access the page even with modals
+      const url = self.getPage().url();
+      expect(url).toContain('web-scraping.dev');
+    });
   }
 }
 

@@ -1,5 +1,11 @@
 # @jambudipa/spider
 
+## 0.3.1
+
+### Patch Changes
+
+- Fix deduplicateUrls hanging with scoped layers by replacing unbounded concurrent Effect fibers with sequential plain JS Map deduplication
+
 ## 0.3.0
 
 ### Minor Changes

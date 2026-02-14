@@ -3,7 +3,7 @@
  * Effect-based URL normalization and deduplication with configurable strategies
  */
 
-import { Effect, HashMap, HashSet, Option, pipe, Ref } from 'effect';
+import { Effect, HashMap, HashSet, Option, Ref } from 'effect';
 import { ValidationError } from '../errors/effect-errors.js';
 
 /**
@@ -165,84 +165,62 @@ export const deduplicateUrls = (
   };
 }> =>
   Effect.gen(function* () {
-    const domainMap = yield* Ref.make(HashMap.empty<string, UrlWithMetadata>());
-    const skipped = yield* Ref.make<Array<{ url: string; reason: string }>>([]);
+    let domainMap = HashMap.empty<string, UrlWithMetadata>();
+    const skipped: Array<{ url: string; reason: string }> = [];
     let invalidCount = 0;
-    
-    // Process each URL
-    yield* Effect.all(
-      urls.map((urlObj) =>
-        pipe(
-          normalizeUrl(urlObj.url, strategy),
-          Effect.tap((normalized) =>
-            Effect.gen(function* () {
-              const currentMap = yield* Ref.get(domainMap);
-              const key = strategy.wwwHandling === 'preserve'
-                ? normalized.normalized
-                : normalized.domain;
 
-              const existingOption = HashMap.get(currentMap, key);
+    // Sequential loop — no concurrent fibers. This avoids pathological
+    // slowdown when scoped layers are in the fiber context.
+    for (const urlObj of urls) {
+      const normalizeResult = yield* Effect.either(normalizeUrl(urlObj.url, strategy));
 
-              if (Option.isNone(existingOption)) {
-                // First URL for this domain/normalized URL
-                yield* Ref.set(domainMap, HashMap.set(currentMap, key, urlObj));
-              } else {
-                // Duplicate found
-                const existing = existingOption.value;
+      if (normalizeResult._tag === 'Left') {
+        invalidCount++;
+        skipped.push({ url: urlObj.url, reason: `Invalid URL: ${normalizeResult.left.message}` });
+        yield* Effect.logWarning(`Invalid URL skipped: ${urlObj.url}`);
+        continue;
+      }
 
-                // Apply preference rules
-                let shouldReplace = false;
-                if (strategy.wwwHandling === 'prefer-www') {
-                  const existingHasWww = existing.url.includes('://www.');
-                  const newHasWww = urlObj.url.includes('://www.');
-                  shouldReplace = !existingHasWww && newHasWww;
-                } else if (strategy.wwwHandling === 'prefer-non-www') {
-                  const existingHasWww = existing.url.includes('://www.');
-                  const newHasWww = urlObj.url.includes('://www.');
-                  shouldReplace = existingHasWww && !newHasWww;
-                }
+      const normalized = normalizeResult.right;
+      const key = strategy.wwwHandling === 'preserve'
+        ? normalized.normalized
+        : normalized.domain;
 
-                if (shouldReplace) {
-                  yield* Ref.set(domainMap, HashMap.set(currentMap, key, urlObj));
-                  yield* Ref.update(skipped, (arr) => [
-                    ...arr,
-                    { url: existing.url, reason: `Replaced by preferred variant: ${urlObj.url}` }
-                  ]);
-                } else {
-                  yield* Ref.update(skipped, (arr) => [
-                    ...arr,
-                    { url: urlObj.url, reason: `Duplicate of: ${existing.url}` }
-                  ]);
-                }
-              }
-            })
-          ),
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              invalidCount++;
-              yield* Ref.update(skipped, (arr) => [
-                ...arr,
-                { url: urlObj.url, reason: `Invalid URL: ${error.message}` }
-              ]);
-              yield* Effect.logWarning(`Invalid URL skipped: ${urlObj.url}`);
-            })
-          )
-        )
-      ),
-      { concurrency: 'unbounded' }
-    );
-    
-    const finalMap = yield* Ref.get(domainMap);
-    const finalSkipped = yield* Ref.get(skipped);
-    const deduplicated = Array.from(HashMap.values(finalMap));
-    
+      const existingOption = HashMap.get(domainMap, key);
+
+      if (Option.isNone(existingOption)) {
+        domainMap = HashMap.set(domainMap, key, urlObj);
+      } else {
+        const existing = existingOption.value;
+        let shouldReplace = false;
+        if (strategy.wwwHandling === 'prefer-www') {
+          const existingHasWww = existing.url.includes('://www.');
+          const newHasWww = urlObj.url.includes('://www.');
+          shouldReplace = !existingHasWww && newHasWww;
+        } else if (strategy.wwwHandling === 'prefer-non-www') {
+          const existingHasWww = existing.url.includes('://www.');
+          const newHasWww = urlObj.url.includes('://www.');
+          shouldReplace = existingHasWww && !newHasWww;
+        }
+
+        if (shouldReplace) {
+          domainMap = HashMap.set(domainMap, key, urlObj);
+          skipped.push({ url: existing.url, reason: `Replaced by preferred variant: ${urlObj.url}` });
+        } else {
+          skipped.push({ url: urlObj.url, reason: `Duplicate of: ${existing.url}` });
+        }
+      }
+    }
+
+    const deduplicated = Array.from(HashMap.values(domainMap));
+
     return {
       deduplicated,
-      skipped: finalSkipped,
+      skipped,
       stats: {
         total: urls.length,
         unique: deduplicated.length,
-        duplicates: finalSkipped.filter(s => s.reason.startsWith('Duplicate')).length,
+        duplicates: skipped.filter(s => s.reason.startsWith('Duplicate')).length,
         invalid: invalidCount
       }
     };

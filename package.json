@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A comprehensive web scraping library with resumable operations, middleware support, and built-in rate limiting",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
     "dev": "vite build --watch",
     "test": "vitest",
     "test:ui": "vitest --ui",

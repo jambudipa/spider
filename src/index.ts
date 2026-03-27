@@ -173,6 +173,19 @@ export {
   StateManagerLive,
 } from './lib/StateManager/index.js';
 
+// Export Browser Engine
+export type {
+  BrowserEngineConfig,
+  BrowserEngineServiceInterface,
+  PageElement,
+} from './lib/BrowserEngine/BrowserEngine.service.js';
+export {
+  BrowserEngineService,
+  BrowserEngineLive,
+  BrowserEngineWithConfig,
+  withBrowser,
+} from './lib/BrowserEngine/BrowserEngine.service.js';
+
 // Export Web Scraping Engine
 export type {
   LoginCredentials,

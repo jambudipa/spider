@@ -1,5 +1,11 @@
 # @jambudipa/spider
 
+## 0.3.3
+
+### Patch Changes
+
+- Export BrowserEngineService and related types from package entry point
+
 ## 0.3.1
 
 ### Patch Changes

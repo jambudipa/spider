@@ -11,6 +11,7 @@ export type {
 
 // Export actual implementations (keep existing exports for functionality)
 export * from './lib/Spider/Spider.service.js';
+export { SPIDER_DEFAULTS } from './lib/Spider/Spider.defaults.js';
 export * from './lib/Robots/Robots.service.js';
 export * from './lib/Scraper/Scraper.service.js';
 export * from './lib/PageData/PageData.js';
@@ -96,6 +97,11 @@ export {
   HybridPersistence,
 } from './lib/Resumability/strategies.js';
 export { FileStorageBackend } from './lib/Resumability/backends/FileStorageBackend.js';
+export type {
+  DatabaseClientInterface,
+  PostgresStorageConfig,
+} from './lib/Resumability/backends/PostgresStorageBackend.js';
+export { PostgresStorageBackend } from './lib/Resumability/backends/PostgresStorageBackend.js';
 
 // Export Error types
 export {
@@ -137,6 +143,14 @@ export {
   SpiderLoggerLive,
 } from './lib/Logging/SpiderLogger.service.js';
 
+// Export FetchLogger
+export type { LoggingFetchFn } from './lib/Logging/FetchLogger.js';
+export {
+  FetchError,
+  makeLoggingFetch,
+  LoggingFetch,
+} from './lib/Logging/FetchLogger.js';
+
 // Export HTTP Client components
 export type {
   CookieManagerService,
@@ -171,6 +185,11 @@ export {
   StateManager,
   makeStateManager,
   StateManagerLive,
+  CSRFTokenNotFoundError,
+  APITokenNotFoundError,
+  TokenNotFoundError,
+  TokenExpiredError,
+  StorageKeyNotFoundError,
 } from './lib/StateManager/index.js';
 
 // Export Browser Engine
@@ -191,9 +210,41 @@ export type {
   LoginCredentials,
   ScrapingSession,
   WebScrapingEngineService,
+  WebScrapingEngineError,
+  HttpOperationError,
+  HttpPostOperationError,
 } from './lib/WebScrapingEngine/index.js';
 export {
   WebScrapingEngine,
   makeWebScrapingEngine,
   WebScrapingEngineLive,
+  LoginError,
+  SessionNotValidError,
+  SessionLoadError,
 } from './lib/WebScrapingEngine/index.js';
+
+// Export Worker Health Monitor
+export { WorkerHealthMonitor } from './lib/WorkerHealth/WorkerHealthMonitor.service.js';
+
+// Export URL deduplication utilities
+export type {
+  DeduplicationStrategy,
+  UrlWithMetadata,
+  NormalizedUrl,
+} from './lib/utils/url-deduplication.js';
+export {
+  DEFAULT_DEDUPLICATION_STRATEGY,
+  parseUrl,
+  normalizeUrl,
+  deduplicateUrls,
+  createUrlDeduplicator,
+} from './lib/utils/url-deduplication.js';
+
+// Export Effect migration utilities
+export {
+  safeJsonParse,
+  toOption,
+  fromPromise,
+  cleanupResources,
+  matchOption,
+} from './lib/utils/effect-migration.js';

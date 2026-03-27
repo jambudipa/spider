@@ -1,5 +1,11 @@
 # @jambudipa/spider
 
+## 0.4.0
+
+### Minor Changes
+
+- Export all previously internal modules from package entry point: PostgresStorageBackend, WorkerHealthMonitor, SPIDER_DEFAULTS, FetchLogger, StateManager errors, WebScrapingEngine errors, URL deduplication utilities, and Effect migration utilities
+
 ## 0.3.3
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "A comprehensive web scraping library with resumable operations, middleware support, and built-in rate limiting",
   "type": "module",
   "main": "./dist/index.js",

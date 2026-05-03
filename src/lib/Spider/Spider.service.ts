@@ -26,7 +26,14 @@ import {
 } from '../LinkExtractor/index.js';
 import { SpiderSchedulerService } from '../Scheduler/SpiderScheduler.service.js';
 import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js';
-import { SpiderEventSink } from '../Logging/SpiderEventSink.js';
+import {
+  DomainCompleteEvent,
+  DomainStartEvent,
+  PageScrapedEvent,
+  SpiderCompleteEvent,
+  SpiderEventSink,
+  SpiderStartEvent,
+} from '../Logging/SpiderEventSink.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
 import { SPIDER_DEFAULTS } from './Spider.defaults.js';
 
@@ -314,15 +321,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             }
 
             // Emit spider lifecycle start
-            yield* events.emit({
-              _tag: 'SpiderStart',
-              details: {
-                totalUrls: deduplicatedUrls.length,
-                urls: deduplicatedUrls.map((u) => u.url),
-                originalCount: urlsWithMetadata.length,
-                deduplicatedCount: deduplicatedUrls.length,
-              },
-            });
+            yield* events.emit(
+              new SpiderStartEvent({
+                details: {
+                  totalUrls: deduplicatedUrls.length,
+                  urls: deduplicatedUrls.map((u) => u.url),
+                  originalCount: urlsWithMetadata.length,
+                  deduplicatedCount: deduplicatedUrls.length,
+                },
+              })
+            );
 
             // Run each URL as a separate crawling operation with its own infrastructure
             // All domains feed results to the same sink
@@ -343,16 +351,17 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
 
             // Emit spider lifecycle complete
-            yield* events.emit({
-              _tag: 'SpiderComplete',
-              details: {
-                totalDomains: results.length,
-                totalPages: results.reduce(
-                  (sum, r) => sum + (r.pagesScraped || 0),
-                  0
-                ),
-              },
-            });
+            yield* events.emit(
+              new SpiderCompleteEvent({
+                details: {
+                  totalDomains: results.length,
+                  totalPages: results.reduce(
+                    (sum, r) => sum + (r.pagesScraped || 0),
+                    0
+                  ),
+                },
+              })
+            );
 
             // All results have been processed through the sink
             return {
@@ -378,11 +387,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             });
 
             // Emit domain start
-            yield* events.emit({
-              _tag: 'DomainStart',
-              domain,
-              startUrl: urlString,
-            });
+            yield* events.emit(
+              new DomainStartEvent({ domain, startUrl: urlString })
+            );
 
             // Create a fresh deduplicator instance for this domain
             const localDeduplicator = yield* Effect.provide(
@@ -1034,12 +1041,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     );
 
                     // Emit page scraped event
-                    yield* events.emit({
-                      _tag: 'PageScraped',
-                      url: task.url,
-                      domain,
-                      pageNumber: currentPageCount,
-                    });
+                    yield* events.emit(
+                      new PageScrapedEvent({
+                        url: task.url,
+                        domain,
+                        pageNumber: currentPageCount,
+                      })
+                    );
 
                     // Publish result
                     const crawlTimestamp = yield* DateTime.now;
@@ -1176,12 +1184,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       );
                       if (wasFirstToReachMax) {
                         // Only the first worker to reach max pages logs completion
-                        yield* events.emit({
-                          _tag: 'PageScraped',
-                          url: task.url,
-                          domain,
-                          pageNumber: currentPageCount,
-                        });
+                        yield* events.emit(
+                          new PageScrapedEvent({
+                            url: task.url,
+                            domain,
+                            pageNumber: currentPageCount,
+                          })
+                        );
                         yield* Effect.logInfo(
                           `domain ${domain} reached max pages limit: ${currentPageCount}`
                         ).pipe(
@@ -1387,12 +1396,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     true
                   );
                   if (wasCompleted) {
-                    yield* events.emit({
-                      _tag: 'DomainComplete',
-                      domain,
-                      pagesScraped: pageCount,
-                      reason: 'error',
-                    });
+                    yield* events.emit(
+                      new DomainCompleteEvent({
+                        domain,
+                        pagesScraped: pageCount,
+                        reason: 'error',
+                      })
+                    );
                   }
                   break;
                 }
@@ -1436,12 +1446,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               maxPages && finalPageCount >= maxPages
                 ? 'max_pages'
                 : 'queue_empty';
-            yield* events.emit({
-              _tag: 'DomainComplete',
-              domain,
-              pagesScraped: finalPageCount,
-              reason: completionReason,
-            });
+            yield* events.emit(
+              new DomainCompleteEvent({
+                domain,
+                pagesScraped: finalPageCount,
+                reason: completionReason,
+              })
+            );
 
             // Close the PubSub to signal stream completion
             yield* PubSub.shutdown(resultPubSub);
@@ -1526,13 +1537,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             const resumeScheduler = yield* SpiderSchedulerService;
 
             const startTime = yield* DateTime.now;
-            yield* events.emit({
-              _tag: 'SpiderStart',
-              details: {
-                sessionId: stateKey.id,
-                timestamp: DateTime.formatIso(startTime),
-              },
-            });
+            yield* events.emit(
+              new SpiderStartEvent({
+                details: {
+                  sessionId: stateKey.id,
+                  timestamp: DateTime.formatIso(startTime),
+                },
+              })
+            );
 
             // Load the saved state using Effect patterns
             const savedStateOption = yield* Effect.gen(function* () {
@@ -1599,14 +1611,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             });
 
             const loadTime = yield* DateTime.now;
-            yield* events.emit({
-              _tag: 'SpiderStart',
-              details: {
-                sessionId: stateKey.id,
-                pendingUrls: restoredUrls.length,
-                timestamp: DateTime.formatIso(loadTime),
-              },
-            });
+            yield* events.emit(
+              new SpiderStartEvent({
+                details: {
+                  sessionId: stateKey.id,
+                  pendingUrls: restoredUrls.length,
+                  timestamp: DateTime.formatIso(loadTime),
+                },
+              })
+            );
 
             // Resume crawling with restored URLs
             if (restoredUrls.length > 0) {
@@ -1618,14 +1631,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               );
 
               const completeTime = yield* DateTime.now;
-              yield* events.emit({
-                _tag: 'SpiderComplete',
-                details: {
-                  sessionId: stateKey.id,
-                  urlsProcessed: restoredUrls.length,
-                  timestamp: DateTime.formatIso(completeTime),
-                },
-              });
+              yield* events.emit(
+                new SpiderCompleteEvent({
+                  details: {
+                    sessionId: stateKey.id,
+                    urlsProcessed: restoredUrls.length,
+                    timestamp: DateTime.formatIso(completeTime),
+                  },
+                })
+              );
 
               return {
                 ...crawlResult,

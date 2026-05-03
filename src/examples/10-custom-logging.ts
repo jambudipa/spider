@@ -14,64 +14,64 @@
  * Both are independent. Override either, both, or neither.
  */
 
-import { Chunk, Effect, Layer, Logger, LogLevel, Sink } from 'effect';
+import { Chunk, Effect, HashMap, Layer, Logger, LogLevel, Ref, Sink } from 'effect';
 import {
   CrawlResult,
   makeSpiderConfig,
   SpiderConfig,
-  SpiderEvent,
   SpiderEventSink,
   SpiderService,
 } from '../index.js';
 
-// 1. Custom Effect Logger — route logs to a JSON-line console writer
-const jsonLineLogger = Logger.make(
+// 1. Custom Effect Logger — formats annotations alongside the message.
+//    In production wire this to pino, OpenTelemetry, datadog, etc.
+const formatAnnotations = (
+  annotations: HashMap.HashMap<string, unknown>
+): string => {
+  let parts = Chunk.empty<string>();
+  for (const [key, value] of annotations) {
+    parts = Chunk.append(parts, `${key}=${String(value)}`);
+  }
+  return Chunk.size(parts) > 0
+    ? ` (${Chunk.toReadonlyArray(parts).join(' ')})`
+    : '';
+};
+
+const myLogger = Logger.make(
   ({ logLevel, message, annotations, fiberId, date }) => {
-    const annotationsObj: Record<string, unknown> = {};
-    for (const [key, value] of annotations) {
-      annotationsObj[key] = value;
-    }
-    const entry = {
-      timestamp: date.toISOString(),
-      level: logLevel.label,
-      fiberId: String(fiberId),
-      message: Array.isArray(message) ? message.join(' ') : String(message),
-      ...annotationsObj,
-    };
-    // eslint-disable-next-line no-console
-    console.log(JSON.stringify(entry));
+    const messageText = Array.isArray(message)
+      ? message.join(' ')
+      : String(message);
+    process.stdout.write(
+      `[${date.toISOString()}] [${logLevel.label}] [fiber=${String(fiberId)}] ${messageText}${formatAnnotations(annotations)}\n`
+    );
   }
 );
 
-// 2. Custom event sink — collect domain events for analytics
-const collectedEvents: SpiderEvent[] = [];
-const AnalyticsEventSink = Layer.succeed(SpiderEventSink, {
+// Custom event sink: log every spider event with structured annotations.
+// In production, route this to analytics, a database, or an event bus.
+const AnalyticsSink = Layer.succeed(SpiderEventSink, {
   emit: (event) =>
-    Effect.sync(() => {
-      collectedEvents.push(event);
-      // eslint-disable-next-line no-console
-      console.log(`[event] ${event._tag}`, event);
-    }),
+    Effect.logInfo(`spider event: ${event._tag}`).pipe(
+      Effect.annotateLogs({ event: event._tag })
+    ),
 });
 
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('starting custom-logging example');
 
-  let pages: Chunk.Chunk<CrawlResult> = Chunk.empty();
+  const pages = yield* Ref.make(Chunk.empty<CrawlResult>());
   const sink = Sink.forEach<CrawlResult, void, never, never>((result) =>
-    Effect.sync(() => {
-      pages = Chunk.append(pages, result);
-    })
+    Ref.update(pages, (chunk) => Chunk.append(chunk, result))
   );
 
   const spider = yield* SpiderService;
   yield* spider.crawl(['https://web-scraping.dev/'], sink);
 
-  yield* Effect.logInfo(
-    `crawl finished: ${Chunk.size(pages)} pages, ${collectedEvents.length} events emitted`
-  );
+  const collected = yield* Ref.get(pages);
+  yield* Effect.logInfo(`crawl finished: ${Chunk.size(collected)} pages`);
 
-  return Chunk.toReadonlyArray(pages);
+  return Chunk.toReadonlyArray(collected);
 });
 
 const config = makeSpiderConfig({
@@ -84,11 +84,10 @@ const config = makeSpiderConfig({
 const runnable = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  // Override the event sink for analytics
-  Effect.provide(AnalyticsEventSink),
-  // Override the Effect Logger — every Effect.log* now flows through jsonLineLogger
-  Effect.provide(Logger.replace(Logger.defaultLogger, jsonLineLogger)),
-  // Show debug logs from the spider internals
+  // Override the SpiderEventSink — receives typed domain events.
+  Effect.provide(AnalyticsSink),
+  // Override Effect's built-in Logger — every Effect.log* now flows through myLogger.
+  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
   Logger.withMinimumLogLevel(LogLevel.Info)
 );
 

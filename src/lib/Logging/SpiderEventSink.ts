@@ -1,48 +1,92 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context, Data, Effect, Layer } from 'effect';
 
 /**
- * Structured domain events emitted by the spider during crawling.
+ * Spider lifecycle started.
+ *
+ * @group Observability
+ * @public
+ */
+export class SpiderStartEvent extends Data.TaggedClass('SpiderStart')<{
+  readonly details?: Record<string, unknown>;
+}> {}
+
+/**
+ * Spider lifecycle completed successfully.
+ *
+ * @group Observability
+ * @public
+ */
+export class SpiderCompleteEvent extends Data.TaggedClass('SpiderComplete')<{
+  readonly details?: Record<string, unknown>;
+}> {}
+
+/**
+ * Spider lifecycle ended with an error.
+ *
+ * @group Observability
+ * @public
+ */
+export class SpiderErrorEvent extends Data.TaggedClass('SpiderError')<{
+  readonly details?: Record<string, unknown>;
+}> {}
+
+/**
+ * Crawling started for a domain.
+ *
+ * @group Observability
+ * @public
+ */
+export class DomainStartEvent extends Data.TaggedClass('DomainStart')<{
+  readonly domain: string;
+  readonly startUrl: string;
+}> {}
+
+/**
+ * Crawling completed for a domain.
+ *
+ * @group Observability
+ * @public
+ */
+export class DomainCompleteEvent extends Data.TaggedClass('DomainComplete')<{
+  readonly domain: string;
+  readonly pagesScraped: number;
+  readonly reason: 'max_pages' | 'queue_empty' | 'error';
+}> {}
+
+/**
+ * A single page was successfully scraped.
+ *
+ * @group Observability
+ * @public
+ */
+export class PageScrapedEvent extends Data.TaggedClass('PageScraped')<{
+  readonly url: string;
+  readonly domain: string;
+  readonly pageNumber: number;
+}> {}
+
+/**
+ * Discriminated union of all structured domain events emitted by the spider.
  *
  * These represent observable lifecycle and progress signals — not log lines.
  * Diagnostic and edge-case messages flow through Effect's standard `Logger`
- * system instead, where clients can override via `Logger.replace`.
+ * system instead, where clients override via `Logger.replace`.
  *
  * Clients consume these events by providing a custom {@link SpiderEventSink}
  * layer; the default ({@link SpiderEventSinkNoop}) discards them.
+ *
+ * Switch on `event._tag` for exhaustive handling.
  *
  * @group Observability
  * @public
  */
 export type SpiderEvent =
-  | {
-      readonly _tag: 'SpiderStart';
-      readonly details?: Record<string, unknown>;
-    }
-  | {
-      readonly _tag: 'SpiderComplete';
-      readonly details?: Record<string, unknown>;
-    }
-  | {
-      readonly _tag: 'SpiderError';
-      readonly details?: Record<string, unknown>;
-    }
-  | {
-      readonly _tag: 'DomainStart';
-      readonly domain: string;
-      readonly startUrl: string;
-    }
-  | {
-      readonly _tag: 'DomainComplete';
-      readonly domain: string;
-      readonly pagesScraped: number;
-      readonly reason: 'max_pages' | 'queue_empty' | 'error';
-    }
-  | {
-      readonly _tag: 'PageScraped';
-      readonly url: string;
-      readonly domain: string;
-      readonly pageNumber: number;
-    };
+  | SpiderStartEvent
+  | SpiderCompleteEvent
+  | SpiderErrorEvent
+  | DomainStartEvent
+  | DomainCompleteEvent
+  | PageScrapedEvent;
 
 /**
  * Service interface for consuming {@link SpiderEvent} signals.
@@ -61,7 +105,7 @@ export interface SpiderEventSinkService {
  *
  * ```typescript
  * const MySink = Layer.succeed(SpiderEventSink, {
- *   emit: (event) => Effect.sync(() => analytics.track(event)),
+ *   emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
  * });
  *
  * program.pipe(

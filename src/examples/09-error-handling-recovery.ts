@@ -17,7 +17,7 @@ import {
   CrawlResult,
   makeSpiderConfig,
   SpiderConfig,
-  SpiderLoggerLive,
+  SpiderEventSinkNoop,
   SpiderService
 } from '../index.js';
 
@@ -260,7 +260,7 @@ const customConfig = makeSpiderConfig({
 const runnable = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(customConfig)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tapBoth({
     onSuccess: (stats) =>
       Effect.gen(function* () {

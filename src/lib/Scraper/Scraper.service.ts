@@ -2,7 +2,6 @@ import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
 import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors/effect-errors.js';
-import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 
 /**
  * Service responsible for fetching HTML content and parsing basic page information.
@@ -100,7 +99,6 @@ export class ScraperService extends Effect.Service<ScraperService>()(
         Effect.gen(function* () {
           const startTime = yield* DateTime.now;
           const startMs = DateTime.toEpochMillis(startTime);
-          const logger = yield* SpiderLogger;
           const domain = new URL(url).hostname;
 
           // Log fetch start is handled by spider already
@@ -127,12 +125,18 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                   Effect.gen(function* () {
                     const currentTime = yield* DateTime.now;
                     const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
-                    yield* logger.logEdgeCase(domain, 'fetch_abort_triggered', {
-                      url,
-                      durationMs,
-                      reason: 'timeout',
-                      timeoutMs,
-                    });
+                    yield* Effect.logWarning(
+                      'fetch abort (timeout)'
+                    ).pipe(
+                      Effect.annotateLogs({
+                        event: 'fetch_abort_triggered',
+                        domain,
+                        url,
+                        durationMs,
+                        reason: 'timeout',
+                        timeoutMs,
+                      })
+                    );
                     return yield* Effect.fail(
                       RequestAbortError.timeout(url, durationMs)
                     );
@@ -182,12 +186,18 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                   Effect.gen(function* () {
                     const currentTime = yield* DateTime.now;
                     const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
-                    yield* logger.logEdgeCase(domain, 'response_text_abort_triggered', {
-                      url,
-                      durationMs,
-                      reason: 'timeout',
-                      timeoutMs: textTimeoutMs,
-                    });
+                    yield* Effect.logWarning(
+                      'response text abort (timeout)'
+                    ).pipe(
+                      Effect.annotateLogs({
+                        event: 'response_text_abort_triggered',
+                        domain,
+                        url,
+                        durationMs,
+                        reason: 'timeout',
+                        timeoutMs: textTimeoutMs,
+                      })
+                    );
                     return yield* Effect.fail(
                       RequestAbortError.timeout(url, durationMs)
                     );

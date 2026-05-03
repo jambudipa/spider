@@ -16,7 +16,7 @@ import {
   CrawlResult,
   makeSpiderConfig,
   SpiderConfig,
-  SpiderLoggerLive,
+  SpiderEventSinkNoop,
   SpiderMiddleware,
   SpiderRequest,
   SpiderResponse,
@@ -222,7 +222,7 @@ const config = makeSpiderConfig({
 const mainEffect = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tap((stats) =>
     Effect.gen(function* () {
       yield* Effect.logInfo(`\nCustom middleware example completed!`);

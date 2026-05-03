@@ -12,7 +12,7 @@
  */
 
 import { Chunk, DateTime, Effect, Sink } from 'effect';
-import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderLoggerLive, SpiderService } from '../index.js';
+import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '../index.js';
 import { RobotsService } from '../lib/Robots/Robots.service.js';
 
 interface CrawlTiming {
@@ -131,7 +131,7 @@ const runnable = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(RobotsService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tapBoth({
     onSuccess: (crawlTimes) => Effect.gen(function* () {
       yield* Effect.logInfo(`\n✅ Respectful crawling example completed!`);

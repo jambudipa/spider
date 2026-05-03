@@ -132,24 +132,25 @@ export {
 } from './lib/errors/effect-errors.js';
 export type { SpiderError, AllSpiderErrors } from './lib/errors/effect-errors.js';
 
-// Export Logging types and service
+// Export observability types and service
+//
+// Spider has two observability surfaces, both overridable by client code:
+//
+// 1. Logs (debug/info/warn/error messages with structured annotations):
+//    flow through Effect's standard `Logger` system. Override with
+//    `Logger.replace(Logger.defaultLogger, myLogger)`.
+//
+// 2. Domain events (`PageScraped`, `DomainComplete`, etc.): emitted to a
+//    `SpiderEventSink` service. Override by providing a `Layer.succeed`
+//    layer with a custom implementation. Defaults to a no-op sink.
 export type {
-  SpiderLogEvent,
-  SpiderLogger,
-} from './lib/Logging/SpiderLogger.service.js';
+  SpiderEvent,
+  SpiderEventSinkService,
+} from './lib/Logging/SpiderEventSink.js';
 export {
-  SpiderLogger as SpiderLoggerTag,
-  makeSpiderLogger,
-  SpiderLoggerLive,
-} from './lib/Logging/SpiderLogger.service.js';
-
-// Export FetchLogger
-export type { LoggingFetchFn } from './lib/Logging/FetchLogger.js';
-export {
-  FetchError,
-  makeLoggingFetch,
-  LoggingFetch,
-} from './lib/Logging/FetchLogger.js';
+  SpiderEventSink,
+  SpiderEventSinkNoop,
+} from './lib/Logging/SpiderEventSink.js';
 
 // Export HTTP Client components
 export type {

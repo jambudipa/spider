@@ -11,7 +11,7 @@
  */
 
 import { Chunk, DateTime, Effect, Sink } from 'effect';
-import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderLoggerLive, SpiderService } from '../index.js';
+import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '../index.js';
 
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 01: Basic Web Crawling');
@@ -86,7 +86,7 @@ const customConfig = makeSpiderConfig({
 const runnable = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(customConfig)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tapBoth({
     onSuccess: (results) => Effect.logInfo(`\n✅ Example completed successfully! Crawled ${results.length} pages.`),
     onFailure: (error) => Effect.logError(`\n❌ Example failed: ${String(error)}`)

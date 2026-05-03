@@ -59,16 +59,12 @@ export class TestHelper {
    */
   static createTestContext(scenarioName: string): Effect.Effect<TestContext, TestSetupError> {
     return Effect.gen(function* () {
-      const ciConfig = yield* Config.string('CI').pipe(
-        Config.withDefault('false'),
-        Effect.catchAll(() => Effect.succeed('false'))
-      );
       const headlessConfig = yield* Config.string('HEADLESS').pipe(
-        Config.withDefault('false'),
-        Effect.catchAll(() => Effect.succeed('false'))
+        Config.withDefault('true'),
+        Effect.catchAll(() => Effect.succeed('true'))
       );
 
-      const headless = ciConfig === 'true' || headlessConfig === 'true';
+      const headless = headlessConfig !== 'false';
 
       const browserManager = new BrowserManager({
         headless,

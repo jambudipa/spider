@@ -26,10 +26,7 @@ import {
 } from '../LinkExtractor/index.js';
 import { SpiderSchedulerService } from '../Scheduler/SpiderScheduler.service.js';
 import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js';
-import {
-  SpiderLogger,
-  SpiderLoggerLive,
-} from '../Logging/SpiderLogger.service.js';
+import { SpiderEventSink } from '../Logging/SpiderEventSink.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
 import { SPIDER_DEFAULTS } from './Spider.defaults.js';
 
@@ -172,7 +169,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
     effect: Effect.gen(function* () {
       const robots = yield* RobotsService;
       const scraper = yield* ScraperService;
-      const logger = yield* SpiderLogger;
+      const events = yield* SpiderEventSink;
 
       // Note: SpiderConfig is resolved within the crawl method to allow runtime overrides
 
@@ -316,12 +313,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               }
             }
 
-            // Log spider lifecycle start
-            yield* logger.logSpiderLifecycle('start', {
-              totalUrls: deduplicatedUrls.length,
-              urls: deduplicatedUrls.map((u) => u.url),
-              originalCount: urlsWithMetadata.length,
-              deduplicatedCount: deduplicatedUrls.length,
+            // Emit spider lifecycle start
+            yield* events.emit({
+              _tag: 'SpiderStart',
+              details: {
+                totalUrls: deduplicatedUrls.length,
+                urls: deduplicatedUrls.map((u) => u.url),
+                originalCount: urlsWithMetadata.length,
+                deduplicatedCount: deduplicatedUrls.length,
+              },
             });
 
             // Run each URL as a separate crawling operation with its own infrastructure
@@ -342,13 +342,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               { concurrency }
             );
 
-            // Log spider lifecycle complete
-            yield* logger.logSpiderLifecycle('complete', {
-              totalDomains: results.length,
-              totalPages: results.reduce(
-                (sum, r) => sum + (r.pagesScraped || 0),
-                0
-              ),
+            // Emit spider lifecycle complete
+            yield* events.emit({
+              _tag: 'SpiderComplete',
+              details: {
+                totalDomains: results.length,
+                totalPages: results.reduce(
+                  (sum, r) => sum + (r.pagesScraped || 0),
+                  0
+                ),
+              },
             });
 
             // All results have been processed through the sink
@@ -374,8 +377,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               catch: () => 'invalid-url'
             });
 
-            // Log domain start
-            yield* logger.logDomainStart(domain, urlString);
+            // Emit domain start
+            yield* events.emit({
+              _tag: 'DomainStart',
+              domain,
+              startUrl: urlString,
+            });
 
             // Create a fresh deduplicator instance for this domain
             const localDeduplicator = yield* Effect.provide(
@@ -416,11 +423,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               for (const [workerId, lastCheck] of healthMap) {
                 const elapsed = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(lastCheck);
                 if (elapsed > staleThreshold) {
-                  yield* logger.logEdgeCase(domain, 'worker_death_detected', {
-                    workerId,
-                    lastSeen: elapsed + 'ms ago',
-                    message: `DEAD WORKER: ${workerId} - No heartbeat for ${Math.round(elapsed / 1000)}s`,
-                  });
+                  yield* Effect.logWarning(
+                    `dead worker: ${workerId} - no heartbeat for ${Math.round(elapsed / 1000)}s`
+                  ).pipe(
+                    Effect.annotateLogs({
+                      event: 'worker_death_detected',
+                      domain,
+                      workerId,
+                      lastSeenMs: elapsed,
+                    })
+                  );
                   staleWorkersChunk = Chunk.append(staleWorkersChunk, workerId);
                 }
               }
@@ -539,10 +551,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             const worker = (workerId: string) =>
               Effect.gen(function* () {
                 // Log worker lifecycle: entering main loop
-                yield* logger.logWorkerLifecycle(
-                  workerId,
-                  domain,
-                  'entering_loop'
+                yield* Effect.logDebug('worker entering_loop').pipe(
+                  Effect.annotateLogs({ workerId, domain })
                 );
 
                 while (true) {
@@ -555,68 +565,72 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                   // Log warnings for concerning resource usage
                   if (memUsage.heapUsed > SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES) {
-                    yield* logger.logEdgeCase(domain, 'high_memory_usage', {
-                      workerId,
-                      heapUsed:
-                        Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
-                      heapTotal:
-                        Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB',
-                      queueSize,
-                    });
+                    yield* Effect.logWarning('high memory usage').pipe(
+                      Effect.annotateLogs({
+                        event: 'high_memory_usage',
+                        domain,
+                        workerId,
+                        heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
+                        heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024),
+                        queueSize,
+                      })
+                    );
                   }
 
                   if (queueSize > SPIDER_DEFAULTS.QUEUE_SIZE_THRESHOLD) {
-                    yield* logger.logEdgeCase(domain, 'excessive_queue_size', {
-                      workerId,
-                      queueSize,
-                      message:
-                        'Queue size exceeds 10,000 items - potential memory issue',
-                    });
+                    yield* Effect.logWarning(
+                      'queue size exceeds threshold - potential memory issue'
+                    ).pipe(
+                      Effect.annotateLogs({
+                        event: 'excessive_queue_size',
+                        domain,
+                        workerId,
+                        queueSize,
+                      })
+                    );
                   }
 
                   // Log worker state: attempting to take task
-                  yield* logger.logWorkerState(
-                    workerId,
-                    domain,
-                    'taking_task',
-                    {
-                      queueSize,
-                    }
+                  yield* Effect.logDebug('worker taking_task').pipe(
+                    Effect.annotateLogs({ workerId, domain, queueSize })
                   );
 
                   // Use atomic take-or-complete operation with timeout detection
                   const result = yield* queueManager.takeTaskOrComplete.pipe(
                     Effect.timeout(SPIDER_DEFAULTS.TASK_ACQUISITION_TIMEOUT),
                     Effect.tap(() =>
-                      logger.logEdgeCase(domain, 'task_acquisition_success', {
-                        workerId,
-                        message: 'Task acquired successfully',
-                      })
+                      Effect.logDebug('task acquired').pipe(
+                        Effect.annotateLogs({
+                          event: 'task_acquisition_success',
+                          domain,
+                          workerId,
+                        })
+                      )
                     ),
                     Effect.tapError((error) =>
-                      Effect.gen(function* () {
-                        const now = yield* DateTime.now;
-                        yield* logger.logEdgeCase(domain, 'deadlock_detected', {
+                      Effect.logError(
+                        'deadlock: task acquisition timed out'
+                      ).pipe(
+                        Effect.annotateLogs({
+                          event: 'deadlock_detected',
+                          domain,
                           workerId,
                           error: String(error),
-                          message:
-                            'DEADLOCK: Task acquisition timed out - worker stuck in atomic operation',
-                          timestamp: DateTime.formatIso(now),
-                        });
-                      })
+                        })
+                      )
                     ),
                     Effect.catchAll((error) =>
                       Effect.gen(function* () {
-                        yield* logger.logEdgeCase(
-                          domain,
-                          'task_acquisition_failed',
-                          {
+                        yield* Effect.logWarning(
+                          'task acquisition failed, marking worker idle and retrying'
+                        ).pipe(
+                          Effect.annotateLogs({
+                            event: 'task_acquisition_failed',
+                            domain,
                             workerId,
                             error: String(error),
                             isTimeout: error?.name === 'TimeoutException',
-                            message:
-                              'Task acquisition failed, marking worker as idle and retrying',
-                          }
+                          })
                         );
 
                         // Mark worker as idle before continuing - prevent stuck active count
@@ -638,18 +652,23 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     ) {
                       // This worker detected completion - log it
                       const reason = result.reason || 'unknown';
-                      yield* logger.logEvent({
-                        type: 'domain_complete',
-                        domain,
-                        message: `Worker ${workerId} detected domain completion - ${reason}`,
-                        details: { reason },
-                      });
+                      yield* Effect.logDebug(
+                        `worker ${workerId} detected domain completion - ${reason}`
+                      ).pipe(
+                        Effect.annotateLogs({
+                          event: 'domain_complete_detected',
+                          domain,
+                          workerId,
+                          reason,
+                        })
+                      );
                     }
-                    yield* logger.logWorkerLifecycle(
-                      workerId,
-                      domain,
-                      'exiting_loop',
-                      'detected_completion'
+                    yield* Effect.logDebug('worker exiting_loop').pipe(
+                      Effect.annotateLogs({
+                        workerId,
+                        domain,
+                        reason: 'detected_completion',
+                      })
                     );
                     break;
                   } else if (result.type === 'empty_but_active') {
@@ -666,14 +685,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     // Got a task and active count was incremented atomically
                     const task = result.task;
 
-                    yield* logger.logWorkerState(
-                      workerId,
-                      domain,
-                      'marked_active',
-                      {
+                    yield* Effect.logDebug('worker marked_active').pipe(
+                      Effect.annotateLogs({
+                        workerId,
+                        domain,
                         taskUrl: task.url,
                         activeWorkers: result.activeCount,
-                      }
+                      })
                     );
 
                     // Try to add URL to local deduplicator - skip if already seen
@@ -681,15 +699,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     if (!wasAdded) {
                       // Mark worker as idle before continuing to next iteration
                       const postIdleCount = yield* queueManager.markIdle();
-                      yield* logger.logWorkerState(
-                        workerId,
-                        domain,
-                        'marked_idle',
-                        {
+                      yield* Effect.logDebug('worker marked_idle').pipe(
+                        Effect.annotateLogs({
+                          workerId,
+                          domain,
                           taskUrl: task.url,
                           activeWorkers: postIdleCount,
                           reason: 'duplicate_url',
-                        }
+                        })
                       );
                       continue; // Already processed this URL
                     }
@@ -703,11 +720,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const task = result.task;
 
                   // Use SpiderConfig to decide whether to follow URL
-                  yield* logger.logEdgeCase(domain, 'before_shouldFollowUrl', {
-                    workerId,
-                    url: task.url,
-                    message: 'About to check shouldFollowUrl',
-                  });
+                  yield* Effect.logDebug('checking shouldFollowUrl').pipe(
+                    Effect.annotateLogs({
+                      event: 'before_shouldFollowUrl',
+                      domain,
+                      workerId,
+                      url: task.url,
+                    })
+                  );
 
                   const restrictToStartingDomainOption = restrictToStartingDomain
                     ? Option.some(urlString)
@@ -718,25 +738,27 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     Option.getOrUndefined(restrictToStartingDomainOption)
                   );
 
-                  yield* logger.logEdgeCase(domain, 'after_shouldFollowUrl', {
-                    workerId,
-                    url: task.url,
-                    follow: shouldFollow.follow,
-                    reason: shouldFollow.reason,
-                    message: 'Completed shouldFollowUrl check',
-                  });
+                  yield* Effect.logDebug('shouldFollowUrl complete').pipe(
+                    Effect.annotateLogs({
+                      event: 'after_shouldFollowUrl',
+                      domain,
+                      workerId,
+                      url: task.url,
+                      follow: shouldFollow.follow,
+                      reason: shouldFollow.reason,
+                    })
+                  );
 
                   if (!shouldFollow.follow) {
                     // Mark worker as idle before continuing
                     const newIdleCount = yield* queueManager.markIdle();
-                    yield* logger.logWorkerState(
-                      workerId,
-                      domain,
-                      'marked_idle',
-                      {
+                    yield* Effect.logDebug('worker marked_idle').pipe(
+                      Effect.annotateLogs({
+                        workerId,
+                        domain,
                         reason: 'shouldNotFollow',
                         activeWorkers: newIdleCount,
-                      }
+                      })
                     );
                     continue;
                   }
@@ -744,32 +766,37 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   // Check robots.txt unless configured to ignore
                   const ignoreRobots = yield* config.shouldIgnoreRobotsTxt();
                   if (!ignoreRobots) {
-                    yield* logger.logEdgeCase(domain, 'before_robots_check', {
-                      workerId,
-                      url: task.url,
-                      message: 'About to check robots.txt',
-                    });
+                    yield* Effect.logDebug('checking robots.txt').pipe(
+                      Effect.annotateLogs({
+                        event: 'before_robots_check',
+                        domain,
+                        workerId,
+                        url: task.url,
+                      })
+                    );
 
                     const robotsCheck = yield* robots.checkUrl(task.url);
 
-                    yield* logger.logEdgeCase(domain, 'after_robots_check', {
-                      workerId,
-                      url: task.url,
-                      allowed: robotsCheck.allowed,
-                      crawlDelay: robotsCheck.crawlDelay,
-                      message: 'Completed robots.txt check',
-                    });
+                    yield* Effect.logDebug('robots.txt check complete').pipe(
+                      Effect.annotateLogs({
+                        event: 'after_robots_check',
+                        domain,
+                        workerId,
+                        url: task.url,
+                        allowed: robotsCheck.allowed,
+                        crawlDelay: robotsCheck.crawlDelay,
+                      })
+                    );
                     if (!robotsCheck.allowed) {
                       // Mark worker as idle before continuing
                       const newIdleCount = yield* queueManager.markIdle();
-                      yield* logger.logWorkerState(
-                        workerId,
-                        domain,
-                        'marked_idle',
-                        {
+                      yield* Effect.logDebug('worker marked_idle').pipe(
+                        Effect.annotateLogs({
+                          workerId,
+                          domain,
                           reason: 'robotsBlocked',
                           activeWorkers: newIdleCount,
-                        }
+                        })
                       );
                       continue;
                     }
@@ -785,17 +812,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       );
 
                       if (effectiveCrawlDelay < robotsCheck.crawlDelay) {
-                        yield* logger.logEvent({
-                          type: 'crawl_delay_capped',
-                          domain,
-                          workerId,
-                          message: `[CRAWL_DELAY] Capping robots.txt delay from ${robotsCheck.crawlDelay}s to ${effectiveCrawlDelay}s`,
-                          details: {
+                        yield* Effect.logInfo(
+                          `capping robots.txt delay from ${robotsCheck.crawlDelay}s to ${effectiveCrawlDelay}s`
+                        ).pipe(
+                          Effect.annotateLogs({
+                            event: 'crawl_delay_capped',
+                            domain,
+                            workerId,
                             robotsCrawlDelay: robotsCheck.crawlDelay,
                             maxCrawlDelay: maxCrawlDelaySeconds,
                             effectiveDelay: effectiveCrawlDelay,
-                          },
-                        });
+                          })
+                        );
                       }
 
                       yield* Effect.sleep(`${effectiveCrawlDelay} seconds`);
@@ -808,14 +836,17 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                   const fetchStartDateTime = yield* DateTime.now;
                   const fetchStartTime = DateTime.toEpochMillis(fetchStartDateTime);
-                  yield* logger.logEdgeCase(domain, 'before_fetch', {
-                    workerId,
-                    url: task.url,
-                    depth: task.depth,
-                    message: 'About to fetch and parse page',
-                    timestamp: DateTime.formatIso(fetchStartDateTime),
-                    fetchStartMs: fetchStartTime,
-                  });
+                  yield* Effect.logDebug('about to fetch and parse page').pipe(
+                    Effect.annotateLogs({
+                      event: 'before_fetch',
+                      domain,
+                      workerId,
+                      url: task.url,
+                      depth: task.depth,
+                      timestamp: DateTime.formatIso(fetchStartDateTime),
+                      fetchStartMs: fetchStartTime,
+                    })
+                  );
 
                   // Fetch and parse the page with aggressive timeout
                   const pageData = yield* scraper
@@ -833,22 +864,32 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
                           // Log timeouts and errors to help debug worker hangs
                           if (error?.name === 'TimeoutException') {
-                            yield* logger.logEdgeCase(domain, 'fetch_timeout', {
-                              workerId,
-                              url: task.url,
-                              message: `Fetch operation timed out after ${fetchDuration}ms`,
-                              durationMs: fetchDuration,
-                              timeoutExpectedMs: 45000,
-                            });
+                            yield* Effect.logWarning(
+                              `fetch timed out after ${fetchDuration}ms`
+                            ).pipe(
+                              Effect.annotateLogs({
+                                event: 'fetch_timeout',
+                                domain,
+                                workerId,
+                                url: task.url,
+                                durationMs: fetchDuration,
+                                timeoutExpectedMs: 45000,
+                              })
+                            );
                           } else {
-                            yield* logger.logEdgeCase(domain, 'fetch_error', {
-                              workerId,
-                              url: task.url,
-                              error: String(error),
-                              errorName: error?.name ?? 'Unknown',
-                              message: `Fetch operation failed after ${fetchDuration}ms`,
-                              durationMs: fetchDuration,
-                            });
+                            yield* Effect.logWarning(
+                              `fetch failed after ${fetchDuration}ms`
+                            ).pipe(
+                              Effect.annotateLogs({
+                                event: 'fetch_error',
+                                domain,
+                                workerId,
+                                url: task.url,
+                                error: String(error),
+                                errorName: error?.name ?? 'Unknown',
+                                durationMs: fetchDuration,
+                              })
+                            );
                           }
                           return Option.none<PageData>();
                         })
@@ -982,19 +1023,23 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     const currentPageCount = yield* localDeduplicator.size();
 
                     // Log successful fetch completion
-                    yield* logger.logEdgeCase(domain, 'fetch_success', {
-                      workerId,
-                      url: task.url,
-                      message: `Fetch completed successfully`,
-                      durationMs: fetchDuration,
-                    });
-
-                    // Log the page being scraped
-                    yield* logger.logPageScraped(
-                      task.url,
-                      domain,
-                      currentPageCount
+                    yield* Effect.logDebug('fetch completed').pipe(
+                      Effect.annotateLogs({
+                        event: 'fetch_success',
+                        domain,
+                        workerId,
+                        url: task.url,
+                        durationMs: fetchDuration,
+                      })
                     );
+
+                    // Emit page scraped event
+                    yield* events.emit({
+                      _tag: 'PageScraped',
+                      url: task.url,
+                      domain,
+                      pageNumber: currentPageCount,
+                    });
 
                     // Publish result
                     const crawlTimestamp = yield* DateTime.now;
@@ -1088,17 +1133,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           // Log queue state after adding URL
                           const newQueueSize = yield* queueManager.size();
                           if (newQueueSize % 10 === 0 || newQueueSize <= 5) {
-                            yield* logger.logEvent({
-                              type: 'queue_status',
-                              domain,
-                              workerId,
-                              message: `[QUEUE_STATE] URL added to queue: ${link}`,
-                              details: {
+                            yield* Effect.logDebug(
+                              `queue: url added: ${link}`
+                            ).pipe(
+                              Effect.annotateLogs({
+                                event: 'queue_status',
+                                domain,
+                                workerId,
                                 queueSize: newQueueSize,
                                 addedUrl: link,
                                 fromUrl: task.url,
-                              },
-                            });
+                              })
+                            );
                           }
                         }
                       }
@@ -1107,15 +1153,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                   // Mark worker as idle (finished processing this task)
                   const newIdleCount = yield* queueManager.markIdle();
-                  yield* logger.logWorkerState(
-                    workerId,
-                    domain,
-                    'task_completed',
-                    {
+                  yield* Effect.logDebug('worker task_completed').pipe(
+                    Effect.annotateLogs({
+                      workerId,
+                      domain,
                       taskUrl: task.url,
                       activeWorkers: newIdleCount,
                       pageProcessed: !!pageData,
-                    }
+                    })
                   );
 
                   // Check if we've reached max pages for this domain (atomic check)
@@ -1131,31 +1176,31 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       );
                       if (wasFirstToReachMax) {
                         // Only the first worker to reach max pages logs completion
-                        yield* logger.logPageScraped(
-                          task.url,
+                        yield* events.emit({
+                          _tag: 'PageScraped',
+                          url: task.url,
                           domain,
-                          currentPageCount
-                        );
-                        yield* logger.logEvent({
-                          type: 'domain_complete',
-                          domain,
-                          message: `Domain ${domain} reached max pages limit: ${currentPageCount}`,
-                          details: {
+                          pageNumber: currentPageCount,
+                        });
+                        yield* Effect.logInfo(
+                          `domain ${domain} reached max pages limit: ${currentPageCount}`
+                        ).pipe(
+                          Effect.annotateLogs({
+                            event: 'domain_max_pages_reached',
+                            domain,
                             currentPageCount,
                             maxPages,
-                            reason: 'max_pages_reached',
-                          },
-                        });
+                          })
+                        );
                       }
-                      yield* logger.logWorkerLifecycle(
-                        workerId,
-                        domain,
-                        'exiting_loop',
-                        'max_pages_reached',
-                        {
+                      yield* Effect.logDebug('worker exiting_loop').pipe(
+                        Effect.annotateLogs({
+                          workerId,
+                          domain,
+                          reason: 'max_pages_reached',
                           currentPageCount,
                           maxPages,
-                        }
+                        })
                       );
                       break;
                     }
@@ -1169,49 +1214,59 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     const maxWorkers = yield* config.getMaxConcurrentWorkers();
 
                     // Log detailed domain status
-                    yield* logger.logDomainStatus(domain, {
-                      pagesScraped: pageCount,
-                      queueSize,
-                      activeWorkers: activeCount,
-                      maxWorkers,
-                    });
+                    yield* Effect.logDebug('domain status').pipe(
+                      Effect.annotateLogs({
+                        event: 'domain_status',
+                        domain,
+                        pagesScraped: pageCount,
+                        queueSize,
+                        activeWorkers: activeCount,
+                        maxWorkers,
+                      })
+                    );
                   }
                 }
 
                 // Log worker lifecycle: exiting main loop (normal exit)
-                yield* logger.logWorkerLifecycle(
-                  workerId,
-                  domain,
-                  'exiting_loop',
-                  'normal_completion'
+                yield* Effect.logDebug('worker exiting_loop').pipe(
+                  Effect.annotateLogs({
+                    workerId,
+                    domain,
+                    reason: 'normal_completion',
+                  })
                 );
               }).pipe(
                 // Ensure this runs even if the worker is interrupted/crashes
                 Effect.ensuring(
-                  logger.logWorkerLifecycle(
-                    workerId,
-                    domain,
-                    'exiting_loop',
-                    'effect_ensuring_cleanup'
+                  Effect.logDebug('worker exiting_loop').pipe(
+                    Effect.annotateLogs({
+                      workerId,
+                      domain,
+                      reason: 'effect_ensuring_cleanup',
+                    })
                   )
                 ),
                 // Add catchAll to handle any unhandled errors
                 Effect.catchAll((error) =>
                   Effect.gen(function* () {
-                    const errorTime = yield* DateTime.now;
-                    yield* logger.logEdgeCase(domain, 'worker_crash', {
-                      workerId,
-                      error: String(error),
-                      message: `Worker ${workerId} crashed with error: ${error}`,
-                      timestamp: DateTime.formatIso(errorTime),
-                    });
+                    yield* Effect.logError(
+                      `worker ${workerId} crashed: ${error}`
+                    ).pipe(
+                      Effect.annotateLogs({
+                        event: 'worker_crash',
+                        domain,
+                        workerId,
+                        error: String(error),
+                      })
+                    );
 
                     // Mark worker as exited due to error
-                    yield* logger.logWorkerLifecycle(
-                      workerId,
-                      domain,
-                      'exiting_loop',
-                      'error_exit'
+                    yield* Effect.logDebug('worker exiting_loop').pipe(
+                      Effect.annotateLogs({
+                        workerId,
+                        domain,
+                        reason: 'error_exit',
+                      })
                     );
 
                     // Re-throw to maintain error semantics
@@ -1226,12 +1281,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               metadata: initialMetadata,
               extractData: options?.extractData,
             });
-            yield* logger.logEvent({
-              type: 'queue_status',
-              domain,
-              message: `[QUEUE_STATE] Initial URL queued: ${urlString}`,
-              details: { queueSize: 1, initialUrl: urlString },
-            });
+            yield* Effect.logDebug(`initial url queued: ${urlString}`).pipe(
+              Effect.annotateLogs({
+                event: 'queue_status',
+                domain,
+                queueSize: 1,
+                initialUrl: urlString,
+              })
+            );
 
             // Start workers with unique IDs using Chunk for immutable collection
             const maxWorkers = yield* config.getMaxConcurrentWorkers();
@@ -1240,15 +1297,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               const workerId = yield* generateWorkerId();
 
               // Log worker lifecycle: creation
-              yield* logger.logWorkerLifecycle(
-                workerId,
-                domain,
-                'created',
-                Option.none<string>().pipe(Option.getOrUndefined),
-                {
+              yield* Effect.logDebug('worker created').pipe(
+                Effect.annotateLogs({
+                  workerId,
+                  domain,
                   workerIndex: i,
                   totalWorkers: maxWorkers,
-                }
+                })
               );
 
               // Workers start idle, they'll mark themselves active when processing tasks
@@ -1287,11 +1342,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 const noProgressMade = pageCount === lastPageCount;
 
                 if (hasNegativeQueue) {
-                  yield* logger.logEdgeCase(domain, 'negative_queue_detected', {
-                    queueSize,
-                    activeWorkers: activeCount,
-                    pageCount,
-                  });
+                  yield* Effect.logWarning('negative queue size').pipe(
+                    Effect.annotateLogs({
+                      event: 'negative_queue_detected',
+                      domain,
+                      queueSize,
+                      activeWorkers: activeCount,
+                      pageCount,
+                    })
+                  );
                 }
 
                 // Critical failure states that require intervention
@@ -1309,16 +1368,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         ? 'negative_queue_size'
                         : 'no_progress_for_60s';
 
-                  yield* logger.logEdgeCase(
-                    domain,
-                    'critical_failure_detected',
-                    {
-                      timeElapsed: `${(stuckIterations + 1) * 30}s`,
+                  yield* Effect.logError('critical failure detected').pipe(
+                    Effect.annotateLogs({
+                      event: 'critical_failure_detected',
+                      domain,
+                      timeElapsedSeconds: (stuckIterations + 1) * 30,
                       pageCount,
                       queueSize,
                       activeWorkers: activeCount,
                       reason,
-                    }
+                    })
                   );
 
                   // Mark domain as completed with error to free up the slot
@@ -1328,7 +1387,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     true
                   );
                   if (wasCompleted) {
-                    yield* logger.logDomainComplete(domain, pageCount, 'error');
+                    yield* events.emit({
+                      _tag: 'DomainComplete',
+                      domain,
+                      pagesScraped: pageCount,
+                      reason: 'error',
+                    });
                   }
                   break;
                 }
@@ -1356,12 +1420,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             yield* Fiber.interrupt(healthMonitorFiber).pipe(Effect.ignore);
 
             // Shut down the queue to signal workers to exit
-            yield* logger.logEvent({
-              type: 'queue_status',
-              domain,
-              message: `[QUEUE_STATE] Shutting down queue for domain completion`,
-              details: { finalQueueSize: yield* queueManager.size() },
-            });
+            yield* Effect.logDebug(
+              'shutting down queue for domain completion'
+            ).pipe(
+              Effect.annotateLogs({
+                event: 'queue_status',
+                domain,
+                finalQueueSize: yield* queueManager.size(),
+              })
+            );
             // Log final page count
             const finalPageCount = yield* localDeduplicator.size();
             const maxPages = yield* config.getMaxPages();
@@ -1369,11 +1436,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               maxPages && finalPageCount >= maxPages
                 ? 'max_pages'
                 : 'queue_empty';
-            yield* logger.logDomainComplete(
+            yield* events.emit({
+              _tag: 'DomainComplete',
               domain,
-              finalPageCount,
-              completionReason
-            );
+              pagesScraped: finalPageCount,
+              reason: completionReason,
+            });
 
             // Close the PubSub to signal stream completion
             yield* PubSub.shutdown(resultPubSub);
@@ -1381,20 +1449,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Wait for sink to finish processing ALL results
             // This is critical: we must ensure all crawled pages are saved to the database
             // before completing. No timeouts - the sink must process everything.
-            yield* logger.logEvent({
-              type: 'spider_lifecycle',
-              domain,
-              message: `Waiting for sink to process remaining results...`,
-            });
+            yield* Effect.logDebug(
+              'waiting for sink to process remaining results'
+            ).pipe(Effect.annotateLogs({ domain }));
 
             yield* Fiber.join(sinkFiber);
 
             // Log successful completion after all results are processed
-            yield* logger.logEvent({
-              type: 'spider_lifecycle',
-              domain,
-              message: `Sink processing complete. All ${finalPageCount} pages saved.`,
-            });
+            yield* Effect.logDebug(
+              `sink processing complete: ${finalPageCount} pages saved`
+            ).pipe(Effect.annotateLogs({ domain, pagesSaved: finalPageCount }));
 
             return {
               completed: true,
@@ -1460,12 +1524,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
             // Implement resume logic using Effect patterns
             const resumeScheduler = yield* SpiderSchedulerService;
-            const resumeLogger = yield* SpiderLogger;
 
             const startTime = yield* DateTime.now;
-            yield* resumeLogger.logSpiderLifecycle('start', {
-              sessionId: stateKey.id,
-              timestamp: DateTime.formatIso(startTime)
+            yield* events.emit({
+              _tag: 'SpiderStart',
+              details: {
+                sessionId: stateKey.id,
+                timestamp: DateTime.formatIso(startTime),
+              },
             });
 
             // Load the saved state using Effect patterns
@@ -1533,10 +1599,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             });
 
             const loadTime = yield* DateTime.now;
-            yield* resumeLogger.logSpiderLifecycle('start', {
-              sessionId: stateKey.id,
-              pendingUrls: restoredUrls.length,
-              timestamp: DateTime.formatIso(loadTime)
+            yield* events.emit({
+              _tag: 'SpiderStart',
+              details: {
+                sessionId: stateKey.id,
+                pendingUrls: restoredUrls.length,
+                timestamp: DateTime.formatIso(loadTime),
+              },
             });
 
             // Resume crawling with restored URLs
@@ -1549,10 +1618,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               );
 
               const completeTime = yield* DateTime.now;
-              yield* resumeLogger.logSpiderLifecycle('complete', {
-                sessionId: stateKey.id,
-                urlsProcessed: restoredUrls.length,
-                timestamp: DateTime.formatIso(completeTime)
+              yield* events.emit({
+                _tag: 'SpiderComplete',
+                details: {
+                  sessionId: stateKey.id,
+                  urlsProcessed: restoredUrls.length,
+                  timestamp: DateTime.formatIso(completeTime),
+                },
               });
 
               return {
@@ -1580,7 +1652,6 @@ export class SpiderService extends Effect.Service<SpiderService>()(
       UrlDeduplicatorService.Default,
       SpiderConfig.Default,
       LinkExtractorService.Default,
-      SpiderLoggerLive,
     ],
   }
 ) {}

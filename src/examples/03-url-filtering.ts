@@ -11,7 +11,7 @@
  */
 
 import { DateTime, Effect, Sink } from 'effect';
-import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderLoggerLive, SpiderService } from '../index.js';
+import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '../index.js';
 
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 03: URL Filtering and Restrictions');
@@ -102,7 +102,7 @@ const config = makeSpiderConfig({
 const mainEffect = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tap((count) => Effect.logInfo(`\n✅ Filtering example completed! Processed ${count} pages after filtering.`)),
   Effect.tap(() => Effect.logInfo('🎯 Demonstrated: Custom regex filters, file type filtering, domain restrictions')),
   Effect.tapError((error) => Effect.logError(`\n❌ Example failed: ${String(error)}`)),

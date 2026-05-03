@@ -1,5 +1,17 @@
 # @jambudipa/spider
 
+## 0.5.0
+
+### Minor Changes
+
+- **BREAKING**: Replace custom `SpiderLogger` service with the idiomatic Effect logging pattern. Two override surfaces, both client-controllable:
+  1. **Diagnostic logs** now flow through Effect's standard `Logger` (`Effect.logDebug`/`logInfo`/`logWarning`/`logError` + `Effect.annotateLogs`). Override with `Logger.replace(Logger.defaultLogger, myLogger)`.
+  2. **Domain events** (`SpiderStart`, `DomainComplete`, `PageScraped`, etc.) emit through a new `SpiderEventSink` `Context.Tag`. Default `SpiderEventSinkNoop` discards them; provide a custom layer to subscribe.
+- Removed: `SpiderLogger`, `SpiderLoggerLive`, `makeSpiderLogger`, `SpiderLogEvent`, `LoggingFetch`, `makeLoggingFetch`, `FetchError`, `LoggingFetchFn`.
+- Added: `SpiderEvent`, `SpiderEventSink`, `SpiderEventSinkService`, `SpiderEventSinkNoop`.
+- Added example: `src/examples/10-custom-logging.ts` demonstrating both override paths.
+- Tests now run headless by default (`HEADLESS=false` to opt out).
+
 ## 0.4.0
 
 ### Minor Changes

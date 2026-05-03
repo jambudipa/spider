@@ -292,6 +292,51 @@ const program = Effect.gen(function* () {
 - **PostgresStorageBackend**: PostgreSQL storage (requires database)
 - **RedisStorageBackend**: Redis storage (requires Redis server)
 
+## Logging and Observability
+
+Spider exposes two independent observability surfaces, both overridable by client code.
+
+### 1. Diagnostic logs (Effect Logger)
+
+All `Effect.log*` calls inside Spider (`logDebug`, `logInfo`, `logWarning`, `logError`) flow through the standard Effect `Logger` system, with structured fields attached via `Effect.annotateLogs`. Override with `Logger.replace`:
+
+```typescript
+import { Effect, Logger, LogLevel } from 'effect';
+
+const myLogger = Logger.make(({ logLevel, message, annotations }) => {
+  // Route to pino, datadog, OpenTelemetry, file, etc.
+  console.log(JSON.stringify({ level: logLevel.label, message, ...Object.fromEntries(annotations) }));
+});
+
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
+  Logger.withMinimumLogLevel(LogLevel.Info),
+);
+```
+
+### 2. Domain events (`SpiderEventSink`)
+
+Typed lifecycle and progress signals — `SpiderStart`, `SpiderComplete`, `SpiderError`, `DomainStart`, `DomainComplete`, `PageScraped` — are emitted to a `SpiderEventSink`. The default sink (`SpiderEventSinkNoop`) discards them. Subscribe by providing your own:
+
+```typescript
+import { Effect, Layer } from 'effect';
+import { SpiderEventSink } from '@jambudipa/spider';
+
+const AnalyticsSink = Layer.succeed(SpiderEventSink, {
+  emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
+});
+
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(AnalyticsSink),
+);
+```
+
+`SpiderEvent` is a discriminated union — switch on `_tag` for exhaustive handling.
+
+See `src/examples/10-custom-logging.ts` for a complete example.
+
 ## Configuration Options
 
 | Option | Type | Default | Description |

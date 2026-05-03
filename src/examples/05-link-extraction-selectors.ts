@@ -20,7 +20,7 @@ import {
   PageData,
   ScraperService,
   SpiderConfig,
-  SpiderLoggerLive,
+  SpiderEventSinkNoop,
   SpiderService
 } from '../index.js';
 
@@ -188,7 +188,7 @@ const runnable = program.pipe(
   Effect.provide(ScraperService.Default),
   Effect.provide(LinkExtractorService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tap((result) =>
     Effect.all([
       Effect.logInfo(`\n✅ Link extraction example completed!`),

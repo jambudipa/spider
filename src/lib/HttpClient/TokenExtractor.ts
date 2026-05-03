@@ -10,7 +10,6 @@ import {
   TokenType,
 } from '../StateManager/StateManager.service.js';
 import { EnhancedHttpClient, type HttpResponse } from './EnhancedHttpClient.js';
-import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 
 // Tagged error types for Effect-style error handling
@@ -106,7 +105,6 @@ export class TokenExtractor extends Context.Tag('TokenExtractor')<
 export const makeTokenExtractor = Effect.gen(function* () {
   const stateManager = yield* StateManager;
   const httpClient = yield* EnhancedHttpClient;
-  const logger = yield* SpiderLogger;
 
   const extractFromHTML = (html: string): TokenInfo[] => {
     const $ = cheerio.load(html);
@@ -339,14 +337,14 @@ export const makeTokenExtractor = Effect.gen(function* () {
             computeExpiryDate()
           );
 
-          yield* logger.logEdgeCase(
-            new URL(response.url).hostname,
-            'token_found',
-            {
+          yield* Effect.logDebug('token found').pipe(
+            Effect.annotateLogs({
+              event: 'token_found',
+              domain: new URL(response.url).hostname,
               type: token.type,
               source: token.source,
               pattern: token.pattern || token.selector,
-            }
+            })
           );
         }
 
@@ -517,14 +515,14 @@ export const makeTokenExtractor = Effect.gen(function* () {
             computeExpiryDate()
           );
 
-          yield* logger.logEdgeCase(
-            new URL(response.url).hostname,
-            'token_rotated',
-            {
+          yield* Effect.logDebug('token rotated').pipe(
+            Effect.annotateLogs({
+              event: 'token_rotated',
+              domain: new URL(response.url).hostname,
               type,
               oldToken: oldToken.substring(0, 8) + '...',
               newToken: newToken.value.substring(0, 8) + '...',
-            }
+            })
           );
 
           return true;

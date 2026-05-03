@@ -1,5 +1,4 @@
 import { DateTime, Duration, Effect, HashMap, Option, Ref, Schedule } from 'effect';
-import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 
 interface WorkerStatus {
   workerId: string;
@@ -16,7 +15,6 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
   '@jambudipa.io/WorkerHealthMonitor',
   {
     effect: Effect.gen(function* () {
-      const logger = yield* SpiderLogger;
       const workers = yield* Ref.make(HashMap.empty<string, WorkerStatus>());
       const stuckThresholdMs = 60000; // 1 minute without activity = stuck
 
@@ -109,19 +107,21 @@ export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
                 for (const worker of stuck) {
                   const nowMillis = DateTime.toEpochMillis(DateTime.unsafeNow());
                   const inactiveMs = nowMillis - DateTime.toEpochMillis(worker.lastActivity);
-                  yield* logger.logEdgeCase(
-                    worker.domain,
-                    'worker_stuck_detected',
-                    {
+                  yield* Effect.logWarning('worker stuck detected').pipe(
+                    Effect.annotateLogs({
+                      event: 'worker_stuck_detected',
+                      domain: worker.domain,
                       workerId: worker.workerId,
                       currentUrl: worker.currentUrl,
                       lastActivity: DateTime.formatIso(worker.lastActivity),
                       inactiveMs,
-                      fetchStartTime: Option.fromNullable(worker.fetchStartTime).pipe(
+                      fetchStartTime: Option.fromNullable(
+                        worker.fetchStartTime
+                      ).pipe(
                         Option.map(DateTime.formatIso),
                         Option.getOrElse(() => 'N/A')
                       ),
-                    }
+                    })
                   );
                 }
               }

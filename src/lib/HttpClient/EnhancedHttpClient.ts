@@ -6,7 +6,6 @@
 import { Context, DateTime, Effect, Layer, Option, Schedule, Duration } from 'effect';
 import { JsonUtils, JsonStringifyError } from '../utils/JsonUtils.js';
 import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
-import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 import { CookieManager } from './CookieManager.js';
 
 export interface HttpRequestOptions {
@@ -74,7 +73,6 @@ export class EnhancedHttpClient extends Context.Tag('EnhancedHttpClient')<
  * Create an EnhancedHttpClient service
  */
 export const makeEnhancedHttpClient = Effect.gen(function* () {
-  const logger = yield* SpiderLogger;
   const cookieManager = yield* CookieManager;
 
   const makeRequest = (url: string, options: HttpRequestOptions = {}): Effect.Effect<HttpResponse, NetworkError | TimeoutError | ParseError> =>
@@ -148,13 +146,17 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
               Effect.gen(function* () {
                 const currentTime = yield* DateTime.now;
                 const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
-                yield* logger.logEdgeCase(domain, 'http_request_abort', {
-                  url,
-                  method: options.method ?? 'GET',
-                  durationMs,
-                  reason: 'timeout',
-                  timeoutMs,
-                });
+                yield* Effect.logWarning('http request aborted (timeout)').pipe(
+                  Effect.annotateLogs({
+                    event: 'http_request_abort',
+                    domain,
+                    url,
+                    method: options.method ?? 'GET',
+                    durationMs,
+                    reason: 'timeout',
+                    timeoutMs,
+                  })
+                );
                 return yield* Effect.fail(
                   new TimeoutError({
                     operation: `HTTP ${options.method ?? 'GET'}`,
@@ -237,15 +239,15 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
       Schedule.compose(Schedule.recurs(retries)),
       Schedule.tapInput((error) =>
         Effect.gen(function* () {
-          yield* logger.logEdgeCase(
-            new URL(url).hostname,
-            'http_request_retry',
-            {
+          yield* Effect.logWarning('http request retry').pipe(
+            Effect.annotateLogs({
+              event: 'http_request_retry',
+              domain: new URL(url).hostname,
               url,
               method: options.method ?? 'GET',
               error: error instanceof Error ? error.message : String(error),
-              attempt: retries
-            }
+              attempt: retries,
+            })
           );
         })
       )

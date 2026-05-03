@@ -4,35 +4,17 @@
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { Effect, Layer } from 'effect';
+import { Effect } from 'effect';
 import { ScraperService } from '../../../lib/Scraper/Scraper.service.js';
-import { SpiderLogger, SpiderLoggerService } from '../../../lib/Logging/SpiderLogger.service.js';
 import { expectFailure } from '../../infrastructure/EffectTestUtils.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const testLoggerLayer = Layer.succeed(SpiderLogger, {
-  logEvent: () => Effect.void,
-  logDomainStart: () => Effect.void,
-  logDomainComplete: () => Effect.void,
-  logPageScraped: () => Effect.void,
-  logQueueStatus: () => Effect.void,
-  logRateLimit: () => Effect.void,
-  logSpiderLifecycle: () => Effect.void,
-  logWorkerLifecycle: () => Effect.void,
-  logWorkerState: () => Effect.void,
-  logCompletionMonitor: () => Effect.void,
-  logEdgeCase: () => Effect.void,
-  logDomainStatus: () => Effect.void,
-} satisfies SpiderLoggerService);
-
-const testLayer = Layer.mergeAll(ScraperService.Default, testLoggerLayer);
-
 const runWithScraper = <A, E>(
-  effect: Effect.Effect<A, E, ScraperService | SpiderLogger>
-) => Effect.runPromise(Effect.provide(effect, testLayer));
+  effect: Effect.Effect<A, E, ScraperService>
+) => Effect.runPromise(Effect.provide(effect, ScraperService.Default));
 
 const htmlPage = (title: string, body: string, meta = '') =>
   `<html><head><title>${title}</title>${meta}</head><body>${body}</body></html>`;
@@ -182,7 +164,7 @@ describe('Scraper Service', () => {
             const scraper = yield* ScraperService;
             return yield* scraper.fetchAndParse('https://unreachable.example.com', 0);
           }),
-          testLayer
+          ScraperService.Default
         )
       );
       expect(error).toBeDefined();

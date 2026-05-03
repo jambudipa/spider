@@ -1,0 +1,196 @@
+# @jambudipa/spider
+
+Effect-native web crawler for Node.js. Spec-driven, fiber-based, with typed errors and structured observability.
+
+## What this package does
+
+- Crawl one or many URLs concurrently with worker fibers per domain
+- Stream `CrawlResult` values through a user-supplied `Sink`
+- Respect robots.txt, configurable per-domain rate limits, depth and page caps
+- Pluggable middleware chain (rate limit, logging, user agent, stats)
+- Optional resumability (file/Postgres backed state)
+- Optional browser engine via Playwright for JS-rendered pages
+
+## Install
+
+```
+npm install @jambudipa/spider effect
+```
+
+`effect` is a peer dependency.
+
+## Minimal usage
+
+```typescript
+import { Chunk, Effect, Sink } from 'effect';
+import {
+  CrawlResult,
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+} from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  let pages: Chunk.Chunk<CrawlResult> = Chunk.empty();
+  const sink = Sink.forEach<CrawlResult, void, never, never>((r) =>
+    Effect.sync(() => { pages = Chunk.append(pages, r); })
+  );
+  const spider = yield* SpiderService;
+  yield* spider.crawl(['https://example.com'], sink);
+  return Chunk.toReadonlyArray(pages);
+});
+
+const runnable = program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(SpiderConfig.Live(makeSpiderConfig({ maxPages: 10, maxDepth: 2 }))),
+  Effect.provide(SpiderEventSinkNoop),
+);
+
+Effect.runPromise(runnable);
+```
+
+## Required services
+
+`SpiderService.Default` declares two unsatisfied requirements that the caller must provide:
+
+1. **`SpiderConfig`** — runtime configuration. Use `SpiderConfig.Live(makeSpiderConfig({...}))` or `SpiderConfig.Default` for defaults.
+2. **`SpiderEventSink`** — domain-event sink. Use `SpiderEventSinkNoop` to ignore, or supply a custom `Layer.succeed(SpiderEventSink, …)` to subscribe.
+
+Failing to provide either is a TypeScript error.
+
+## Logging and observability (v0.5+)
+
+Spider has TWO independent observability surfaces. Both are overridable by the client.
+
+### Surface 1: Effect Logger (diagnostic logs)
+
+Spider uses `Effect.logDebug` / `Effect.logInfo` / `Effect.logWarning` / `Effect.logError` for diagnostic messages, with structured fields attached via `Effect.annotateLogs`. To redirect every log to your own destination (pino, datadog, OpenTelemetry, file, etc.):
+
+```typescript
+import { Effect, Logger, LogLevel } from 'effect';
+
+const myLogger = Logger.make(({ logLevel, message, annotations, fiberId, date }) => {
+  const meta = Object.fromEntries(annotations);
+  console.log(JSON.stringify({
+    timestamp: date.toISOString(),
+    level: logLevel.label,
+    fiberId: String(fiberId),
+    message: Array.isArray(message) ? message.join(' ') : String(message),
+    ...meta,
+  }));
+});
+
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
+  Logger.withMinimumLogLevel(LogLevel.Info),
+);
+```
+
+`Logger.replace`, `Logger.add`, `Logger.replaceScoped` all work as documented in Effect.
+
+### Surface 2: SpiderEventSink (typed domain events)
+
+Lifecycle and progress signals are emitted as a typed discriminated union:
+
+```typescript
+type SpiderEvent =
+  | { _tag: 'SpiderStart';    details?: Record<string, unknown> }
+  | { _tag: 'SpiderComplete'; details?: Record<string, unknown> }
+  | { _tag: 'SpiderError';    details?: Record<string, unknown> }
+  | { _tag: 'DomainStart';    domain: string; startUrl: string }
+  | { _tag: 'DomainComplete'; domain: string; pagesScraped: number; reason: 'max_pages' | 'queue_empty' | 'error' }
+  | { _tag: 'PageScraped';    url: string; domain: string; pageNumber: number };
+```
+
+Subscribe with a layer:
+
+```typescript
+import { Effect, Layer } from 'effect';
+import { SpiderEventSink } from '@jambudipa/spider';
+
+const AnalyticsSink = Layer.succeed(SpiderEventSink, {
+  emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
+});
+
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(AnalyticsSink),
+);
+```
+
+Switch on `_tag` for exhaustive handling. Adding new event kinds in future versions is non-breaking — clients can ignore unknown tags or rely on TS exhaustiveness checks for coverage.
+
+## Public API surface
+
+Top-level exports from `@jambudipa/spider`:
+
+- **Spider**: `SpiderService`, `CrawlResult`, `CrawlTask`, `SpiderLinkExtractionOptions`, `SPIDER_DEFAULTS`
+- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`
+- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`
+- **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
+- **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
+- **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`
+- **Robots / Scraper / PageData**: `RobotsService`, `ScraperService`, `PageData`
+- **HTTP client**: `EnhancedHttpClient`, `CookieManager`, `HttpRequestOptions`, `HttpResponse`, `Session`
+- **Resumability**: `ResumabilityService`, `ResumabilityConfigs`, `FullStatePersistence`, `DeltaPersistence`, `HybridPersistence`, `StateDelta`, `FileStorageBackend`, `PostgresStorageBackend`, plus types
+- **URL dedup**: `UrlDeduplicatorService`, `IUrlDeduplicator`
+- **Errors**: `NetworkError`, `ResponseError`, `RobotsTxtError`, `ConfigurationError`, `MiddlewareError`, `FileSystemError`, `PersistenceError`, `ContentTypeError`, `RequestAbortError`, `AdapterNotInitialisedError`, `BrowserError`, `BrowserCleanupError`, `TimeoutError`, `ParseError`, `ValidationError`, `PageError`, `StateError`, `SessionError`, `CrawlError`, `QueueError`, `ConfigError`, plus `isSpiderError`, `isNetworkError`, `isBrowserError`, `SpiderError`, `AllSpiderErrors`
+
+## Crawling model
+
+- `spider.crawl(urls, sink)` returns `Effect<{ completed: true }, …>`
+- One worker fiber pool per starting domain; concurrency controlled by `maxConcurrentWorkers`
+- Inter-domain concurrency from `Effect.all`'s `concurrency` option (currently equal to number of starting URLs)
+- Each domain has its own URL deduplicator, request queue, and rate limit window
+- Robots.txt is checked per request unless `ignoreRobotsTxt` is set
+- The `sink` receives results as they arrive; the spider waits for the sink to finish processing all results before returning
+
+## Common configuration
+
+```typescript
+makeSpiderConfig({
+  maxPages: 100,            // hard cap per domain
+  maxDepth: 3,              // BFS depth from start URL
+  ignoreRobotsTxt: false,
+  userAgent: 'MyBot/1.0',
+  maxConcurrentWorkers: 5,  // workers per domain
+  requestDelayMs: 500,      // courtesy delay between fetches
+})
+```
+
+## Common error types
+
+- `NetworkError` — DNS/connection issues, status >= 500
+- `ResponseError` — body parse failures
+- `ContentTypeError` — non-text content type returned
+- `RequestAbortError` — fetch timeout or abort
+- `RobotsTxtError` — fetched URL blocked by robots.txt
+- `TimeoutError` — generic Effect timeout
+- `StateError` — resumability state load/save failure
+
+Use `Effect.catchTags({ NetworkError: …, ResponseError: … })` for branching.
+
+## Examples
+
+The `src/examples/` directory in the repo (not shipped with the npm package) covers:
+
+1. `01-basic-crawl-working.ts` — single URL, depth limit, sink collection
+2. `02-multiple-urls-working.ts` — multiple starting URLs across domains
+3. `03-url-filtering.ts` — custom URL include/exclude patterns
+4. `04-robots-compliance.ts` — robots.txt handling
+5. `05-link-extraction-selectors.ts` — CSS selector-based extraction
+6. `06-custom-middleware.ts` — writing custom middleware
+7. `07-resumability-demo.ts` — pause/resume with file backend
+8. `08-worker-monitoring.ts` — observing worker health
+9. `09-error-handling-recovery.ts` — typed error catching
+10. `10-custom-logging.ts` — Effect Logger override + custom event sink
+
+## Versioning
+
+Pre-1.0. Minor versions may include breaking API changes (per pre-1.0 semver convention). Patch versions are non-breaking. Read the CHANGELOG before upgrading.
+
+## Repository
+
+https://github.com/jambudipa/spider

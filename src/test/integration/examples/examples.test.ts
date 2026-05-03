@@ -94,9 +94,6 @@ describe('Spider Examples', () => {
         // Should provide SpiderService
         expect(content).toContain('SpiderService.Default');
 
-        // Should provide SpiderLoggerLive
-        expect(content).toContain('SpiderLoggerLive');
-
         // Should use Effect.provide
         expect(content).toContain('Effect.provide');
       });

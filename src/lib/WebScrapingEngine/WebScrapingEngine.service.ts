@@ -15,7 +15,6 @@ import {
   StateManager,
   TokenType,
 } from '../StateManager/StateManager.service.js';
-import { SpiderLogger } from '../Logging/SpiderLogger.service.js';
 import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 import { JsonStringifyError } from '../utils/JsonUtils.js';
 
@@ -137,7 +136,6 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
   const sessionStore = yield* SessionStore;
   const tokenExtractor = yield* TokenExtractor;
   const stateManager = yield* StateManager;
-  const logger = yield* SpiderLogger;
 
   const service: WebScrapingEngineService = {
     login: (credentials: LoginCredentials) =>
@@ -145,10 +143,14 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         const domain = new URL(credentials.loginUrl).hostname;
 
         // First, get the login page to extract CSRF token
-        yield* logger.logEdgeCase(domain, 'login_start', {
-          url: credentials.loginUrl,
-          username: credentials.username,
-        });
+        yield* Effect.logDebug('login start').pipe(
+          Effect.annotateLogs({
+            event: 'login_start',
+            domain,
+            url: credentials.loginUrl,
+            username: credentials.username,
+          })
+        );
 
         const loginPageResponse = yield* httpClient.get(credentials.loginUrl);
 
@@ -178,9 +180,13 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
             ) || 'csrf_token';
 
           formData[csrfFieldName] = csrfTokenOption.value;
-          yield* logger.logEdgeCase(domain, 'csrf_token_added', {
-            field: csrfFieldName,
-          });
+          yield* Effect.logDebug('csrf token added').pipe(
+            Effect.annotateLogs({
+              event: 'csrf_token_added',
+              domain,
+              field: csrfFieldName,
+            })
+          );
         }
 
         // Submit login form
@@ -228,10 +234,14 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
           }
         }
 
-        yield* logger.logEdgeCase(domain, 'login_success', {
-          sessionId: session.id,
-          tokensFound: Array.from(HashMap.keys(tokens)),
-        });
+        yield* Effect.logInfo('login success').pipe(
+          Effect.annotateLogs({
+            event: 'login_success',
+            domain,
+            sessionId: session.id,
+            tokensFound: Array.from(HashMap.keys(tokens)),
+          })
+        );
 
         return {
           id: session.id,
@@ -301,10 +311,14 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
           const csrfFieldName = csrfFieldNames[0]; // Default to first option
           enhancedFormData[csrfFieldName] = csrfToken.value;
 
-          yield* logger.logEdgeCase(domain, 'csrf_protected_form', {
-            url,
-            csrfField: csrfFieldName,
-          });
+          yield* Effect.logDebug('csrf protected form').pipe(
+            Effect.annotateLogs({
+              event: 'csrf_protected_form',
+              domain,
+              url,
+              csrfField: csrfFieldName,
+            })
+          );
         }
 
         // Submit the form

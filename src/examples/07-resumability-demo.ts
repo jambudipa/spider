@@ -18,7 +18,7 @@ import {
   makeSpiderConfig,
   ResumabilityService,
   SpiderConfig,
-  SpiderLoggerLive,
+  SpiderEventSinkNoop,
   SpiderSchedulerService,
   SpiderService,
   SpiderStateKey
@@ -193,7 +193,7 @@ const mainEffect = program.pipe(
   Effect.provide(ResumabilityService.Default),
   Effect.provide(SpiderSchedulerService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tap((progress) =>
     Effect.gen(function* () {
       yield* Effect.log(`\n✅ Resumability example completed!`);

@@ -11,7 +11,7 @@
  */
 
 import { DateTime, Effect, HashMap, HashSet, Option, Sink } from 'effect';
-import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderLoggerLive, SpiderService } from '../index.js';
+import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '../index.js';
 
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 02: Multiple Starting URLs');
@@ -125,7 +125,7 @@ const config = makeSpiderConfig({
 const mainEffect = program.pipe(
   Effect.provide(SpiderService.Default),
   Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderLoggerLive),
+  Effect.provide(SpiderEventSinkNoop),
   Effect.tap((results) => Effect.logInfo(`\n✅ Example completed! Total pages crawled: ${results.length}`)),
   Effect.tapError((error) => Effect.logError(`\n❌ Example failed: ${String(error)}`)),
   Effect.map((results) => {

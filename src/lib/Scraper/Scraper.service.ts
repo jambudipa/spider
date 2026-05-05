@@ -95,7 +95,11 @@ export class ScraperService extends Effect.Service<ScraperService>()(
        * - Uses AbortController to prevent hanging requests
        * - No execution of JavaScript content (static HTML parsing only)
        */
-      fetchAndParse: (url: string, depth = 0) =>
+      fetchAndParse: (
+        url: string,
+        depth = 0,
+        userAgent: string = 'JambudipaSpider/1.0'
+      ) =>
         Effect.gen(function* () {
           const startTime = yield* DateTime.now;
           const startMs = DateTime.toEpochMillis(startTime);
@@ -105,9 +109,15 @@ export class ScraperService extends Effect.Service<ScraperService>()(
 
           const timeoutMs = 30000; // 30 seconds
 
-          // Create the fetch effect with timeout
+          // Create the fetch effect with timeout. `signal` is auto-injected by
+          // Effect.tryPromise — fiber interruption (incl. the timeoutOption
+          // below) cancels the underlying fetch, releasing the socket.
           const fetchEffect = Effect.tryPromise({
-            try: () => globalThis.fetch(url),
+            try: (signal) =>
+              globalThis.fetch(url, {
+                headers: { 'User-Agent': userAgent },
+                signal,
+              }),
             catch: (error) => {
               if (error instanceof Error && error.name === 'AbortError') {
                 return RequestAbortError.timeout(url, timeoutMs);
@@ -269,7 +279,10 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           };
 
           // Validate with schema
-          return yield* Schema.decode(PageDataSchema)(pageData);
+          const validated = yield* Schema.decode(PageDataSchema)(pageData);
+          // `response.url` is the final URL after all HTTP redirects
+          // (Node.js native fetch, Node 18+).
+          return { pageData: validated, finalUrl: response.url };
         }),
     })),
   }

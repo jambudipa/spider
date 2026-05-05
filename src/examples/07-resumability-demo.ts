@@ -68,9 +68,13 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       crawlProgress.pagesProcessed++;
 
-      yield* Effect.log(`✓ [${crawlProgress.pagesProcessed}] ${result.pageData.url}`);
-      yield* Effect.log(`  Title: ${result.pageData.title ?? '(no title)'}`);
-      yield* Effect.log(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}`);
+      if (CrawlResult.isOk(result)) {
+        yield* Effect.log(`✓ [${crawlProgress.pagesProcessed}] ${result.pageData.url}`);
+        yield* Effect.log(`  Title: ${result.pageData.title ?? '(no title)'}`);
+        yield* Effect.log(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}`);
+      } else {
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
 
       // Simulate saving state periodically (every 2 pages)
       if (crawlProgress.pagesProcessed % 2 === 0) {

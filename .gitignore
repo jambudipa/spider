@@ -72,3 +72,14 @@ CLAUDE.md
 fix-all-type-errors-loop.sh
 
 /tools
+
+# BMad workflow artefacts
+/_bmad
+/_bmad-output
+
+# AI tool directories
+.ai/
+.serena/
+
+# Test output
+junit.xml

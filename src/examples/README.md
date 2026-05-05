@@ -8,10 +8,10 @@ Run any example from the project root:
 
 ```bash
 # Basic crawling example
-npx tsx examples/01-basic-crawl-working.ts
+npx tsx src/examples/01-basic-crawl-working.ts
 
 # Multiple URLs with concurrent crawling
-npx tsx examples/02-multiple-urls-working.ts
+npx tsx src/examples/02-multiple-urls-working.ts
 ```
 
 ## 📚 Example Catalog
@@ -31,7 +31,7 @@ Demonstrates fundamental Spider usage:
 - Error handling and statistics
 
 ```bash
-npx tsx examples/01-basic-crawl-working.ts
+npx tsx src/examples/01-basic-crawl-working.ts
 ```
 
 **Key Learning Points:**
@@ -53,7 +53,7 @@ Showcases concurrent crawling capabilities:
 - Result categorization by section
 
 ```bash
-npx tsx examples/02-multiple-urls-working.ts
+npx tsx src/examples/02-multiple-urls-working.ts
 ```
 
 **Key Learning Points:**
@@ -75,7 +75,7 @@ Demonstrates advanced filtering capabilities:
 - Technical URL filtering (malformed, long URLs)
 
 ```bash
-npx tsx examples/03-url-filtering.ts
+npx tsx src/examples/03-url-filtering.ts
 ```
 
 **Expected Output:**
@@ -118,7 +118,7 @@ Shows ethical crawling practices:
 - Timing analysis and statistics
 
 ```bash
-npx tsx examples/04-robots-compliance.ts
+npx tsx src/examples/04-robots-compliance.ts
 ```
 
 **Expected Output:**
@@ -158,7 +158,7 @@ Advanced link extraction techniques:
 - Multi-element link extraction strategies
 
 ```bash
-npx tsx examples/05-link-extraction-selectors.ts
+npx tsx src/examples/05-link-extraction-selectors.ts
 ```
 
 **Key Learning Points:**
@@ -180,7 +180,7 @@ Middleware system demonstration:
 - URL pattern detection
 
 ```bash
-npx tsx examples/06-custom-middleware.ts
+npx tsx src/examples/06-custom-middleware.ts
 ```
 
 **Key Learning Points:**
@@ -202,7 +202,7 @@ State persistence and resumable crawling:
 - State persistence demonstrations
 
 ```bash
-npx tsx examples/07-resumability-demo.ts
+npx tsx src/examples/07-resumability-demo.ts
 ```
 
 **Key Learning Points:**
@@ -224,7 +224,7 @@ Worker performance and health monitoring:
 - Worker efficiency analysis
 
 ```bash
-npx tsx examples/08-worker-monitoring.ts
+npx tsx src/examples/08-worker-monitoring.ts
 ```
 
 **Key Learning Points:**
@@ -240,20 +240,42 @@ npx tsx examples/08-worker-monitoring.ts
 **Status:** ✅ Working
 
 Comprehensive error handling strategies:
-- Error classification and tracking
+- Error classification and tracking via `CrawlResult.isError` + `PageFetchErrorKind`
 - Recovery mechanism implementation
 - Statistics collection and analysis
 - Graceful degradation patterns
 
 ```bash
-npx tsx examples/09-error-handling-recovery.ts
+npx tsx src/examples/09-error-handling-recovery.ts
 ```
 
 **Key Learning Points:**
-- Error handling best practices
+- Error handling best practices with `CrawlResultError`
 - Recovery strategy implementation
 - Error analytics and reporting
 - Reliability engineering
+
+---
+
+#### 10. Custom Logging and Event Handling
+**File:** `10-custom-logging.ts`
+**Status:** ✅ Working
+
+Demonstrates both independent observability surfaces:
+- Custom Effect Logger for diagnostic log redirection
+- Custom `SpiderEventSink` for typed domain events
+- Structured log formatting with timestamps, levels, and fiber IDs
+- Integration with external analytics or event buses
+
+```bash
+npx tsx src/examples/10-custom-logging.ts
+```
+
+**Key Learning Points:**
+- Two observability surfaces: Effect Logger vs SpiderEventSink
+- `Logger.replace` for redirecting all Effect.log* calls
+- Custom sink layer for `SpiderStart`, `DomainComplete`, `PageScraped`, etc.
+- Both surfaces independently overridable
 
 ---
 
@@ -273,11 +295,11 @@ Examples can be run directly with tsx:
 
 ```bash
 # Run a specific example
-npx tsx examples/<example-name>.ts
+npx tsx src/examples/<example-name>.ts
 
 # Examples with output
-npx tsx examples/01-basic-crawl-working.ts
-npx tsx examples/02-multiple-urls-working.ts
+npx tsx src/examples/01-basic-crawl-working.ts
+npx tsx src/examples/02-multiple-urls-working.ts
 ```
 
 ### Expected Output
@@ -323,6 +345,7 @@ Crawling web-scraping.dev for basic functionality
 7. **07-resumability-demo.ts** - Implement persistent crawling
 8. **08-worker-monitoring.ts** - Monitor and optimize performance
 9. **09-error-handling-recovery.ts** - Build robust crawling systems
+10. **10-custom-logging.ts** - Override logging and event observability
 
 ---
 
@@ -407,45 +430,20 @@ curl -I https://web-scraping.dev/
 
 ## 📝 Example Status Summary
 
-| Example | Status | Description | Testing | Priority |
-|---------|--------|-------------|---------|----------|
-| 01-basic-crawl-working.ts | ✅ Working | Basic Spider usage | ✅ Manual tested | ✅ Ready |
-| 02-multiple-urls-working.ts | ✅ Working | Concurrent crawling | ✅ Manual tested | ✅ Ready |
-| 03-url-filtering.ts | ✅ Working | URL filtering | ✅ Manual tested | ✅ Ready |
-| 04-robots-compliance.ts | ✅ Working | Robots.txt handling | ✅ Manual tested | ✅ Ready |
-| 05-link-extraction-selectors.ts | ✅ Working | Advanced extraction | ⚪ Needs testing | 🔶 Medium |
-| 06-custom-middleware.ts | ✅ Working | Middleware system | ⚪ Needs testing | 🔶 Medium |
-| 07-resumability-demo.ts | ✅ Working | State persistence | ⚪ Needs testing | 🔶 Medium |
-| 08-worker-monitoring.ts | ✅ Working | Performance monitoring | ⚪ Needs testing | 🔶 Medium |
-| 09-error-handling-recovery.ts | ✅ Working | Error handling | ⚪ Needs testing | 🔶 Medium |
+| Example | Status | Description |
+|---------|--------|-------------|
+| 01-basic-crawl-working.ts | ✅ Working | Basic Spider usage |
+| 02-multiple-urls-working.ts | ✅ Working | Concurrent crawling |
+| 03-url-filtering.ts | ✅ Working | URL filtering |
+| 04-robots-compliance.ts | ✅ Working | Robots.txt handling |
+| 05-link-extraction-selectors.ts | ✅ Working | Advanced extraction |
+| 06-custom-middleware.ts | ✅ Working | Middleware system |
+| 07-resumability-demo.ts | ✅ Working | State persistence |
+| 08-worker-monitoring.ts | ✅ Working | Performance monitoring |
+| 09-error-handling-recovery.ts | ✅ Working | Error handling with `CrawlResultError` |
+| 10-custom-logging.ts | ✅ Working | Custom logging and event handling |
 
-**Summary:** 9/9 examples working (100% functional success rate)
-**Testing Status:** 4/9 examples manually verified (44% coverage)
-
-All examples successfully demonstrate Spider functionality against web-scraping.dev. The automated test suite expects minor API pattern updates for compliance, but all examples execute successfully and show real crawling results.
-
-### Test Automation Status
-
-**Structural Tests:** ✅ Passing (68/81 tests)
-- File existence validation
-- Import path verification
-- Basic code structure compliance
-
-**API Compliance Tests:** ⚠️ Minor issues (13/81 failing)
-- Expected `Sink.forEach<CrawlResult>` typing patterns
-- Some examples use newer `Sink.forEach<CrawlResult, void, never, never>` syntax
-- Robots.txt examples use updated API methods (`checkUrl` vs `isAllowed`)
-
-**Runtime Tests:** ✅ Manual verification successful
-- Examples 01-04: Fully tested and working
-- Examples 05-09: Need manual verification but execute successfully
-
-### Future Improvements
-
-1. **Automated Runtime Testing:** Add timeout-based execution tests
-2. **API Pattern Updates:** Align examples with latest testing expectations  
-3. **Coverage Expansion:** Test all 9 examples in CI pipeline
-4. **Performance Benchmarks:** Add timing and memory usage validation
+**Summary:** 10/10 examples compile cleanly and demonstrate current API.
 
 ---
 

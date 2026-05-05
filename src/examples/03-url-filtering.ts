@@ -24,9 +24,13 @@ const program = Effect.gen(function* () {
   const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
       processedCount++;
-      yield* Effect.logInfo(`✓ Processed: ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Title: ${result.pageData.title || '(no title)'}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}\n`);
+      if (CrawlResult.isOk(result)) {
+        yield* Effect.logInfo(`✓ Processed: ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Title: ${result.pageData.title || '(no title)'}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}\n`);
+      } else {
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
     })
   );
 

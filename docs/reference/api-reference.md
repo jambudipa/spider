@@ -17,9 +17,11 @@ const program = Effect.gen(function* () {
   // Access services using yield*
   const spider = yield* SpiderService;
   
-  // Create a sink to process results
-  const collectSink = Sink.forEach((result) =>
-    Effect.sync(() => console.log(`Crawled: ${result.pageData.title}`))
+  // Create a sink to process results (CrawlResult is a discriminated union — guard before pageData)
+  const collectSink = Sink.forEach<CrawlResult>((result) =>
+    Effect.sync(() => {
+      if (CrawlResult.isOk(result)) console.log(`Crawled: ${result.pageData.title}`)
+    })
   );
   
   // Call service methods within Effect.gen
@@ -63,12 +65,12 @@ const program = Effect.gen(function* () {
 // Default layer with all dependencies
 SpiderService.Default
 
-// Custom dependencies
-Effect.provide(program, Layer.mergeAll(
-  SpiderService.Default,
-  SpiderConfig.Live(customConfig),
-  SpiderLogger.Live({ logLevel: 'debug' })
-));
+// Custom configuration and event sink
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(SpiderConfig.Live(customConfig)),
+  Effect.provide(SpiderEventSinkNoop), // or a custom sink
+);
 ```
 
 #### Methods
@@ -80,7 +82,7 @@ Crawls websites and streams results through an Effect Sink.
 **Type Signature:**
 ```typescript
 crawl: <A, E, R>(
-  startingUrls: string | string[] | UrlWithMetadata | UrlWithMetadata[],
+  startingUrls: string | StartUrlEntry | ReadonlyArray<string | StartUrlEntry>,
   sink: Sink.Sink<A, CrawlResult, E, R>,
   options?: SpiderLinkExtractionOptions
 ) => Effect.Effect<{ completed: boolean }, never>
@@ -90,7 +92,7 @@ crawl: <A, E, R>(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `startingUrls` | `string \| string[] \| UrlWithMetadata \| UrlWithMetadata[]` | URL(s) to start crawling from |
+| `startingUrls` | `string \| StartUrlEntry \| ReadonlyArray<string \| StartUrlEntry>` | URL(s) to start crawling from. `StartUrlEntry` supports `{ url, fallbackUrls?, metadata? }` for probe-based fallback selection |
 | `sink` | `Sink.Sink<A, CrawlResult, E, R>` | Effect Sink to process crawl results |
 | `options` | `SpiderLinkExtractionOptions?` | Optional link extraction configuration |
 
@@ -266,24 +268,145 @@ const program = Effect.gen(function* () {
 Effect.provide(program, SpiderConfig.Live(config));
 ```
 
+### SpiderEventSink
+
+Typed domain-event sink for lifecycle and progress signals. Spider has two independent observability surfaces; `SpiderEventSink` is the structured-event one.
+
+```typescript
+class SpiderEventSink extends Context.Tag('@jambudipa/spider/SpiderEventSink')<
+  SpiderEventSink,
+  { emit: (event: SpiderEvent) => Effect.Effect<void> }
+>() {}
+
+// No-op default (discards all events)
+const SpiderEventSinkNoop: Layer.Layer<SpiderEventSink>;
+```
+
+**Providing a custom sink:**
+
+```typescript
+import { Layer } from 'effect';
+import { SpiderEventSink } from '@jambudipa/spider';
+
+const AnalyticsSink = Layer.succeed(SpiderEventSink, {
+  emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
+});
+
+program.pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(AnalyticsSink),
+);
+```
+
+#### SpiderEvent
+
+Discriminated union of all nine event types. Switch on `_tag` for exhaustive handling.
+
+All events are `Data.TaggedClass` instances (v0.6+) — construct with `new EventClass({…})`.
+
+| Class | `_tag` | Fields | Added |
+|-------|--------|--------|-------|
+| `SpiderStartEvent` | `'SpiderStart'` | `details?` | 0.5 |
+| `SpiderCompleteEvent` | `'SpiderComplete'` | `details?` | 0.5 |
+| `SpiderErrorEvent` | `'SpiderError'` | `details?` | 0.5 |
+| `DomainStartEvent` | `'DomainStart'` | `domain`, `startUrl` | 0.5 |
+| `DomainCompleteEvent` | `'DomainComplete'` | `domain`, `startUrl`, `finalStartUrl`, `pagesScraped`, `pagesAttempted`, `pagesFailed`, `reason`, `durationMs` | 0.5 (enriched 0.7) |
+| `PageScrapedEvent` | `'PageScraped'` | `url`, `domain`, `pageNumber` | 0.5 |
+| `RobotsBlockedEvent` | `'RobotsBlocked'` | `url`, `domain`, `disallowRule?` | 0.7 |
+| `StartUrlChosenEvent` | `'StartUrlChosen'` | `domain`, `attempted`, `chosen` | 0.9 |
+| `StartUrlRedirectedEvent` | `'StartUrlRedirected'` | `domain`, `from`, `to`, `chain` | 0.9 |
+
+`DomainCompleteEvent.reason` values: `'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed'`
+
+See `src/examples/10-custom-logging.ts` for a complete example.
+
 ## Data Types
 
 ### CrawlResult
 
-Result of crawling a single page.
+`CrawlResult` is a discriminated union — either a successful page or a typed fetch error. Added in v0.7.
 
 ```typescript
-interface CrawlResult {
-  /** The extracted page data including content, links, and metadata */
-  pageData: PageData;
-  /** The depth at which this page was crawled */
-  depth: number;
-  /** When this page was crawled */
-  timestamp: Date;
-  /** Optional metadata passed through from the original request */
-  metadata?: Record<string, unknown>;
+type CrawlResult = CrawlResultOk | CrawlResultError;
+
+// Narrowing helpers
+CrawlResult.isOk(result)    // true when _tag === 'ok'
+CrawlResult.isError(result) // true when _tag === 'error'
+```
+
+#### CrawlResultOk
+
+```typescript
+class CrawlResultOk extends Data.TaggedClass('ok')<{
+  readonly pageData: PageData;
+  readonly depth: number;
+  readonly timestamp: Date;
+  readonly metadata?: Record<string, unknown>;
+}> {}
+```
+
+#### CrawlResultError
+
+```typescript
+class CrawlResultError extends Data.TaggedClass('error')<{
+  readonly url: string;
+  readonly depth: number;
+  readonly timestamp: Date;
+  readonly metadata?: Record<string, unknown>;
+  readonly error: PageFetchError;
+}> {}
+```
+
+#### PageFetchError
+
+Structured error attached to `CrawlResultError.error`.
+
+```typescript
+interface PageFetchError {
+  readonly kind: PageFetchErrorKind;
+  readonly durationMs: number;
+  readonly statusCode?: number;
+  readonly message: string;
+  readonly attemptsMade: number;
+}
+
+type PageFetchErrorKind =
+  | 'timeout'
+  | 'dns'
+  | 'http_4xx'
+  | 'http_429'
+  | 'http_5xx'
+  | 'connection_refused'
+  | 'other';
+```
+
+**Sink pattern:**
+
+```typescript
+const sink = Sink.forEach<CrawlResult>(result =>
+  Effect.sync(() => {
+    if (CrawlResult.isOk(result)) {
+      console.log(`OK: ${result.pageData.title}`);
+    } else {
+      console.log(`${result.error.kind}: ${result.url} (attempt ${result.error.attemptsMade})`);
+    }
+  })
+);
+```
+
+### StartUrlEntry
+
+Pass multiple candidate start URLs with optional fallback probing (v0.9+).
+
+```typescript
+interface StartUrlEntry {
+  readonly url: string;
+  readonly fallbackUrls?: ReadonlyArray<string>;
+  readonly metadata?: Record<string, unknown>;
 }
 ```
+
+When `fallbackUrls` is provided, each candidate is HEAD-probed (5 s timeout) and the first reachable URL becomes the effective start URL. `StartUrlChosenEvent` reports the outcome.
 
 ### PageData
 
@@ -331,16 +454,19 @@ export interface SpiderLinkExtractionOptions {
 }
 ```
 
-### UrlWithMetadata
+### StartUrlEntry
 
-URL input with optional metadata.
+URL input with optional fallback candidates and metadata (v0.9+).
 
 ```typescript
-interface UrlWithMetadata {
-  url: string;
-  metadata?: Record<string, unknown>;
+interface StartUrlEntry {
+  readonly url: string;
+  readonly fallbackUrls?: ReadonlyArray<string>;
+  readonly metadata?: Record<string, unknown>;
 }
 ```
+
+When `fallbackUrls` is present each candidate is HEAD-probed in order; the first reachable URL becomes the effective start URL.
 
 ## Supporting Services
 

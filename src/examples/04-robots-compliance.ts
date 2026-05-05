@@ -47,24 +47,28 @@ const program = Effect.gen(function* () {
   // Track timing to demonstrate rate limiting using immutable Chunk
   let crawlTimes: Chunk.Chunk<CrawlTiming> = Chunk.empty();
 
-  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result) =>
+  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const nowMs = DateTime.toEpochMillis(now);
-      const crawlTimesArray = Chunk.toReadonlyArray(crawlTimes);
-      const previousTime = crawlTimesArray.length > 0 ? crawlTimesArray[crawlTimesArray.length - 1].timestamp : nowMs;
-      const actualDelay = nowMs - previousTime;
+      if (CrawlResult.isOk(result)) {
+        const now = yield* DateTime.now;
+        const nowMs = DateTime.toEpochMillis(now);
+        const crawlTimesArray = Chunk.toReadonlyArray(crawlTimes);
+        const previousTime = crawlTimesArray.length > 0 ? crawlTimesArray[crawlTimesArray.length - 1].timestamp : nowMs;
+        const actualDelay = nowMs - previousTime;
 
-      crawlTimes = Chunk.append(crawlTimes, {
-        url: result.pageData.url,
-        timestamp: nowMs,
-        delay: actualDelay
-      });
+        crawlTimes = Chunk.append(crawlTimes, {
+          url: result.pageData.url,
+          timestamp: nowMs,
+          delay: actualDelay
+        });
 
-      yield* Effect.logInfo(`✓ ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
-      yield* Effect.logInfo(`  Delay since last: ${actualDelay}ms`);
-      yield* Effect.logInfo(`  Scrape time: ${result.pageData.scrapeDurationMs}ms\n`);
+        yield* Effect.logInfo(`✓ ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
+        yield* Effect.logInfo(`  Delay since last: ${actualDelay}ms`);
+        yield* Effect.logInfo(`  Scrape time: ${result.pageData.scrapeDurationMs}ms\n`);
+      } else {
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
     })
   );
 

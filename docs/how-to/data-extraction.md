@@ -8,7 +8,7 @@ Extract specific elements using CSS selectors:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const basicExtractionProgram = Effect.gen(function* () {
   const spider = yield* SpiderService;
@@ -55,7 +55,7 @@ Effect.runPromise(
   basicExtractionProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -128,7 +128,7 @@ Effect.runPromise(
   advancedSelectorsProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config2)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -207,7 +207,7 @@ Effect.runPromise(
   extractFromTableProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config3)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -276,7 +276,7 @@ Effect.runPromise(
   extractJsonDataProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config4)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -358,7 +358,7 @@ Effect.runPromise(
   dataTransformationsProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config5)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -369,7 +369,7 @@ For pages that load content dynamically, use browser integration:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const extractDynamicContentProgram = Effect.gen(function* () {
   const spider = yield* SpiderService;
@@ -415,7 +415,7 @@ Effect.runPromise(
   extractDynamicContentProgram.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config6)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -472,7 +472,7 @@ const regexExtractionProgram = Effect.gen(function* () {
 Effect.runPromise(
   regexExtractionProgram.pipe(
     Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -547,7 +547,7 @@ const extractMediaProgram = Effect.gen(function* () {
 Effect.runPromise(
   extractMediaProgram.pipe(
     Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -605,7 +605,7 @@ const robustExtractionProgram = Effect.gen(function* () {
 Effect.runPromise(
   robustExtractionProgram.pipe(
     Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```

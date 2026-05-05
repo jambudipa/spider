@@ -34,7 +34,13 @@ import {
 const program = Effect.gen(function* () {
   let pages: Chunk.Chunk<CrawlResult> = Chunk.empty();
   const sink = Sink.forEach<CrawlResult, void, never, never>((r) =>
-    Effect.sync(() => { pages = Chunk.append(pages, r); })
+    Effect.sync(() => {
+      pages = Chunk.append(pages, r);
+      // CrawlResult is a discriminated union — guard before accessing pageData
+      if (CrawlResult.isOk(r)) {
+        // r.pageData is available here
+      }
+    })
   );
   const spider = yield* SpiderService;
   yield* spider.crawl(['https://example.com'], sink);
@@ -95,13 +101,19 @@ program.pipe(
 Lifecycle and progress signals are emitted as a typed discriminated union:
 
 ```typescript
+// All nine events are Data.TaggedClass instances (v0.6+).
+// Construct with `new EventClass({...})`, not plain object literals.
 type SpiderEvent =
-  | { _tag: 'SpiderStart';    details?: Record<string, unknown> }
-  | { _tag: 'SpiderComplete'; details?: Record<string, unknown> }
-  | { _tag: 'SpiderError';    details?: Record<string, unknown> }
-  | { _tag: 'DomainStart';    domain: string; startUrl: string }
-  | { _tag: 'DomainComplete'; domain: string; pagesScraped: number; reason: 'max_pages' | 'queue_empty' | 'error' }
-  | { _tag: 'PageScraped';    url: string; domain: string; pageNumber: number };
+  | SpiderStartEvent    // { _tag: 'SpiderStart';    details?: Record<string, unknown> }
+  | SpiderCompleteEvent // { _tag: 'SpiderComplete'; details?: Record<string, unknown> }
+  | SpiderErrorEvent    // { _tag: 'SpiderError';    details?: Record<string, unknown> }
+  | DomainStartEvent    // { _tag: 'DomainStart';  domain; startUrl }
+  | DomainCompleteEvent // { _tag: 'DomainComplete'; domain; startUrl; finalStartUrl; pagesScraped;
+                        //   pagesAttempted; pagesFailed: {kind,count}[]; reason; durationMs }
+  | PageScrapedEvent    // { _tag: 'PageScraped';   url; domain; pageNumber }
+  | RobotsBlockedEvent  // { _tag: 'RobotsBlocked'; url; domain; disallowRule? }       — v0.7+
+  | StartUrlChosenEvent // { _tag: 'StartUrlChosen'; domain; attempted: string[]; chosen }  — v0.9+
+  | StartUrlRedirectedEvent; // { _tag: 'StartUrlRedirected'; domain; from; to; chain }  — v0.9+
 ```
 
 Subscribe with a layer:
@@ -126,9 +138,10 @@ Switch on `_tag` for exhaustive handling. Adding new event kinds in future versi
 
 Top-level exports from `@jambudipa/spider`:
 
-- **Spider**: `SpiderService`, `CrawlResult`, `CrawlTask`, `SpiderLinkExtractionOptions`, `SPIDER_DEFAULTS`
-- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`
-- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`
+- **Spider**: `SpiderService`, `CrawlResult`, `CrawlResultOk`, `CrawlResultError`, `CrawlTask`, `StartUrlEntry`, `SpiderLinkExtractionOptions`, `DataExtractionConfig`, `FieldExtractionConfig`, `SPIDER_DEFAULTS`
+- **Error types (result-level)**: `PageFetchError`, `PageFetchErrorKind`
+- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `resolveUserAgent`
+- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`
 - **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
 - **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`
@@ -160,17 +173,46 @@ makeSpiderConfig({
 })
 ```
 
+Advanced config objects (v0.8+/v0.9+):
+
+```typescript
+makeSpiderConfig({
+  // Treat www.example.com and example.com as the same domain
+  domainEquivalence: { wwwHandling: 'ignore-www', protocolHandling: 'ignore-protocol', subdomainHandling: 'strict' },
+
+  // Retry up to 3 times on transient errors
+  fetchRetry: { maxAttempts: 3, baseBackoffMs: 500, retryOn: ['timeout', 'http_5xx', 'connection_refused'] },
+
+  // Follow cross-domain redirects from start URLs
+  crossDomainRedirects: { enabled: true, maxHops: 3 },
+
+  // Rotate user agents, sticky per domain
+  userAgentStrategy: { kind: 'rotating', pool: ['BotA/1.0', 'BotB/1.0'], perDomain: true },
+})
+```
+
 ## Common error types
 
-- `NetworkError` — DNS/connection issues, status >= 500
-- `ResponseError` — body parse failures
-- `ContentTypeError` — non-text content type returned
-- `RequestAbortError` — fetch timeout or abort
-- `RobotsTxtError` — fetched URL blocked by robots.txt
-- `TimeoutError` — generic Effect timeout
-- `StateError` — resumability state load/save failure
+Fetch errors are reported as `CrawlResultError` values inside the sink (v0.7+); they do not propagate as Effect-channel failures. Inspect `result.error.kind` (`PageFetchErrorKind`) to branch:
 
-Use `Effect.catchTags({ NetworkError: …, ResponseError: … })` for branching.
+```typescript
+if (CrawlResult.isError(result)) {
+  switch (result.error.kind) {
+    case 'timeout':           // fetch timed out
+    case 'dns':               // DNS resolution failed
+    case 'http_4xx':          // 4xx response
+    case 'http_429':          // rate-limited
+    case 'http_5xx':          // server error
+    case 'connection_refused':
+    case 'other':
+  }
+}
+```
+
+Infrastructure errors that _do_ propagate as Effect failures (e.g. state persistence, misconfiguration):
+- `ConfigError` — invalid `makeSpiderConfig` arguments (e.g. `fetchRetry.maxAttempts < 1`)
+- `StateError` — resumability state load/save failure
+- `NetworkError`, `ResponseError`, `ContentTypeError`, `RequestAbortError`, `TimeoutError` — available for browser-engine or custom-client paths that run outside the retry pipeline
 
 ## Examples
 

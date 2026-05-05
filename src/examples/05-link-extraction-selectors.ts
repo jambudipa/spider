@@ -35,7 +35,8 @@ const program = Effect.gen(function* () {
   const linkExtractor = yield* LinkExtractorService;
 
   // Scrape a test page to demonstrate link extraction
-  const testPageData: PageData = yield* scraper.fetchAndParse('https://web-scraping.dev/products');
+  const fetchResult = yield* scraper.fetchAndParse('https://web-scraping.dev/products');
+  const testPageData: PageData = fetchResult.pageData;
 
   yield* Effect.logInfo(`✓ Scraped page: ${testPageData.title ?? '(no title)'}`);
   yield* Effect.logInfo(`  Content length: ${testPageData.html.length} chars\n`);
@@ -98,15 +99,19 @@ const program = Effect.gen(function* () {
   // Now demonstrate during actual crawling with advanced extraction
   let extractedLinks = HashMap.empty<string, readonly string[]>();
 
-  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result) =>
+  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
-      const _domain = new URL(result.pageData.url).hostname;
+      if (CrawlResult.isOk(result)) {
+        const _domain = new URL(result.pageData.url).hostname;
 
-      yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Title: ${result.pageData.title ?? '(no title)'}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
-      yield* Effect.logInfo(`  Note: Link extraction would be done via LinkExtractorService on demand`);
-      yield* Effect.logInfo('');
+        yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Title: ${result.pageData.title ?? '(no title)'}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
+        yield* Effect.logInfo(`  Note: Link extraction would be done via LinkExtractorService on demand`);
+        yield* Effect.logInfo('');
+      } else {
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
     })
   );
 

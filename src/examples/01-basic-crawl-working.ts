@@ -22,11 +22,15 @@ const program = Effect.gen(function* () {
   const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
       results = Chunk.append(results, result);
-      yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Title: ${result.pageData.title || '(no title)'}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
-      yield* Effect.logInfo(`  Depth: ${result.depth}`);
-      yield* Effect.logInfo(`  Duration: ${result.pageData.scrapeDurationMs}ms\n`);
+      if (CrawlResult.isOk(result)) {
+        yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Title: ${result.pageData.title || '(no title)'}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
+        yield* Effect.logInfo(`  Depth: ${result.depth}`);
+        yield* Effect.logInfo(`  Duration: ${result.pageData.scrapeDurationMs}ms\n`);
+      } else {
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
     })
   );
 
@@ -42,18 +46,19 @@ const program = Effect.gen(function* () {
 
   // Convert to array for processing
   const resultsArray = Chunk.toReadonlyArray(results);
+  const okResults = resultsArray.filter(CrawlResult.isOk);
 
   // Display summary
   yield* Effect.logInfo('📊 Crawl Summary:');
-  yield* Effect.logInfo(`- Total pages crawled: ${resultsArray.length}`);
+  yield* Effect.logInfo(`- Total pages crawled: ${okResults.length}`);
   yield* Effect.logInfo(`- Total duration: ${durationSeconds.toFixed(2)}s`);
-  const avgLoadTime = resultsArray.length > 0
-    ? resultsArray.reduce<number>((sum, r) => sum + r.pageData.scrapeDurationMs, 0) / resultsArray.length
+  const avgLoadTime = okResults.length > 0
+    ? okResults.reduce<number>((sum, r) => sum + r.pageData.scrapeDurationMs, 0) / okResults.length
     : 0;
   yield* Effect.logInfo(`- Average page load time: ${avgLoadTime.toFixed(0)}ms`);
 
   // Analyze results
-  const statusCodes = resultsArray.reduce<Record<number, number>>((acc, r) => {
+  const statusCodes = okResults.reduce<Record<number, number>>((acc, r) => {
     const code = r.pageData.statusCode;
     acc[code] = (acc[code] ?? 0) + 1;
     return acc;

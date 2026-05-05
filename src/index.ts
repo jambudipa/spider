@@ -20,10 +20,22 @@ export * from './lib/PageData/PageData.js';
 export type {
   SpiderConfigOptions,
   SpiderConfigService,
+  DomainEquivalenceConfig,
+  FetchRetryConfig,
+  RetryableErrorKind,
+  CrossDomainRedirectConfig,
+  UserAgentStrategy,
+  FileExtensionFilters,
+  TechnicalFilters,
 } from './lib/Config/SpiderConfig.service.js';
 export {
   SpiderConfig,
   makeSpiderConfig,
+  buildFetchRetrySchedule,
+  defaultDomainEquivalence,
+  defaultFetchRetry,
+  defaultCrossDomainRedirects,
+  resolveUserAgent,
 } from './lib/Config/SpiderConfig.service.js';
 
 // Export UrlDeduplicator service
@@ -67,10 +79,14 @@ export {
 
 // Re-export specific items that tests need
 export type {
-  CrawlResult,
+  CrawlResultOk,
+  CrawlResultError,
   CrawlTask,
   SpiderLinkExtractionOptions,
+  StartUrlEntry,
 } from './lib/Spider/Spider.service.js';
+export { CrawlResult } from './lib/Spider/Spider.service.js';
+export type { PageFetchErrorKind, PageFetchError } from './lib/Spider/Spider.types.js';
 
 // Export Resumability types and services
 export type {
@@ -148,8 +164,17 @@ export type {
   SpiderEventSinkService,
 } from './lib/Logging/SpiderEventSink.js';
 export {
+  SpiderStartEvent,
+  SpiderCompleteEvent,
+  SpiderErrorEvent,
+  DomainStartEvent,
+  DomainCompleteEvent,
+  PageScrapedEvent,
+  RobotsBlockedEvent,
   SpiderEventSink,
   SpiderEventSinkNoop,
+  StartUrlChosenEvent,
+  StartUrlRedirectedEvent,
 } from './lib/Logging/SpiderEventSink.js';
 
 // Export HTTP Client components

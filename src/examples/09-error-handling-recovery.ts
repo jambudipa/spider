@@ -64,38 +64,46 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       totalRequests++;
 
-      const domain = new URL(result.pageData.url).hostname;
+      if (CrawlResult.isOk(result)) {
+        const domain = new URL(result.pageData.url).hostname;
 
-      // Analyze result for error conditions
-      if (result.pageData.statusCode >= 200 && result.pageData.statusCode < 300) {
-        successfulRequests++;
-        yield* Effect.logInfo(`✅ Success: ${result.pageData.url}`);
-        yield* Effect.logInfo(`   Status: ${result.pageData.statusCode}, Time: ${result.pageData.scrapeDurationMs}ms`);
-      } else if (result.pageData.statusCode >= 400 && result.pageData.statusCode < 500) {
-        clientErrors++;
-        const currentCount = Option.getOrElse(HashMap.get(errorsByDomain, domain), () => 0);
-        errorsByDomain = HashMap.set(errorsByDomain, domain, currentCount + 1);
-        yield* Effect.logInfo(`⚠️  Client Error: ${result.pageData.url}`);
-        yield* Effect.logInfo(`   Status: ${result.pageData.statusCode} - Client error handled gracefully`);
-      } else if (result.pageData.statusCode >= 500) {
-        serverErrors++;
+        // Analyze result for error conditions
+        if (result.pageData.statusCode >= 200 && result.pageData.statusCode < 300) {
+          successfulRequests++;
+          yield* Effect.logInfo(`✅ Success: ${result.pageData.url}`);
+          yield* Effect.logInfo(`   Status: ${result.pageData.statusCode}, Time: ${result.pageData.scrapeDurationMs}ms`);
+        } else if (result.pageData.statusCode >= 400 && result.pageData.statusCode < 500) {
+          clientErrors++;
+          const currentCount = Option.getOrElse(HashMap.get(errorsByDomain, domain), () => 0);
+          errorsByDomain = HashMap.set(errorsByDomain, domain, currentCount + 1);
+          yield* Effect.logInfo(`⚠️  Client Error: ${result.pageData.url}`);
+          yield* Effect.logInfo(`   Status: ${result.pageData.statusCode} - Client error handled gracefully`);
+        } else if (result.pageData.statusCode >= 500) {
+          serverErrors++;
+          const currentCount = Option.getOrElse(HashMap.get(errorsByDomain, domain), () => 0);
+          errorsByDomain = HashMap.set(errorsByDomain, domain, currentCount + 1);
+          failedDomains = HashSet.add(failedDomains, domain);
+          yield* Effect.logInfo(`❌ Server Error: ${result.pageData.url}`);
+          yield* Effect.logInfo(`   Status: ${result.pageData.statusCode} - Server error detected`);
+        } else {
+          yield* Effect.logInfo(`ℹ️  Other Response: ${result.pageData.url}`);
+          yield* Effect.logInfo(`   Status: ${result.pageData.statusCode}`);
+        }
+
+        // Check for slow responses that might indicate issues
+        if (result.pageData.scrapeDurationMs > 10000) {
+          yield* Effect.logInfo(`   ⏰ Slow response detected (${result.pageData.scrapeDurationMs}ms)`);
+        }
+
+        yield* Effect.logInfo(`   Title: ${result.pageData.title ?? '(no title)'}`);
+        yield* Effect.logInfo(`   Content: ${result.pageData.html.length} chars\n`);
+      } else {
+        const domain = new URL(result.url).hostname;
         const currentCount = Option.getOrElse(HashMap.get(errorsByDomain, domain), () => 0);
         errorsByDomain = HashMap.set(errorsByDomain, domain, currentCount + 1);
         failedDomains = HashSet.add(failedDomains, domain);
-        yield* Effect.logInfo(`❌ Server Error: ${result.pageData.url}`);
-        yield* Effect.logInfo(`   Status: ${result.pageData.statusCode} - Server error detected`);
-      } else {
-        yield* Effect.logInfo(`ℹ️  Other Response: ${result.pageData.url}`);
-        yield* Effect.logInfo(`   Status: ${result.pageData.statusCode}`);
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind}) - ${result.error.message}`);
       }
-
-      // Check for slow responses that might indicate issues
-      if (result.pageData.scrapeDurationMs > 10000) {
-        yield* Effect.logInfo(`   ⏰ Slow response detected (${result.pageData.scrapeDurationMs}ms)`);
-      }
-
-      yield* Effect.logInfo(`   Title: ${result.pageData.title ?? '(no title)'}`);
-      yield* Effect.logInfo(`   Content: ${result.pageData.html.length} chars\n`);
     })
   );
 

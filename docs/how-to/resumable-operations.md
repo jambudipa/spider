@@ -8,7 +8,7 @@ Enable resumable operations with minimal configuration:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, FileStorageBackend, ResumabilityService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, FileStorageBackend, ResumabilityService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const basicResumableScrapingProgram = Effect.gen(function* () {
   // Configure resumability with file-based storage
@@ -43,7 +43,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -93,7 +93,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(resumeConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -104,7 +104,7 @@ Use PostgreSQL for distributed or high-performance scenarios:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, ResumabilityService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, ResumabilityService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const databaseResumabilityProgram = Effect.gen(function* () {
   const resumabilityService = yield* ResumabilityService;
@@ -133,7 +133,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(dbConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -144,7 +144,7 @@ Use Redis for distributed crawling across multiple machines:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, ResumabilityService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, ResumabilityService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const distributedResumabilityProgram = Effect.gen(function* () {
   const resumabilityService = yield* ResumabilityService;
@@ -172,7 +172,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(distributedConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -183,7 +183,7 @@ Implement custom persistence behaviour:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, ResumabilityService, HybridPersistence, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, ResumabilityService, HybridPersistence, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const customPersistenceProgram = Effect.gen(function* () {
   const resumabilityService = yield* ResumabilityService;
@@ -209,7 +209,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(hybridConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -220,7 +220,7 @@ Resume authenticated sessions securely:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, ResumabilityService, SessionStore, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, ResumabilityService, SessionStore, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
 
 const resumableAuthenticatedCrawlProgram = Effect.gen(function* () {
   const resumabilityService = yield* ResumabilityService;
@@ -275,7 +275,7 @@ Effect.runPromise(
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SessionStore.Default),
     Effect.provide(SpiderConfig.Live(authConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -360,7 +360,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(robustConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -401,7 +401,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(optimisedConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```
@@ -465,7 +465,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(ResumabilityService.Default),
     Effect.provide(SpiderConfig.Live(monitoredConfig)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).catch(console.error);
 ```

@@ -1,4 +1,214 @@
-import { Chunk, Effect, Layer, Option } from 'effect';
+import {
+  Chunk,
+  Duration,
+  Effect,
+  HashMap,
+  Layer,
+  MutableRef,
+  Option,
+  Schedule,
+} from 'effect';
+import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
+import { classifyFetchError } from '../Spider/Spider.types.js';
+import { ConfigError } from '../errors/effect-errors.js';
+
+/**
+ * Strategies for treating two hostnames/protocols as equivalent
+ * during domain-restricted crawling.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface DomainEquivalenceConfig {
+  /** `'ignore'` treats `www.X` and `X` as the same domain. `'strict'` treats them as different. */
+  readonly wwwHandling: 'ignore' | 'strict';
+  /** `'permissive'` allows http<->https when domain matches. `'strict'` requires identical protocol. */
+  readonly protocolHandling: 'permissive' | 'strict';
+  /** `'strict'` blocks `sub.X` from matching `X`. `'ignore'` allows arbitrary subdomains under the starting domain. */
+  readonly subdomainHandling: 'strict' | 'ignore';
+}
+
+/**
+ * Default domain-equivalence settings used when no explicit config is provided.
+ *
+ * @group Configuration
+ * @public
+ */
+export const defaultDomainEquivalence: DomainEquivalenceConfig = {
+  wwwHandling: 'ignore',
+  protocolHandling: 'permissive',
+  subdomainHandling: 'strict',
+};
+
+/**
+ * Error kinds that may be retried by the fetch pipeline.
+ * Mirrors the discriminator on {@link PageFetchError}.
+ *
+ * @group Configuration
+ * @public
+ */
+export type RetryableErrorKind = PageFetchErrorKind;
+
+/**
+ * Retry policy for the page-fetch pipeline.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface FetchRetryConfig {
+  /** Total attempts including the initial one (must be >= 1). */
+  readonly maxAttempts: number;
+  /** Base backoff in milliseconds for the exponential schedule. */
+  readonly baseBackoffMs: number;
+  /** Error kinds that trigger a retry. Errors outside this list propagate immediately. */
+  readonly retryOn: ReadonlyArray<RetryableErrorKind>;
+}
+
+/**
+ * Default fetch-retry policy.
+ *
+ * @group Configuration
+ * @public
+ */
+export const defaultFetchRetry: FetchRetryConfig = {
+  maxAttempts: 3,
+  baseBackoffMs: 1000,
+  retryOn: ['timeout', 'http_5xx', 'http_429'],
+};
+
+/**
+ * Build the Effect retry schedule used by the page-fetch pipeline.
+ *
+ * Exported so callers (production code and tests) share a single source
+ * of truth — production drift will surface in tests immediately rather
+ * than silently passing against a stale local copy.
+ *
+ * Shape: exponential backoff intersected with `recurs(maxAttempts - 1)`,
+ * gated by `whileInput(isRetryable)` so non-retryable error kinds stop
+ * the schedule immediately.
+ *
+ * @group Configuration
+ * @public
+ */
+export const buildFetchRetrySchedule = (
+  cfg: FetchRetryConfig
+): Schedule.Schedule<readonly [Duration.Duration, number]> => {
+  // `classifyFetchError` could in principle throw on exotic wrapped
+  // errors (FiberFailure, Cause); a throw inside the predicate would
+  // crash the worker. Treat any classification failure as non-retryable
+  // so the error surfaces normally. try/catch is the right shape here
+  // because the predicate is sync.
+  const isRetryable = (error: unknown): boolean => {
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- sync predicate, defensive guard against exotic error shapes
+    try {
+      const kind = classifyFetchError(error, 0, 0).kind;
+      return cfg.retryOn.includes(kind);
+    } catch {
+      return false;
+    }
+  };
+  return Schedule.exponential(Duration.millis(cfg.baseBackoffMs)).pipe(
+    Schedule.intersect(Schedule.recurs(Math.max(0, cfg.maxAttempts - 1))),
+    Schedule.whileInput(isRetryable)
+  );
+};
+
+/**
+ * Cross-domain redirect handling for start URLs.
+ *
+ * When `enabled` is `true` and the start URL's HTTP response resolves to a
+ * different hostname (e.g. `example.org` → `example.org.au`), the spider
+ * updates the per-domain restriction to the final host so subsequent links
+ * are followed on the redirected domain. When `false` (the default),
+ * cross-domain redirects produce zero pages because every discovered link
+ * is treated as off-domain.
+ *
+ * `maxHops` is informational only — `globalThis.fetch` follows redirects
+ * transparently and does not expose intermediate hops, so the emitted
+ * {@link StartUrlRedirectedEvent.chain} contains only `[from, to]`.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface CrossDomainRedirectConfig {
+  readonly enabled: boolean;
+  readonly maxHops: number;
+}
+
+/**
+ * Default cross-domain redirect policy: disabled.
+ *
+ * @group Configuration
+ * @public
+ */
+export const defaultCrossDomainRedirects: CrossDomainRedirectConfig = {
+  enabled: false,
+  maxHops: 3,
+};
+
+/**
+ * User-agent selection strategy for outgoing requests.
+ *
+ * - `static`: use a fixed UA string for every request (the existing
+ *   `userAgent` shorthand in {@link SpiderConfigOptions} is sugar for this).
+ * - `rotating`: pick from a pool. With `perDomain: true`, each domain gets a
+ *   sticky UA chosen on first contact; with `perDomain: false`, a fresh
+ *   selection is made per request.
+ * - `custom`: synchronous resolver invoked per request. Useful when the UA
+ *   depends on request metadata (e.g. URL patterns).
+ *
+ * Anti-bot evasion beyond UA — `Accept-Language`, `Referer`, TLS fingerprint
+ * randomisation, JavaScript execution — is out of scope. Consumers needing
+ * deeper evasion must implement it externally.
+ *
+ * @group Configuration
+ * @public
+ */
+export type UserAgentStrategy =
+  | { readonly kind: 'static'; readonly userAgent: string }
+  | {
+      readonly kind: 'rotating';
+      readonly pool: ReadonlyArray<string>;
+      readonly perDomain: boolean;
+    }
+  | { readonly kind: 'custom'; readonly resolver: (url: string) => string };
+
+/**
+ * Resolve the User-Agent string for a given request.
+ *
+ * Pure function — `cache` is mutated in place when `rotating` + `perDomain`
+ * is selected to keep the per-domain UA stable across requests within one
+ * crawl session. The cache is owned by the caller (typically the `crawl`
+ * method) so its lifetime is one crawl invocation.
+ *
+ * @group Configuration
+ * @public
+ */
+export const resolveUserAgent = (
+  strategy: UserAgentStrategy,
+  domain: string,
+  cache: MutableRef.MutableRef<HashMap.HashMap<string, string>>
+): string => {
+  if (strategy.kind === 'static') return strategy.userAgent;
+  if (strategy.kind === 'custom') return strategy.resolver(domain);
+  // rotating
+  const pick = () =>
+    // This helper is a synchronous pure function called from non-Effect
+    // contexts (per spec). UA selection is presentational, not security-
+    // sensitive; deterministic testing uses the cache (perDomain stickiness)
+    // rather than seeded randomness.
+    // eslint-disable-next-line effect/no-math-random-use-random
+    strategy.pool[Math.floor(Math.random() * strategy.pool.length)] ?? '';
+  if (strategy.perDomain) {
+    const current = MutableRef.get(cache);
+    const cached = HashMap.get(current, domain);
+    if (Option.isSome(cached)) return cached.value;
+    const ua = pick();
+    MutableRef.update(cache, (m) => HashMap.set(m, domain, ua));
+    return ua;
+  }
+  return pick();
+};
 
 /**
  * File extension filter categories based on Scrapy's IGNORED_EXTENSIONS.
@@ -160,6 +370,36 @@ export interface SpiderConfigOptions {
    * @default false
    */
   readonly enableResumability: boolean;
+  /**
+   * Domain-equivalence rules used when restricting crawls to the starting domain.
+   * Both the up-front URL deduplication and the per-link `shouldFollowUrl` check
+   * derive their behaviour from this config so the two paths stay in sync.
+   *
+   * @default defaultDomainEquivalence
+   */
+  readonly domainEquivalence?: DomainEquivalenceConfig;
+  /**
+   * Retry policy for the page-fetch pipeline.
+   *
+   * @default defaultFetchRetry
+   */
+  readonly fetchRetry?: FetchRetryConfig;
+  /**
+   * Cross-domain redirect handling for start URLs. When enabled, a start URL
+   * that 3xx-redirects to a different hostname updates the per-domain
+   * restriction so the rest of the crawl follows links on the final domain.
+   *
+   * @default defaultCrossDomainRedirects
+   */
+  readonly crossDomainRedirects?: CrossDomainRedirectConfig;
+  /**
+   * User-agent selection strategy. When provided, overrides the `userAgent`
+   * shorthand. When absent, behaviour is equivalent to
+   * `{ kind: 'static', userAgent }`.
+   *
+   * @default undefined
+   */
+  readonly userAgentStrategy?: UserAgentStrategy;
 }
 
 /**
@@ -224,6 +464,12 @@ export interface SpiderConfigService {
   getConcurrency: () => Effect.Effect<number | 'unbounded' | 'inherit'>;
   /** Check if resumable crawling is enabled */
   isResumabilityEnabled: () => Effect.Effect<boolean>;
+  /** Get the fetch-retry policy (returns defaults when not configured). */
+  getFetchRetry: () => Effect.Effect<FetchRetryConfig>;
+  /** Get the domain-equivalence rules (returns defaults when not configured). */
+  getDomainEquivalence: () => Effect.Effect<DomainEquivalenceConfig>;
+  /** Get cross-domain redirect policy (returns defaults when not configured). */
+  getCrossDomainRedirects: () => Effect.Effect<CrossDomainRedirectConfig>;
 }
 
 /**
@@ -432,9 +678,71 @@ const generateSkipExtensions = (filters: FileExtensionFilters): string[] => {
 const safeParseUrl: (urlString: string) => Option.Option<URL> =
   Option.liftThrowable((urlString: string) => new URL(urlString));
 
+/**
+ * Normalise a hostname for domain-equivalence comparison.
+ * Lower-cases the hostname and optionally strips a leading `www.`.
+ *
+ * @internal
+ */
+const normaliseDomainForComparison = (
+  hostname: string,
+  equiv: DomainEquivalenceConfig
+): string => {
+  let h = hostname.toLowerCase();
+  if (equiv.wwwHandling === 'ignore') {
+    // Greedy strip — `www.www.example.com` → `example.com` — covers the
+    // (rare but observed) case where a misconfigured server adds `www.`
+    // twice in CNAMEs or links.
+    h = h.replace(/^(www\.)+/, '');
+  }
+  // Strip a trailing dot (`example.com.` and `example.com` are equivalent
+  // per DNS but URL.hostname preserves the dot). Without this the IDN
+  // round-trip below also preserves it, masking equivalence.
+  h = h.replace(/\.$/, '');
+  // Short-circuit on empty string (e.g. input was `www.www.www.` → empty
+  // after the strip). `new URL('http://').hostname` throws; catching it
+  // would leave `h === ''` which is harmless but pointless to round-trip.
+  if (h === '') return h;
+  // Round-trip through URL.hostname so IDN inputs (`例え.jp`) and their
+  // punycode form (`xn--r8jz45g.jp`) collapse to the same canonical
+  // representation. Node's URL parser already returns punycode — no
+  // dependency required. try/catch is appropriate here because the
+  // function is synchronous (used inside `shouldFollowUrl`'s sync block);
+  // wrapping in Effect would force the entire follow-decision pipeline
+  // to become async for what is a defensive guard against an impossible
+  // input (the caller already passed `URL.hostname`).
+  // eslint-disable-next-line effect/no-try-catch-use-effect -- sync helper, defensive guard
+  try {
+    h = new URL(`http://${h}`).hostname;
+  } catch {
+    // Fall through with the lower-cased / www-stripped form.
+  }
+  return h;
+};
+
 export const makeSpiderConfig = (
   options: Partial<SpiderConfigOptions> = {}
 ): SpiderConfigService => {
+  // Validate fetchRetry.maxAttempts up front. The retry schedule uses
+  // `Math.max(0, n - 1)` which silently coerces zero/negative values into
+  // "one attempt total" — surprising and hard to debug. Synchronous throw
+  // matches the existing input-validation pattern: makeSpiderConfig is
+  // called from sync setup code, not from inside Effect.gen, so wrapping
+  // in Effect.fail would force every call site to become async for what
+  // is a programmer error caught at startup.
+  const maxAttemptsOpt = Option.fromNullable(options.fetchRetry?.maxAttempts);
+  if (Option.isSome(maxAttemptsOpt)) {
+    const n = maxAttemptsOpt.value;
+    if (!Number.isInteger(n) || n < 1) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'fetchRetry.maxAttempts',
+        value: n,
+        reason: 'must be a positive integer >= 1 (the initial attempt counts as 1)',
+      });
+    }
+  }
+
   // Default file extension filters (all enabled like Scrapy)
   const defaultFileExtensionFilters: FileExtensionFilters = {
     filterArchives: true,
@@ -521,14 +829,42 @@ export const makeSpiderConfig = (
             if (restrictToStartingDomain) {
               const startingDomainUrlOpt = safeParseUrl(restrictToStartingDomain);
               if (Option.isSome(startingDomainUrlOpt)) {
-                const startingDomain = startingDomainUrlOpt.value.hostname;
+                const equiv =
+                  config.domainEquivalence ?? defaultDomainEquivalence;
+                const startingUrl = startingDomainUrlOpt.value;
+                const normStart = normaliseDomainForComparison(
+                  startingUrl.hostname,
+                  equiv
+                );
+                const normTarget = normaliseDomainForComparison(
+                  url.hostname,
+                  equiv
+                );
+
                 const isAllowedDomain =
-                  url.hostname === startingDomain ||
-                  url.hostname.endsWith(`.${startingDomain}`);
-                if (!isAllowedDomain) {
+                  normTarget === normStart ||
+                  (equiv.subdomainHandling === 'ignore' &&
+                    normTarget.endsWith(`.${normStart}`));
+
+                // `permissive` accepts any protocol that's in the configured
+                // allow-list (so `file:`/`ftp:` defaults work as documented).
+                // `strict` additionally requires the candidate to match the
+                // starting URL's protocol exactly. http/https users see
+                // unchanged behaviour because both protocols remain in
+                // `allowedProtocols` and the permissive branch still allows
+                // either-to-either.
+                const inAllowList = config.allowedProtocols.includes(
+                  url.protocol
+                );
+                const isAllowedProtocol =
+                  equiv.protocolHandling === 'permissive'
+                    ? inAllowList
+                    : inAllowList && url.protocol === startingUrl.protocol;
+
+                if (!isAllowedDomain || !isAllowedProtocol) {
                   return {
                     follow: false,
-                    reason: `Domain ${url.hostname} restricted to starting domain ${startingDomain}`,
+                    reason: `Domain/protocol ${url.hostname} (${url.protocol}) restricted to starting domain ${startingUrl.hostname} (${startingUrl.protocol})`,
                   };
                 }
               }
@@ -706,5 +1042,13 @@ export const makeSpiderConfig = (
       Effect.succeed(config.normalizeUrlsForDeduplication),
     getConcurrency: () => Effect.succeed(config.concurrency),
     isResumabilityEnabled: () => Effect.succeed(config.enableResumability),
+    getFetchRetry: () =>
+      Effect.succeed(config.fetchRetry ?? defaultFetchRetry),
+    getDomainEquivalence: () =>
+      Effect.succeed(config.domainEquivalence ?? defaultDomainEquivalence),
+    getCrossDomainRedirects: () =>
+      Effect.succeed(
+        config.crossDomainRedirects ?? defaultCrossDomainRedirects
+      ),
   };
 };

@@ -429,4 +429,53 @@ describe('SpiderConfig Service', () => {
       expect(result.shouldNormalize).toBe(true);
     });
   });
+
+  describe('getFetchRetry', () => {
+    it('returns defaults when not configured', async () => {
+      const config = makeSpiderConfig();
+      const layer = Layer.succeed(SpiderConfig, config);
+      const program = Effect.gen(function* () {
+        const cfg = yield* SpiderConfig;
+        return yield* cfg.getFetchRetry();
+      });
+      const result = await runTest(program.pipe(Effect.provide(layer)));
+      expect(result.maxAttempts).toBe(3);
+      expect(result.baseBackoffMs).toBe(1000);
+      expect(result.retryOn).toEqual(['timeout', 'http_5xx', 'http_429']);
+    });
+
+    it('returns custom values when configured', async () => {
+      const config = makeSpiderConfig({
+        fetchRetry: {
+          maxAttempts: 5,
+          baseBackoffMs: 250,
+          retryOn: ['timeout'],
+        },
+      });
+      const layer = Layer.succeed(SpiderConfig, config);
+      const program = Effect.gen(function* () {
+        const cfg = yield* SpiderConfig;
+        return yield* cfg.getFetchRetry();
+      });
+      const result = await runTest(program.pipe(Effect.provide(layer)));
+      expect(result.maxAttempts).toBe(5);
+      expect(result.baseBackoffMs).toBe(250);
+      expect(result.retryOn).toEqual(['timeout']);
+    });
+  });
+
+  describe('getDomainEquivalence', () => {
+    it('returns defaults when not configured', async () => {
+      const config = makeSpiderConfig();
+      const layer = Layer.succeed(SpiderConfig, config);
+      const program = Effect.gen(function* () {
+        const cfg = yield* SpiderConfig;
+        return yield* cfg.getDomainEquivalence();
+      });
+      const result = await runTest(program.pipe(Effect.provide(layer)));
+      expect(result.wwwHandling).toBe('ignore');
+      expect(result.protocolHandling).toBe('permissive');
+      expect(result.subdomainHandling).toBe('strict');
+    });
+  });
 });

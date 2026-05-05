@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Layer } from 'effect';
+import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
 
 /**
  * Spider lifecycle started.
@@ -49,8 +50,13 @@ export class DomainStartEvent extends Data.TaggedClass('DomainStart')<{
  */
 export class DomainCompleteEvent extends Data.TaggedClass('DomainComplete')<{
   readonly domain: string;
+  readonly startUrl: string;
+  readonly finalStartUrl: string;
   readonly pagesScraped: number;
-  readonly reason: 'max_pages' | 'queue_empty' | 'error';
+  readonly pagesAttempted: number;
+  readonly pagesFailed: ReadonlyArray<{ readonly kind: PageFetchErrorKind; readonly count: number }>;
+  readonly reason: 'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed';
+  readonly durationMs: number;
 }> {}
 
 /**
@@ -63,6 +69,53 @@ export class PageScrapedEvent extends Data.TaggedClass('PageScraped')<{
   readonly url: string;
   readonly domain: string;
   readonly pageNumber: number;
+}> {}
+
+/**
+ * A URL was blocked by robots.txt before any fetch was attempted.
+ *
+ * @group Observability
+ * @public
+ */
+export class RobotsBlockedEvent extends Data.TaggedClass('RobotsBlocked')<{
+  readonly url: string;
+  readonly domain: string;
+  readonly disallowRule?: string;
+}> {}
+
+/**
+ * A start URL was selected from a primary + fallback candidate list.
+ *
+ * Emitted once per starting entry after the start-URL probing phase, regardless
+ * of whether a fallback was needed. `chosen` is the URL that responded; if every
+ * candidate failed, `chosen` is the primary URL (the crawl will then surface a
+ * fetch failure via {@link CrawlResultError}).
+ *
+ * @group Observability
+ * @public
+ */
+export class StartUrlChosenEvent extends Data.TaggedClass('StartUrlChosen')<{
+  readonly domain: string;
+  readonly attempted: ReadonlyArray<string>;
+  readonly chosen: string;
+}> {}
+
+/**
+ * A start URL was followed via a cross-domain HTTP redirect.
+ *
+ * Emitted only when `crossDomainRedirects.enabled` is `true` and the start URL's
+ * final response URL is on a different hostname. `chain` contains the original
+ * URL and the final URL; intermediate hops are not exposed because
+ * `globalThis.fetch` follows redirects transparently.
+ *
+ * @group Observability
+ * @public
+ */
+export class StartUrlRedirectedEvent extends Data.TaggedClass('StartUrlRedirected')<{
+  readonly domain: string;
+  readonly from: string;
+  readonly to: string;
+  readonly chain: ReadonlyArray<string>;
 }> {}
 
 /**
@@ -86,7 +139,10 @@ export type SpiderEvent =
   | SpiderErrorEvent
   | DomainStartEvent
   | DomainCompleteEvent
-  | PageScrapedEvent;
+  | PageScrapedEvent
+  | RobotsBlockedEvent
+  | StartUrlChosenEvent
+  | StartUrlRedirectedEvent;
 
 /**
  * Service interface for consuming {@link SpiderEvent} signals.

@@ -11,18 +11,26 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        'cheerio', 
-        'domhandler', 
-        'effect', 
+        'cheerio',
+        'domhandler',
+        'effect',
         'tslib',
+        'tough-cookie',
+        'playwright',
+        '@playwright/test',
         'fs',
         'path',
         'url',
         'node:fs',
-        'node:path', 
+        'node:path',
         'node:url',
         'node:crypto',
-        'node:os'
+        'node:os',
+        'node:http',
+        'node:https',
+        'node:stream',
+        'node:buffer',
+        'node:events',
       ],
       output: {
         globals: {

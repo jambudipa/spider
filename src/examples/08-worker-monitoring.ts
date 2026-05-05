@@ -80,40 +80,49 @@ const program = Effect.gen(function* () {
 
   const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
-      const domain = new URL(result.pageData.url).hostname;
+      if (CrawlResult.isOk(result)) {
+        const domain = new URL(result.pageData.url).hostname;
 
-      yield* Ref.update(workerStatsRef, (stats) => {
-        const newDomainsProcessed = HashSet.add(stats.domainsProcessed, domain);
-        const currentDomainCount = HashMap.get(stats.requestsPerDomain, domain);
-        const newDomainCount = currentDomainCount._tag === 'Some' ? currentDomainCount.value + 1 : 1;
-        const newRequestsPerDomain = HashMap.set(stats.requestsPerDomain, domain, newDomainCount);
+        yield* Ref.update(workerStatsRef, (stats) => {
+          const newDomainsProcessed = HashSet.add(stats.domainsProcessed, domain);
+          const currentDomainCount = HashMap.get(stats.requestsPerDomain, domain);
+          const newDomainCount = currentDomainCount._tag === 'Some' ? currentDomainCount.value + 1 : 1;
+          const newRequestsPerDomain = HashMap.set(stats.requestsPerDomain, domain, newDomainCount);
 
-        const newTotalRequests = stats.totalRequests + 1;
-        const isSuccess = result.pageData.statusCode >= 200 && result.pageData.statusCode < 400;
-        const newSuccessfulRequests = stats.successfulRequests + (isSuccess ? 1 : 0);
-        const newFailedRequests = stats.failedRequests + (isSuccess ? 0 : 1);
-        const newTotalResponseTime = stats.totalResponseTime + result.pageData.scrapeDurationMs;
-        const newAverageResponseTime = newTotalResponseTime / newTotalRequests;
+          const newTotalRequests = stats.totalRequests + 1;
+          const isSuccess = result.pageData.statusCode >= 200 && result.pageData.statusCode < 400;
+          const newSuccessfulRequests = stats.successfulRequests + (isSuccess ? 1 : 0);
+          const newFailedRequests = stats.failedRequests + (isSuccess ? 0 : 1);
+          const newTotalResponseTime = stats.totalResponseTime + result.pageData.scrapeDurationMs;
+          const newAverageResponseTime = newTotalResponseTime / newTotalRequests;
 
-        return {
+          return {
+            ...stats,
+            totalRequests: newTotalRequests,
+            successfulRequests: newSuccessfulRequests,
+            failedRequests: newFailedRequests,
+            totalResponseTime: newTotalResponseTime,
+            averageResponseTime: newAverageResponseTime,
+            domainsProcessed: newDomainsProcessed,
+            requestsPerDomain: newRequestsPerDomain
+          };
+        });
+
+        const currentStats = yield* Ref.get(workerStatsRef);
+
+        yield* Effect.logInfo(`✓ [Worker] ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Time: ${result.pageData.scrapeDurationMs}ms`);
+        yield* Effect.logInfo(`  Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`);
+        yield* Effect.logInfo(`  Requests: ${currentStats.totalRequests} (${currentStats.successfulRequests} success, ${currentStats.failedRequests} failed)`);
+        yield* Effect.logInfo(`  Avg Response Time: ${currentStats.averageResponseTime.toFixed(0)}ms\n`);
+      } else {
+        yield* Ref.update(workerStatsRef, (stats) => ({
           ...stats,
-          totalRequests: newTotalRequests,
-          successfulRequests: newSuccessfulRequests,
-          failedRequests: newFailedRequests,
-          totalResponseTime: newTotalResponseTime,
-          averageResponseTime: newAverageResponseTime,
-          domainsProcessed: newDomainsProcessed,
-          requestsPerDomain: newRequestsPerDomain
-        };
-      });
-
-      const currentStats = yield* Ref.get(workerStatsRef);
-
-      yield* Effect.logInfo(`✓ [Worker] ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Time: ${result.pageData.scrapeDurationMs}ms`);
-      yield* Effect.logInfo(`  Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`);
-      yield* Effect.logInfo(`  Requests: ${currentStats.totalRequests} (${currentStats.successfulRequests} success, ${currentStats.failedRequests} failed)`);
-      yield* Effect.logInfo(`  Avg Response Time: ${currentStats.averageResponseTime.toFixed(0)}ms\n`);
+          totalRequests: stats.totalRequests + 1,
+          failedRequests: stats.failedRequests + 1
+        }));
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
+      }
     })
   );
 

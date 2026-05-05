@@ -152,17 +152,20 @@ export class RobotsService extends Effect.Service<RobotsService>()(
           Effect.orElse(() => Effect.succeed(isPathDisallowedFallback(path, disallowedPath)))
         );
 
-      const isPathAllowed = (url: URL, rules: RobotsRules): Effect.Effect<boolean> => {
+      const isPathAllowed = (
+        url: URL,
+        rules: RobotsRules
+      ): Effect.Effect<{ allowed: boolean; disallowRule?: string }> => {
         const path = url.pathname;
 
         return Effect.gen(function* () {
           for (const disallowedPath of rules.disallowedPaths) {
             const isDisallowed = yield* checkPathAgainstPattern(path, disallowedPath);
             if (isDisallowed) {
-              return false;
+              return { allowed: false, disallowRule: disallowedPath };
             }
           }
-          return true;
+          return { allowed: true };
         });
       };
 
@@ -223,11 +226,12 @@ export class RobotsService extends Effect.Service<RobotsService>()(
               rules = cachedRules.value;
             }
 
-            const allowed = yield* isPathAllowed(url, rules);
+            const pathCheck = yield* isPathAllowed(url, rules);
 
             return {
-              allowed,
+              allowed: pathCheck.allowed,
               crawlDelay: rules.crawlDelay,
+              disallowRule: pathCheck.disallowRule,
             };
           }),
 

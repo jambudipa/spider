@@ -22,21 +22,25 @@ const program = Effect.gen(function* () {
 
   const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
-      // Get section from metadata or infer from URL
-      const metadataSection = result.metadata?.section;
-      const sectionFromMetadata = typeof metadataSection === 'string' ? Option.some(metadataSection) : Option.none();
-      const sectionFromUrl = new URL(result.pageData.url).pathname.split('/')[1];
-      const section = Option.getOrElse(sectionFromMetadata, () => sectionFromUrl ?? 'home');
+      if (CrawlResult.isOk(result)) {
+        // Get section from metadata or infer from URL
+        const metadataSection = result.metadata?.section;
+        const sectionFromMetadata = typeof metadataSection === 'string' ? Option.some(metadataSection) : Option.none();
+        const sectionFromUrl = new URL(result.pageData.url).pathname.split('/')[1];
+        const section = Option.getOrElse(sectionFromMetadata, () => sectionFromUrl ?? 'home');
 
-      const existing = HashMap.get(resultsBySection, section);
-      if (existing._tag === 'None') {
-        resultsBySection = HashMap.set(resultsBySection, section, [result]);
+        const existing = HashMap.get(resultsBySection, section);
+        if (existing._tag === 'None') {
+          resultsBySection = HashMap.set(resultsBySection, section, [result]);
+        } else {
+          resultsBySection = HashMap.set(resultsBySection, section, [...existing.value, result]);
+        }
+
+        yield* Effect.logInfo(`✓ [${section}] ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}, ${result.pageData.scrapeDurationMs}ms`);
       } else {
-        resultsBySection = HashMap.set(resultsBySection, section, [...existing.value, result]);
+        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
       }
-
-      yield* Effect.logInfo(`✓ [${section}] ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}, ${result.pageData.scrapeDurationMs}ms`);
     })
   );
 
@@ -80,15 +84,17 @@ const program = Effect.gen(function* () {
     yield* Effect.logInfo(`\n${section}:`);
     yield* Effect.logInfo(`  - Pages crawled: ${results.length}`);
 
+    const okResults = results.filter(CrawlResult.isOk);
+
     // Show unique domains using HashSet
-    const domainsSet = HashSet.fromIterable(results.map((r: CrawlResult) => new URL(r.pageData.url).hostname));
+    const domainsSet = HashSet.fromIterable(okResults.map((r) => new URL(r.pageData.url).hostname));
     const domains = Array.from(HashSet.values(domainsSet));
     yield* Effect.logInfo(`  - Domains: ${domains.join(', ')}`);
 
     // Show categories if present in metadata
     const categoriesSet = HashSet.fromIterable(
-      results
-        .map((r: CrawlResult) => r.metadata?.category)
+      okResults
+        .map((r) => r.metadata?.category)
         .filter((c): c is string => typeof c === 'string')
     );
     const categories = Array.from(HashSet.values(categoriesSet));
@@ -97,7 +103,7 @@ const program = Effect.gen(function* () {
     }
 
     // Show unique status codes using HashSet
-    const statusCodesSet = HashSet.fromIterable(results.map((r: CrawlResult) => r.pageData.statusCode));
+    const statusCodesSet = HashSet.fromIterable(okResults.map((r) => r.pageData.statusCode));
     const statusCodes = Array.from(HashSet.values(statusCodesSet));
     yield* Effect.logInfo(`  - Status codes: ${statusCodes.join(', ')}`);
   }

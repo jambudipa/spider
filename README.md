@@ -37,7 +37,7 @@ A powerful, Effect-based web crawling framework for modern TypeScript applicatio
 
 > **Live Testing**: Our CI pipeline runs all 16 web scraping scenarios against real websites daily, ensuring Spider remains robust against changing web technologies.
 
-### 🔍 **Current Status** (Updated: Jan 2026)
+### 🔍 **Current Status** (Updated: May 2026)
 - ✅ **Core Functionality**: All web scraping scenarios working
 - ✅ **Type Safety**: Full TypeScript compilation without errors
 - ✅ **Build System**: Package builds successfully for distribution
@@ -66,7 +66,7 @@ npm install @jambudipa/spider effect
 ### Your First Crawl
 
 ```typescript
-import { SpiderService, makeSpiderConfig } from '@jambudipa/spider'
+import { CrawlResult, SpiderService } from '@jambudipa/spider'
 import { Effect, Sink } from 'effect'
 
 const program = Effect.gen(function* () {
@@ -74,8 +74,12 @@ const program = Effect.gen(function* () {
   const spider = yield* SpiderService
   
   // Set up result collection
-  const collectSink = Sink.forEach(result =>
-    Effect.sync(() => console.log(`Found: ${result.pageData.title}`))
+  const collectSink = Sink.forEach<CrawlResult>(result =>
+    Effect.sync(() => {
+      if (CrawlResult.isOk(result)) {
+        console.log(`Found: ${result.pageData.title}`)
+      }
+    })
   )
   
   // Start crawling
@@ -137,22 +141,19 @@ The spider can be configured for different scraping scenarios:
 import { makeSpiderConfig } from '@jambudipa/spider';
 
 const config = makeSpiderConfig({
-  // Basic settings
+  // Crawl limits
   maxDepth: 5,
   maxPages: 1000,
-  respectRobotsTxt: true,
-  
+  ignoreRobotsTxt: false,
+
   // Rate limiting
-  rateLimitDelay: 2000,
+  requestDelayMs: 2000,
   maxConcurrentRequests: 3,
-  
+  maxRequestsPerSecondPerDomain: 1,
+
   // Content handling
   followRedirects: true,
-  maxRedirects: 5,
-  
-  // Timeouts
-  requestTimeout: 30000,
-  
+
   // User agent
   userAgent: 'MyBot/1.0'
 });
@@ -190,52 +191,51 @@ Resume interrupted scraping sessions:
 
 ```typescript
 import { 
-  SpiderService, 
-  ResumabilityService,
-  FileStorageBackend 
+  CrawlResult,
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  SpiderStateKey,
 } from '@jambudipa/spider';
-import { Effect, Layer } from 'effect';
+import { Effect, Sink } from 'effect';
 
-// Configure resumability with file storage
-const resumabilityLayer = Layer.succeed(
-  ResumabilityService,
-  ResumabilityService.of({
-    strategy: 'hybrid',
-    backend: new FileStorageBackend('./spider-state')
+// Enable resumability in config
+const config = makeSpiderConfig({ enableResumability: true, maxPages: 50 });
+
+const collectSink = Sink.forEach<CrawlResult>(result =>
+  Effect.sync(() => {
+    if (CrawlResult.isOk(result)) console.log(`Scraped: ${result.pageData.url}`)
   })
 );
 
-const program = Effect.gen(function* () {
+// Initial crawl — saves state automatically
+const startCrawl = Effect.gen(function* () {
   const spider = yield* SpiderService;
-  const resumability = yield* ResumabilityService;
-  
-  // Configure session
-  const sessionKey = 'my-scraping-session';
-  
-  // Check for existing session
-  const existingState = yield* resumability.restore(sessionKey);
-  
-  if (existingState) {
-    console.log('Resuming previous session...');
-    // Resume from saved state
-    yield* spider.resumeFromState(existingState);
-  }
-  
-  // Start or continue crawling
-  const result = yield* spider.crawl({
-    url: 'https://example.com',
-    sessionKey,
-    saveState: true
-  });
-  
-  return result;
+  yield* spider.crawl('https://example.com', collectSink);
 }).pipe(
-  Effect.provide(Layer.mergeAll(
-    SpiderService.Default,
-    resumabilityLayer
-  ))
+  Effect.provide(SpiderService.Default),
+  Effect.provide(SpiderConfig.Live(config)),
+  Effect.provide(SpiderEventSinkNoop),
+);
+
+// Resume a previous session
+const resumeCrawl = Effect.gen(function* () {
+  const spider = yield* SpiderService;
+  const stateKey = new SpiderStateKey({
+    id: 'my-crawl-session',
+    timestamp: new Date('2024-01-01'),
+    name: 'Example Crawl',
+  });
+  yield* spider.resume(stateKey, collectSink);
+}).pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(SpiderConfig.Live(config)),
+  Effect.provide(SpiderEventSinkNoop),
 );
 ```
+
+See `src/examples/07-resumability-demo.ts` for a complete example with `FileStorageBackend`.
 
 ### Link Extraction
 
@@ -339,50 +339,89 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 
 ## Configuration Options
 
+### Basic
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `maxDepth` | number | 3 | Maximum crawling depth |
-| `maxPages` | number | 100 | Maximum pages to crawl |
-| `respectRobotsTxt` | boolean | true | Follow robots.txt rules |
-| `rateLimitDelay` | number | 1000 | Delay between requests (ms) |
-| `maxConcurrentRequests` | number | 1 | Maximum concurrent requests |
-| `requestTimeout` | number | 30000 | Request timeout (ms) |
-| `followRedirects` | boolean | true | Follow HTTP redirects |
-| `maxRedirects` | number | 5 | Maximum redirect hops |
-| `userAgent` | string | Auto-generated | Custom user agent string |
+| `ignoreRobotsTxt` | `boolean` | `false` | Skip robots.txt checks |
+| `maxDepth` | `number` | — | Maximum BFS depth from start URL |
+| `maxPages` | `number` | — | Hard page cap per domain |
+| `userAgent` | `string` | `'JambudipaSpider/1.0'` | Default user agent string |
+| `followRedirects` | `boolean` | `true` | Follow HTTP redirects |
+| `respectNoFollow` | `boolean` | `true` | Honour `rel="nofollow"` |
+| `enableResumability` | `boolean` | `false` | Enable crawl state persistence |
+| `allowedDomains` | `string[]` | — | Restrict crawling to these domains |
+| `blockedDomains` | `string[]` | — | Never crawl these domains |
+| `allowedProtocols` | `string[]` | `['http:','https:','file:','ftp:']` | Permitted URL schemes |
+| `normalizeUrlsForDeduplication` | `boolean` | `true` | Normalise URLs before dedup |
+| `customUrlFilters` | `RegExp[]` | — | Patterns to exclude from crawling |
+
+### Rate Limiting / Workers
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxConcurrentWorkers` | `number` | `5` | Worker fibers per domain |
+| `concurrency` | `number \| 'unbounded' \| 'inherit'` | `4` | Inter-domain concurrency |
+| `maxConcurrentRequests` | `number` | `10` | Total concurrent requests |
+| `maxRequestsPerSecondPerDomain` | `number` | `2` | Per-domain rate cap |
+| `requestDelayMs` | `number` | `1000` | Base courtesy delay (ms) |
+| `maxRobotsCrawlDelayMs` | `number` | `2000` | Max robots.txt crawl-delay cap (ms) |
+
+### URL Filtering
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `fileExtensionFilters` | `FileExtensionFilters` | all enabled | Toggle filtering by file category |
+| `technicalFilters` | `TechnicalFilters` | all enabled | Toggle scheme/length/malformed checks |
+| `skipFileExtensions` | `string[]` | — | Legacy: explicit extension blocklist (overrides `fileExtensionFilters`) |
+
+### Advanced Config Objects
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `domainEquivalence` | `DomainEquivalenceConfig` | `www.` handling, protocol strictness, subdomain matching |
+| `fetchRetry` | `FetchRetryConfig` | Retry policy: `maxAttempts`, `baseBackoffMs`, `retryOn` |
+| `crossDomainRedirects` | `CrossDomainRedirectConfig` | Follow cross-domain redirects from start URLs |
+| `userAgentStrategy` | `UserAgentStrategy` | `static`, `rotating`, or `custom` user-agent selection |
 
 ## Error Handling
 
-The library uses Effect for comprehensive error handling:
+Fetch errors are surfaced as `CrawlResultError` values inside the sink — they do not fail the Effect channel. Inspect `result.error.kind` (a `PageFetchErrorKind`) to branch on the failure type:
 
 ```typescript
-import { NetworkError, ResponseError, RobotsTxtError } from '@jambudipa/spider';
+import { CrawlResult } from '@jambudipa/spider';
+import { Effect, Sink } from 'effect';
+
+const collectSink = Sink.forEach<CrawlResult>(result =>
+  Effect.sync(() => {
+    if (CrawlResult.isOk(result)) {
+      console.log(`OK: ${result.pageData.title}`);
+    } else {
+      switch (result.error.kind) {
+        case 'timeout':
+          console.log(`Timed out: ${result.url}`); break;
+        case 'http_4xx':
+          console.log(`Client error ${result.error.statusCode}: ${result.url}`); break;
+        case 'http_5xx':
+          console.log(`Server error ${result.error.statusCode}: ${result.url}`); break;
+        case 'dns':
+          console.log(`DNS failure: ${result.url}`); break;
+        case 'http_429':
+          console.log(`Rate limited: ${result.url}`); break;
+        default:
+          console.log(`Error (${result.error.kind}): ${result.error.message}`);
+      }
+    }
+  })
+);
 
 const program = Effect.gen(function* () {
   const spider = yield* SpiderService;
-  
-  const result = yield* spider.crawl({
-    url: 'https://example.com'
-  }).pipe(
-    Effect.catchTags({
-      NetworkError: (error) => {
-        console.log('Network issue:', error.message);
-        return Effect.succeed(null);
-      },
-      ResponseError: (error) => {
-        console.log('HTTP error:', error.statusCode);
-        return Effect.succeed(null);
-      },
-      RobotsTxtError: (error) => {
-        console.log('Robots.txt blocked:', error.message);
-        return Effect.succeed(null);
-      }
-    })
-  );
-  
-  return result;
+  yield* spider.crawl('https://example.com', collectSink);
 });
 ```
+
+See `src/examples/09-error-handling-recovery.ts` for a full example.
 
 ## Advanced Usage
 
@@ -422,10 +461,10 @@ const middlewares = new MiddlewareManager()
 Monitor scraping performance:
 
 ```typescript
-import { WorkerHealthMonitorService } from '@jambudipa/spider';
+import { WorkerHealthMonitor } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
-  const healthMonitor = yield* WorkerHealthMonitorService;
+  const healthMonitor = yield* WorkerHealthMonitor;
   
   // Start monitoring
   yield* healthMonitor.startMonitoring();

@@ -1,12 +1,13 @@
 import {
   Chunk,
+  Data,
   DateTime,
+  Duration,
   Effect,
   Fiber,
   HashMap,
   MutableRef,
   Option,
-  PubSub,
   Queue,
   Random,
   Schedule,
@@ -15,7 +16,12 @@ import {
 } from 'effect';
 import * as cheerio from 'cheerio';
 import type { AnyNode, Element as DomElement } from 'domhandler';
-import { SpiderConfig } from '../Config/SpiderConfig.service.js';
+import {
+  SpiderConfig,
+  buildFetchRetrySchedule,
+  resolveUserAgent,
+  type UserAgentStrategy,
+} from '../Config/SpiderConfig.service.js';
 import { UrlDeduplicatorService } from '../UrlDeduplicator/UrlDeduplicator.service.js';
 import { ScraperService } from '../Scraper/Scraper.service.js';
 import { PageData } from '../PageData/PageData.js';
@@ -26,13 +32,17 @@ import {
 } from '../LinkExtractor/index.js';
 import { SpiderSchedulerService } from '../Scheduler/SpiderScheduler.service.js';
 import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js';
+import { classifyFetchError, type PageFetchError, type PageFetchErrorKind } from './Spider.types.js';
 import {
   DomainCompleteEvent,
   DomainStartEvent,
   PageScrapedEvent,
+  RobotsBlockedEvent,
   SpiderCompleteEvent,
   SpiderEventSink,
   SpiderStartEvent,
+  StartUrlChosenEvent,
+  StartUrlRedirectedEvent,
 } from '../Logging/SpiderEventSink.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
 import { SPIDER_DEFAULTS } from './Spider.defaults.js';
@@ -108,24 +118,50 @@ interface CrawlTask {
 }
 
 /**
- * The result of a successful crawl operation.
- *
- * Contains all extracted information from a crawled page along with
- * metadata about when and at what depth it was processed.
+ * Successful crawl result — discriminated by `_tag === 'ok'`.
  *
  * @group Data Types
  * @public
  */
-interface CrawlResult {
-  /** The extracted page data including content, links, and metadata */
-  pageData: PageData;
-  /** The depth at which this page was crawled */
-  depth: number;
-  /** When this page was crawled */
-  timestamp: Date;
-  /** Optional metadata passed through from the original request */
-  metadata?: Record<string, unknown>;
-}
+class CrawlResultOk extends Data.TaggedClass('ok')<{
+  readonly pageData: PageData;
+  readonly depth: number;
+  readonly timestamp: Date;
+  readonly metadata?: Record<string, unknown>;
+}> {}
+
+/**
+ * Failed crawl result — discriminated by `_tag === 'error'`. Carries a typed
+ * `PageFetchError` describing the failure kind.
+ *
+ * @group Data Types
+ * @public
+ */
+class CrawlResultError extends Data.TaggedClass('error')<{
+  readonly url: string;
+  readonly depth: number;
+  readonly timestamp: Date;
+  readonly metadata?: Record<string, unknown>;
+  readonly error: PageFetchError;
+}> {}
+
+/**
+ * The result of a crawl attempt — either a successful page scrape or a typed fetch failure.
+ *
+ * Use {@link CrawlResult.isOk} / {@link CrawlResult.isError} to narrow the union.
+ *
+ * @group Data Types
+ * @public
+ */
+type CrawlResult = CrawlResultOk | CrawlResultError;
+
+// Companion namespace pattern — TS allows a type and const value to share
+// a name. The members are pure narrowing predicates on the union.
+// eslint-disable-next-line no-redeclare
+const CrawlResult = {
+  isOk: (r: CrawlResult): r is CrawlResultOk => r._tag === 'ok',
+  isError: (r: CrawlResult): r is CrawlResultError => r._tag === 'error',
+} as const;
 
 /**
  * The main Spider service that orchestrates web crawling operations.
@@ -159,6 +195,24 @@ interface CrawlResult {
  * @group Configuration
  * @public
  */
+/**
+ * A single starting entry for a crawl. Plain strings passed to `crawl` are
+ * normalised to `{ url }` shape internally.
+ *
+ * `fallbackUrls` are probed in order before the primary URL is selected.
+ * The first reachable URL becomes the resolved start URL; if every candidate
+ * fails the probe, the primary is used and the failure surfaces through the
+ * normal fetch pipeline.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface StartUrlEntry {
+  readonly url: string;
+  readonly fallbackUrls?: ReadonlyArray<string>;
+  readonly metadata?: Record<string, unknown>;
+}
+
 export interface SpiderLinkExtractionOptions {
   /** Configuration for the LinkExtractorService */
   readonly linkExtractorConfig?: LinkExtractorConfig;
@@ -236,13 +290,15 @@ export class SpiderService extends Effect.Service<SpiderService>()(
         crawl: <A, E, R>(
           startingUrls:
             | string
-            | string[]
-            | { url: string; metadata?: Record<string, unknown> }
-            | { url: string; metadata?: Record<string, unknown> }[],
+            | StartUrlEntry
+            | ReadonlyArray<string | StartUrlEntry>,
           sink: Sink.Sink<A, CrawlResult, E, R>,
           options?: SpiderLinkExtractionOptions
         ) =>
-          Effect.gen(function* () {
+          // Effect.scoped supplies the Scope required by Effect.acquireRelease
+          // for the resultChannel queue lifecycle. Eliminates Scope from R so
+          // the public signature stays unchanged for callers.
+          Effect.scoped(Effect.gen(function* () {
             // Get config at runtime when crawl() is called - allows custom configs to override
             const config = yield* SpiderConfig;
 
@@ -255,31 +311,71 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               );
             }
 
-            // Normalize input to array of objects with url and metadata
+            // Normalize input to array of StartUrlEntry
             const normalizeUrlInput = (
               input: typeof startingUrls
-            ): { url: string; metadata?: Record<string, unknown> }[] => {
+            ): StartUrlEntry[] => {
               if (typeof input === 'string') {
                 return [{ url: input }];
               }
               if (Array.isArray(input)) {
-                return input.map((item) =>
-                  typeof item === 'string' ? { url: item } : item
+                // Type the loop variable explicitly — Array.isArray erases
+                // ReadonlyArray<string | StartUrlEntry> to any[].
+                const items: ReadonlyArray<string | StartUrlEntry> = input;
+                return items.map(
+                  (item): StartUrlEntry =>
+                    typeof item === 'string' ? { url: item } : item
                 );
               }
-              return [input];
+              // After the string and array checks above, the remaining
+              // variant is StartUrlEntry. TS doesn't narrow ReadonlyArray via
+              // Array.isArray (which is typed as `arg is any[]`), so an
+              // explicit cast is the simplest way to keep type safety here.
+              // eslint-disable-next-line custom-rules/no-type-assertion -- residual narrowing after explicit type guards
+              return [input as StartUrlEntry];
             };
 
-            const urlsWithMetadata = normalizeUrlInput(startingUrls);
+            const startEntries = normalizeUrlInput(startingUrls);
+            // Lookup map for re-attaching `fallbackUrls` after deduplication
+            // (the dedup helper only sees the `{ url, metadata }` slice).
+            // When the same primary URL appears more than once in the input,
+            // prefer the entry that carries `fallbackUrls` so a plain-string
+            // duplicate doesn't clobber a richer entry.
+            let entriesByUrl = HashMap.empty<string, StartUrlEntry>();
+            for (const entry of startEntries) {
+              const existing = HashMap.get(entriesByUrl, entry.url);
+              if (
+                Option.isNone(existing) ||
+                ((entry.fallbackUrls?.length ?? 0) >
+                  (existing.value.fallbackUrls?.length ?? 0))
+              ) {
+                entriesByUrl = HashMap.set(entriesByUrl, entry.url, entry);
+              }
+            }
+            // Strip the `metadata` field entirely when absent — avoids
+            // explicit `undefined` (Option-equivalent absence sentinel)
+            // while keeping `UrlWithMetadata`'s optional field semantics.
+            const urlsWithMetadata = startEntries.map((e) =>
+              e.metadata
+                ? { url: e.url, metadata: { ...e.metadata } }
+                : { url: e.url }
+            );
 
-            // Use Effect-based URL deduplication with configurable strategy
+            // Domain-equivalence rules drive both up-front URL deduplication and
+            // the per-link `shouldFollowUrl` check. Deriving both from the same
+            // config keeps the two paths in sync.
+            const equiv = yield* config.getDomainEquivalence();
+
             const deduplicationResult = yield* deduplicateUrls(
               urlsWithMetadata,
               {
-                // Strategy: Treat www and non-www as the same domain by default
-                // This can be configured via Spider options if needed
-                wwwHandling: 'ignore',
-                protocolHandling: 'prefer-https',
+                wwwHandling:
+                  equiv.wwwHandling === 'ignore' ? 'ignore' : 'preserve',
+                // 'preserve' (not 'prefer-https') in both branches: rewriting
+                // http→https during up-front dedup silently breaks crawls of
+                // http-only servers. Equivalence between the two protocols
+                // is enforced later by `shouldFollowUrl` in 'permissive' mode.
+                protocolHandling: 'preserve',
                 trailingSlashHandling: 'ignore',
                 queryParamHandling: 'preserve',
                 fragmentHandling: 'ignore'
@@ -332,23 +428,149 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               })
             );
 
-            // Run each URL as a separate crawling operation with its own infrastructure
-            // All domains feed results to the same sink
-            // ALWAYS restrict to starting domain to prevent crawling external sites
+            // Run each URL as a separate crawling operation with its own infrastructure.
+            // ALWAYS restrict to starting domain to prevent crawling external sites.
             const restrictToStartingDomain = true;
 
+            // Per-crawl UA cache. Lifetime is one `crawl()` invocation so per-domain
+            // UA stickiness applies within a session but doesn't leak between calls.
+            // MutableRef wraps an immutable HashMap so writes are visible across
+            // concurrent crawlSingle invocations without sharing a mutable Map.
+            const uaCache = MutableRef.make(HashMap.empty<string, string>());
+
+            // Probe a candidate URL with a HEAD request (falling back to GET on 405).
+            // Returns `true` only when the response is OK. Wrapped in `timeoutOption`
+            // so a slow probe is interrupted via fiber cancellation, not raw timers.
+            const PROBE_TIMEOUT_MS = 5000;
+            const probeUrl = (
+              candidate: string,
+              ua: string
+            ): Effect.Effect<boolean> => {
+              // `signal` is auto-injected by Effect.tryPromise — the underlying
+              // fetch is aborted when the fiber is interrupted (e.g. by the
+              // Effect.timeoutOption below), so probe sockets close promptly.
+              const doFetch = (method: 'HEAD' | 'GET') =>
+                Effect.tryPromise({
+                  try: (signal) =>
+                    globalThis.fetch(candidate, {
+                      method,
+                      headers: { 'User-Agent': ua },
+                      signal,
+                    }),
+                  catch: () => 'fetch_failed' as const,
+                });
+              return doFetch('HEAD').pipe(
+                Effect.flatMap((res) =>
+                  res.status === 405
+                    ? doFetch('GET').pipe(Effect.map((r) => r.ok))
+                    : Effect.succeed(res.ok)
+                ),
+                Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
+                Effect.map(Option.getOrElse(() => false)),
+                Effect.catchAll(() => Effect.succeed(false))
+              );
+            };
+
+            // Probe primary then fallbacks in order. If every candidate fails the
+            // probe, fall back to the primary URL — `crawlSingle`'s fetch pipeline
+            // will surface the failure normally as a `CrawlResultError`.
+            const resolveStartUrl = (
+              entry: StartUrlEntry,
+              ua: string
+            ): Effect.Effect<string> =>
+              Effect.gen(function* () {
+                const candidates = [entry.url, ...(entry.fallbackUrls ?? [])];
+                for (const candidate of candidates) {
+                  const reachable = yield* probeUrl(candidate, ua);
+                  if (reachable) return candidate;
+                }
+                return entry.url;
+              });
+
+            const probeUserAgent = yield* config.getUserAgent();
+            // Effect.forEach accepts 'inherit' natively, so pass through
+            // the configured concurrency rather than rewriting it. This keeps
+            // probe parallelism consistent with the domain-crawl Effect.all
+            // call below.
+            const crawlConcurrency = concurrency;
+
+            // Resolve every start URL up front so `crawlSingle` always receives
+            // a candidate that returned a non-error response (when one exists).
+            const resolvedEntries = yield* Effect.forEach(
+              deduplicatedUrls,
+              (deduped) =>
+                Effect.gen(function* () {
+                  const fallback: StartUrlEntry = {
+                    url: deduped.url,
+                    metadata: deduped.metadata,
+                  };
+                  const entry = HashMap.get(entriesByUrl, deduped.url).pipe(
+                    Option.getOrElse(() => fallback)
+                  );
+                  const chosen = yield* resolveStartUrl(entry, probeUserAgent);
+                  const chosenDomain = yield* Effect.try({
+                    try: () => new URL(chosen).hostname,
+                    catch: () => 'invalid-url',
+                  }).pipe(Effect.catchAll(() => Effect.succeed('invalid-url')));
+                  yield* events.emit(
+                    new StartUrlChosenEvent({
+                      domain: chosenDomain,
+                      attempted: [
+                        entry.url,
+                        ...(entry.fallbackUrls ?? []),
+                      ],
+                      chosen,
+                    })
+                  );
+                  return {
+                    url: chosen,
+                    originalUrl: entry.url,
+                    metadata: deduped.metadata,
+                  };
+                }),
+              { concurrency: crawlConcurrency }
+            );
+
+            // Shared serialiser channel: every domain worker offers `CrawlResult`
+            // values here. A single fiber drains them into the user-supplied sink,
+            // which guarantees the sink's element handler is never invoked
+            // concurrently across domains.
+            //
+            // Use Effect.acquireRelease so Queue.shutdown runs via Scope
+            // release — survives parent interrupt cleanly. Effect.ensuring
+            // alone doesn't guarantee finaliser execution under all interrupt
+            // scenarios. Stream.fromQueue terminates naturally when the
+            // queue is shut down, so buffered offers drain before exit.
+            const resultChannel = yield* Effect.acquireRelease(
+              Queue.unbounded<CrawlResult>(),
+              (q) => Queue.shutdown(q)
+            );
+            const serialiserFiber = yield* Effect.fork(
+              Stream.fromQueue(resultChannel).pipe(Stream.run(sink))
+            );
+
             const results = yield* Effect.all(
-              deduplicatedUrls.map(({ url, metadata }) =>
+              resolvedEntries.map(({ url, originalUrl, metadata }) =>
                 self.crawlSingle(
                   url,
-                  sink,
+                  resultChannel,
                   options,
                   metadata,
-                  restrictToStartingDomain
+                  restrictToStartingDomain,
+                  uaCache,
+                  originalUrl
                 )
               ),
               { concurrency }
             );
+
+            // Trigger drain by shutting down the channel before joining.
+            // The acquireRelease finaliser will be a no-op second shutdown
+            // on success; on interrupt the finaliser is the only shutdown.
+            yield* Queue.shutdown(resultChannel);
+
+            // Wait for every offered result to drain through the sink.
+            yield* Fiber.join(serialiserFiber);
 
             // Emit spider lifecycle complete
             yield* events.emit(
@@ -367,24 +589,53 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             return {
               completed: true,
             };
-          }),
+          })),
 
-        // Single URL crawling - each gets its own queue, workers, and deduplicator
-        crawlSingle: <A, E, R>(
+        // Single URL crawling - each gets its own queue, workers, and deduplicator.
+        // Workers offer results to the shared `resultChannel` owned by the caller
+        // (the public `crawl` method), which forks one serialiser fiber that
+        // drains the channel into the user-supplied sink. The sink lives outside
+        // `crawlSingle` so concurrent domains can't race against it.
+        crawlSingle: (
           urlString: string,
-          sink: Sink.Sink<A, CrawlResult, E, R>,
+          resultChannel: Queue.Queue<CrawlResult>,
           options?: SpiderLinkExtractionOptions,
           initialMetadata?: Record<string, unknown>,
-          restrictToStartingDomain?: boolean
+          restrictToStartingDomain?: boolean,
+          uaCache: MutableRef.MutableRef<
+            HashMap.HashMap<string, string>
+          > = MutableRef.make(HashMap.empty<string, string>()),
+          // The user-supplied primary URL prior to any probe-driven fallback
+          // selection. Used as the `from` field on `StartUrlRedirectedEvent`
+          // so observability reports the URL the consumer actually requested,
+          // not the post-probe winner. Defaults to `urlString` for backwards
+          // compatibility when called outside `crawl()`.
+          originalStartUrl?: string
         ) =>
           Effect.gen(function* () {
             const config = yield* SpiderConfig;
+            const fetchRetry = yield* config.getFetchRetry();
+            const configOptions = yield* config.getOptions();
 
             // Extract domain from URL using Effect error handling
             const domain = yield* Effect.try({
               try: () => new URL(urlString).hostname,
               catch: () => 'invalid-url'
             });
+
+            // The "effective" start URL — initially the requested URL, may be
+            // updated to the post-redirect URL once the depth-0 fetch resolves
+            // (only when `crossDomainRedirects.enabled`). Domain restriction
+            // checks read this so subsequent links match the redirected host.
+            const effectiveStartUrl = MutableRef.make(urlString);
+
+            // Resolve UA once per domain. `resolveUserAgent` mutates `uaCache`
+            // for `rotating` + `perDomain` strategies so subsequent crawls of
+            // the same domain (within this `crawl()` invocation) reuse it.
+            const uaStrategy: UserAgentStrategy =
+              configOptions.userAgentStrategy ??
+              { kind: 'static', userAgent: configOptions.userAgent };
+            const userAgent = resolveUserAgent(uaStrategy, domain, uaCache);
 
             // Emit domain start
             yield* events.emit(
@@ -398,10 +649,36 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
 
             const urlQueue = yield* Queue.unbounded<CrawlTask>();
-            const resultPubSub = yield* PubSub.unbounded<CrawlResult>();
             const activeWorkers = MutableRef.make(0);
             const maxPagesReached = MutableRef.make(false);
+            // `domainCompleted` is the worker-loop-exit signal — flipped by
+            // the first worker that detects max_pages or no_more_urls so peer
+            // workers stop polling. It cannot also gate event emission
+            // because by the time the post-join code runs, this is already
+            // `true` for every successful crawl. `domainCompleteEmitted` is
+            // a separate one-shot CAS for "exactly one DomainCompleteEvent".
             const domainCompleted = MutableRef.make(false);
+            const domainCompleteEmitted = MutableRef.make(false);
+
+            const domainStartTime = yield* DateTime.now;
+            const domainStartMs = DateTime.toEpochMillis(domainStartTime);
+            const pagesAttempted = MutableRef.make(0);
+            const pagesFailed = MutableRef.make(
+              HashMap.empty<PageFetchErrorKind, number>()
+            );
+            const robotsBlockedCount = MutableRef.make(0);
+
+            const recordFailure = (kind: PageFetchErrorKind) =>
+              Effect.sync(() => {
+                MutableRef.update(pagesAttempted, (n) => n + 1);
+                MutableRef.update(pagesFailed, (m) =>
+                  HashMap.set(
+                    m,
+                    kind,
+                    Option.getOrElse(HashMap.get(m, kind), () => 0) + 1
+                  )
+                );
+              });
 
             // Create semaphore for atomic queue operations (mutex with 1 permit)
             const queueMutex = yield* Effect.makeSemaphore(1);
@@ -737,7 +1014,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   );
 
                   const restrictToStartingDomainOption = restrictToStartingDomain
-                    ? Option.some(urlString)
+                    ? Option.some(MutableRef.get(effectiveStartUrl))
                     : Option.none<string>();
                   const shouldFollow = yield* config.shouldFollowUrl(
                     task.url,
@@ -795,6 +1072,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       })
                     );
                     if (!robotsCheck.allowed) {
+                      MutableRef.update(robotsBlockedCount, (n) => n + 1);
+                      yield* events.emit(
+                        new RobotsBlockedEvent({
+                          url: task.url,
+                          domain,
+                          disallowRule: robotsCheck.disallowRule,
+                        })
+                      );
                       // Mark worker as idle before continuing
                       const newIdleCount = yield* queueManager.markIdle();
                       yield* Effect.logDebug('worker marked_idle').pipe(
@@ -855,61 +1140,147 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     })
                   );
 
-                  // Fetch and parse the page with aggressive timeout
-                  const pageData = yield* scraper
-                    .fetchAndParse(task.url, task.depth)
+                  // Track actual attempts so the final error event reports the
+                  // real count, not the configured ceiling. Schedule.whileInput
+                  // can short-circuit before all attempts are exhausted; the
+                  // counter increments inside `Effect.tapError` which runs on
+                  // every failure, including the final one.
+                  const attemptCounter = MutableRef.make(0);
+
+                  // Schedule built from config — single source of truth in
+                  // `buildFetchRetrySchedule` so production and tests can't
+                  // drift apart silently.
+                  const retrySchedule = buildFetchRetrySchedule(fetchRetry);
+
+                  // Fetch and parse the page with aggressive timeout.
+                  // Wrap the success branch in `Option.some` so the catchAll
+                  // branch can return `Option.none` and the resulting type is
+                  // a clean `Option.Option<FetchOk>` — no runtime cast needed.
+                  type FetchOk = { pageData: PageData; finalUrl: string };
+                  const maybeFetchResult: Option.Option<FetchOk> = yield* scraper
+                    .fetchAndParse(task.url, task.depth, userAgent)
                     .pipe(
                       // Add overall timeout to prevent workers from hanging
                       Effect.timeout(SPIDER_DEFAULTS.FETCH_TIMEOUT),
-                      Effect.retry({
-                        times: SPIDER_DEFAULTS.FETCH_RETRY_COUNT,
-                        schedule: Schedule.exponential('1 second'),
-                      }),
+                      Effect.tapError(() =>
+                        Effect.sync(() =>
+                          MutableRef.update(attemptCounter, (n) => n + 1)
+                        )
+                      ),
+                      Effect.retry(retrySchedule),
+                      Effect.map((result): Option.Option<FetchOk> =>
+                        Option.some(result)
+                      ),
                       Effect.catchAll((error) =>
                         Effect.gen(function* () {
                           const fetchEndDateTime = yield* DateTime.now;
                           const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
-                          // Log timeouts and errors to help debug worker hangs
-                          if (error?.name === 'TimeoutException') {
-                            yield* Effect.logWarning(
-                              `fetch timed out after ${fetchDuration}ms`
-                            ).pipe(
-                              Effect.annotateLogs({
-                                event: 'fetch_timeout',
-                                domain,
-                                workerId,
-                                url: task.url,
-                                durationMs: fetchDuration,
-                                timeoutExpectedMs: 45000,
-                              })
-                            );
-                          } else {
-                            yield* Effect.logWarning(
-                              `fetch failed after ${fetchDuration}ms`
-                            ).pipe(
-                              Effect.annotateLogs({
-                                event: 'fetch_error',
-                                domain,
-                                workerId,
-                                url: task.url,
-                                error: String(error),
-                                errorName: error?.name ?? 'Unknown',
-                                durationMs: fetchDuration,
-                              })
-                            );
-                          }
-                          return Option.none<PageData>();
+                          const attemptsMade = MutableRef.get(attemptCounter);
+                          const fetchError = classifyFetchError(error, fetchDuration, attemptsMade);
+
+                          yield* Effect.logWarning(
+                            error?.name === 'TimeoutException'
+                              ? `fetch timed out after ${fetchDuration}ms`
+                              : `fetch failed after ${fetchDuration}ms`
+                          ).pipe(
+                            Effect.annotateLogs({
+                              event: 'fetch_error',
+                              domain,
+                              workerId,
+                              url: task.url,
+                              errorKind: fetchError.kind,
+                              statusCode: fetchError.statusCode,
+                              durationMs: fetchDuration,
+                            })
+                          );
+
+                          yield* recordFailure(fetchError.kind);
+
+                          const crawlTimestamp = yield* DateTime.now;
+                          yield* Queue.offer(
+                            resultChannel,
+                            new CrawlResultError({
+                              url: task.url,
+                              depth: task.depth,
+                              timestamp: DateTime.toDateUtc(crawlTimestamp),
+                              metadata: task.metadata,
+                              error: fetchError,
+                            })
+                          );
+
+                          return Option.none<FetchOk>();
                         })
                       )
                     );
 
-                  // Handle the Option result from fetchAndParse
-                  const maybePageData = Option.isOption(pageData) ? pageData : Option.some(pageData);
-
-                  if (Option.isSome(maybePageData)) {
-                    const actualPageData = maybePageData.value;
+                  if (Option.isSome(maybeFetchResult)) {
+                    const { pageData: actualPageData, finalUrl } =
+                      maybeFetchResult.value;
                     const fetchEndDateTime = yield* DateTime.now;
                     const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
+
+                    // Cross-domain redirect detection (depth-0 only). When the
+                    // start URL's response landed on a different host AND the
+                    // consumer opted in via `crossDomainRedirects.enabled`,
+                    // update `effectiveStartUrl` so subsequent `shouldFollowUrl`
+                    // checks treat the redirected host as the in-domain target.
+                    // Guard `finalUrl` truthy: a hand-built `Response` (e.g.
+                    // from a custom fetch wrapper) defaults `Response.url` to
+                    // `''`, which would otherwise trigger spurious redirect
+                    // logic and a `new URL('')` throw.
+                    if (
+                      task.depth === 0 &&
+                      finalUrl &&
+                      finalUrl !== task.url
+                    ) {
+                      const crossDomainConfig =
+                        yield* config.getCrossDomainRedirects();
+                      if (crossDomainConfig.enabled) {
+                        const hostnamesOpt = yield* Effect.try({
+                          try: () => ({
+                            finalHostname: new URL(finalUrl).hostname,
+                            startHostname: new URL(
+                              MutableRef.get(effectiveStartUrl)
+                            ).hostname,
+                          }),
+                          catch: () => 'parse_failed' as const,
+                        }).pipe(
+                          Effect.map(Option.some),
+                          Effect.catchAll(() =>
+                            Effect.succeed(
+                              Option.none<{
+                                readonly finalHostname: string;
+                                readonly startHostname: string;
+                              }>()
+                            )
+                          )
+                        );
+                        if (
+                          Option.isSome(hostnamesOpt) &&
+                          hostnamesOpt.value.finalHostname !==
+                            hostnamesOpt.value.startHostname
+                        ) {
+                          const hostnames = hostnamesOpt.value;
+                          MutableRef.set(effectiveStartUrl, finalUrl);
+                          // `from` is the user-supplied primary URL (or the
+                          // post-probe `urlString` when no original was
+                          // threaded in), so the chain reflects the consumer's
+                          // requested URL, not just the probe winner.
+                          const fromUrl = originalStartUrl ?? urlString;
+                          yield* events.emit(
+                            new StartUrlRedirectedEvent({
+                              domain: hostnames.startHostname,
+                              from: fromUrl,
+                              to: finalUrl,
+                              chain:
+                                fromUrl === urlString
+                                  ? [fromUrl, finalUrl]
+                                  : [fromUrl, urlString, finalUrl],
+                            })
+                          );
+                        }
+                      }
+                    }
 
                     // Apply data extraction if configured
                     // We need to create a mutable copy since PageData is from scraper
@@ -1050,13 +1421,17 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     );
 
                     // Publish result
+                    MutableRef.update(pagesAttempted, (n) => n + 1);
                     const crawlTimestamp = yield* DateTime.now;
-                    yield* PubSub.publish(resultPubSub, {
-                      pageData: pageDataWithExtraction,
-                      depth: task.depth,
-                      timestamp: DateTime.toDateUtc(crawlTimestamp),
-                      metadata: task.metadata,
-                    });
+                    yield* Queue.offer(
+                      resultChannel,
+                      new CrawlResultOk({
+                        pageData: pageDataWithExtraction,
+                        depth: task.depth,
+                        timestamp: DateTime.toDateUtc(crawlTimestamp),
+                        metadata: task.metadata,
+                      })
+                    );
 
                     // Queue new URLs if not at max depth
                     const maxDepth = yield* config.getMaxDepth();
@@ -1116,7 +1491,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       for (const link of linksToProcess) {
                         // Use config to validate each link first
                         const linkRestrictOption = restrictToStartingDomain
-                          ? Option.some(urlString)
+                          ? Option.some(MutableRef.get(effectiveStartUrl))
                           : Option.none<string>();
                         const linkShouldFollow = yield* config.shouldFollowUrl(
                           link,
@@ -1167,7 +1542,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       domain,
                       taskUrl: task.url,
                       activeWorkers: newIdleCount,
-                      pageProcessed: !!pageData,
+                      pageProcessed: Option.isSome(maybeFetchResult),
                     })
                   );
 
@@ -1324,14 +1699,6 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Start worker health monitoring
             const healthMonitorFiber = yield* Effect.fork(workerHealthMonitor);
 
-            // Create result stream from PubSub
-            const resultStream = Stream.fromPubSub(resultPubSub);
-
-            // Run the stream into the sink
-            const sinkFiber = yield* Effect.fork(
-              Stream.run(resultStream, sink)
-            );
-
             // Domain failure detection - mark domains as failed if they get stuck
             const failureDetector = Effect.gen(function* () {
               let lastPageCount = 0;
@@ -1389,18 +1756,31 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     })
                   );
 
-                  // Mark domain as completed with error to free up the slot
-                  const wasCompleted = MutableRef.compareAndSet(
-                    domainCompleted,
+                  // Mark domain as completed (loop-exit signal) AND claim
+                  // the one-shot emission slot. Two separate refs so the
+                  // worker-loop signal can fire many times without
+                  // suppressing the event.
+                  MutableRef.compareAndSet(domainCompleted, false, true);
+                  const wasFirstToEmit = MutableRef.compareAndSet(
+                    domainCompleteEmitted,
                     false,
                     true
                   );
-                  if (wasCompleted) {
+                  if (wasFirstToEmit) {
+                    const failedMap = MutableRef.get(pagesFailed);
+                    const pagesFailedArray = Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count }));
+                    const completeTime = yield* DateTime.now;
                     yield* events.emit(
                       new DomainCompleteEvent({
                         domain,
+                        startUrl: urlString,
+                        finalStartUrl: MutableRef.get(effectiveStartUrl),
                         pagesScraped: pageCount,
+                        pagesAttempted: MutableRef.get(pagesAttempted),
+                        pagesFailed: pagesFailedArray,
                         reason: 'error',
+                        durationMs:
+                          DateTime.toEpochMillis(completeTime) - domainStartMs,
                       })
                     );
                   }
@@ -1442,34 +1822,44 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Log final page count
             const finalPageCount = yield* localDeduplicator.size();
             const maxPages = yield* config.getMaxPages();
-            const completionReason =
+            const totalAttempts = MutableRef.get(pagesAttempted);
+            const robotsBlocked = MutableRef.get(robotsBlockedCount);
+            const failedCountMap = MutableRef.get(pagesFailed);
+            const totalFailed = Array.from(HashMap.values(failedCountMap)).reduce((a, b) => a + b, 0);
+            const completionReason: DomainCompleteEvent['reason'] =
               maxPages && finalPageCount >= maxPages
                 ? 'max_pages'
-                : 'queue_empty';
-            yield* events.emit(
-              new DomainCompleteEvent({
-                domain,
-                pagesScraped: finalPageCount,
-                reason: completionReason,
-              })
+                : totalAttempts === 0 && robotsBlocked > 0
+                  ? 'robots_blocked'
+                  : totalAttempts > 0 && totalFailed === totalAttempts
+                    ? 'all_fetches_failed'
+                    : 'queue_empty';
+            const pagesFailedArray = Array.from(HashMap.entries(failedCountMap)).map(([kind, count]) => ({ kind, count }));
+            // Gate emission on the dedicated `domainCompleteEmitted` ref
+            // (NOT `domainCompleted`, which workers flip for loop-exit).
+            // Failure-detector path uses the same CAS so the two paths
+            // can't both fire for the same crawlSingle invocation.
+            const wasFirstToEmit = MutableRef.compareAndSet(
+              domainCompleteEmitted,
+              false,
+              true
             );
-
-            // Close the PubSub to signal stream completion
-            yield* PubSub.shutdown(resultPubSub);
-
-            // Wait for sink to finish processing ALL results
-            // This is critical: we must ensure all crawled pages are saved to the database
-            // before completing. No timeouts - the sink must process everything.
-            yield* Effect.logDebug(
-              'waiting for sink to process remaining results'
-            ).pipe(Effect.annotateLogs({ domain }));
-
-            yield* Fiber.join(sinkFiber);
-
-            // Log successful completion after all results are processed
-            yield* Effect.logDebug(
-              `sink processing complete: ${finalPageCount} pages saved`
-            ).pipe(Effect.annotateLogs({ domain, pagesSaved: finalPageCount }));
+            if (wasFirstToEmit) {
+              const completeTime = yield* DateTime.now;
+              yield* events.emit(
+                new DomainCompleteEvent({
+                  domain,
+                  startUrl: urlString,
+                  finalStartUrl: MutableRef.get(effectiveStartUrl),
+                  pagesScraped: finalPageCount,
+                  pagesAttempted: totalAttempts,
+                  pagesFailed: pagesFailedArray,
+                  reason: completionReason,
+                  durationMs:
+                    DateTime.toEpochMillis(completeTime) - domainStartMs,
+                })
+              );
+            }
 
             return {
               completed: true,
@@ -1670,4 +2060,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
   }
 ) {}
 
-export type { CrawlResult, CrawlTask };
+export type {
+  CrawlResultOk,
+  CrawlResultError,
+  CrawlTask,
+  DataExtractionConfig,
+  DataExtractionFieldConfig,
+  FieldExtractionConfig,
+  NestedFieldConfig,
+};
+export { CrawlResult };

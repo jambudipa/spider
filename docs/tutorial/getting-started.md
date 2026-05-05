@@ -32,7 +32,7 @@ Let's start with a simple example that crawls a single page. Create a file calle
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   console.log('🕷️ Starting basic crawl...');
@@ -72,7 +72,7 @@ Effect.runPromise(
   program.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n✅ Completed! Crawled ${results.length} page(s).`);
@@ -99,7 +99,7 @@ Now let's access the page data and HTML content. Create `data-extraction.js`:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import * as cheerio from 'cheerio'; // You'll need to install cheerio: npm install cheerio
 
 const program = Effect.gen(function* () {
@@ -160,7 +160,7 @@ Effect.runPromise(
   program.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then(() => {
   console.log('\n✅ Data extraction completed!');
@@ -181,7 +181,7 @@ Let's create a spider that follows links to crawl multiple pages. Create `simple
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   console.log('🕷️ Starting multi-page crawl...');
@@ -224,7 +224,7 @@ Effect.runPromise(
   program.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((visitedPages) => {
   console.log('\n📊 Crawl Summary:');
@@ -261,7 +261,7 @@ Real-world scraping often encounters errors. Let's build a robust spider that ha
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive, NetworkError, ResponseError } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig, NetworkError, ResponseError } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   console.log('🕷️ Testing error handling...');
@@ -322,7 +322,7 @@ Effect.runPromise(
   program.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n📊 Results: ${results.length} successful crawls`);
@@ -344,7 +344,7 @@ Let's explore more advanced configuration options for different scraping scenari
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   console.log('🕷️ Testing advanced configuration...');
@@ -413,7 +413,7 @@ Effect.runPromise(
   program.pipe(
     Effect.provide(SpiderService.Default),
     Effect.provide(SpiderConfig.Live(configurations.production)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n✅ Advanced crawling completed! Found ${results.length} pages.`);

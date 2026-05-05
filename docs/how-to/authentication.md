@@ -8,7 +8,7 @@ Most websites use session cookies after login. Here's how to handle cookie-based
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
@@ -76,7 +76,7 @@ Effect.runPromise(
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(CookieManager.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n📊 Successfully crawled ${results.length} protected pages`);
@@ -91,7 +91,7 @@ For APIs or sites using token-based auth:
 
 ```typescript
 import { Effect, Sink, Ref } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient } from '@jambudipa/spider';
 
 // Token authentication service
@@ -203,7 +203,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((result) => {
   console.log('\n📊 Token authentication completed successfully');
@@ -220,7 +220,7 @@ For complex authentication flows, use session persistence:
 
 ```typescript
 import { Effect, Sink, Ref } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
 import * as fs from 'fs/promises';
 
@@ -377,7 +377,7 @@ Effect.runPromise(
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(CookieManager.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n📊 Session-based authentication completed: ${results.length} pages crawled`);
@@ -392,7 +392,7 @@ Handle complex forms with CSRF tokens and hidden fields:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
@@ -478,7 +478,7 @@ Effect.runPromise(
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(CookieManager.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((results) => {
   console.log(`\n📊 Form authentication completed: ${results.length} pages accessed`);
@@ -493,7 +493,7 @@ For OAuth-protected resources:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient } from '@jambudipa/spider';
 
 const oauthAuthProgram = Effect.gen(function* () {
@@ -601,7 +601,7 @@ Effect.runPromise(
     Effect.provide(SpiderService.Default),
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((result) => {
   console.log('\n📊 OAuth Authentication Results:');
@@ -628,7 +628,7 @@ For complex authentication flows with multiple steps:
 
 ```typescript
 import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
@@ -728,7 +728,7 @@ Effect.runPromise(
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(CookieManager.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((result) => {
   console.log('\n📊 Multi-Step Authentication Summary:');
@@ -760,7 +760,7 @@ Implement robust error handling for authentication:
 
 ```typescript
 import { Effect, Schedule, Duration } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
+import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import { EnhancedHttpClient, NetworkError } from '@jambudipa/spider';
 
 const robustAuthProgram = Effect.gen(function* () {
@@ -854,7 +854,7 @@ Effect.runPromise(
   robustAuthProgram.pipe(
     Effect.provide(EnhancedHttpClient.Live),
     Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(SpiderLoggerLive)
+    Effect.provide()
   )
 ).then((result) => {
   console.log('\n🎯 Robust authentication completed successfully');

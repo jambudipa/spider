@@ -4,219 +4,255 @@ This reference covers all configuration options available in the Spider library.
 
 ## SpiderConfigOptions
 
-Main configuration options for the SpiderService.
+Main configuration options passed to `makeSpiderConfig()`.
 
 ```typescript
 interface SpiderConfigOptions {
-  userAgent?: string;
-  respectRobotsTxt?: boolean;
-  requestDelay?: number;
-  maxConcurrency?: number;
-  timeout?: number;
-  retryAttempts?: number;
-  retryDelay?: number;
-  maxPages?: number;
+  // Core
+  ignoreRobotsTxt: boolean;
+  maxConcurrentWorkers: number;
+  concurrency: number | 'unbounded' | 'inherit';
+  requestDelayMs: number;
+  maxRobotsCrawlDelayMs: number;
+  userAgent: string;
   maxDepth?: number;
-  followRedirects?: boolean;
-  useBrowser?: boolean;
-  resumability?: ResumabilityService;
-  defaultHeaders?: Record<string, string>;
-  cookieJar?: CookieJar;
-  proxy?: ProxyConfig;
-}
-```
+  maxPages?: number;
 
-### Basic Options
+  // Domain / URL filters
+  allowedDomains?: string[];
+  blockedDomains?: string[];
+  allowedProtocols: string[];
+  followRedirects: boolean;
+  respectNoFollow: boolean;
+  fileExtensionFilters?: FileExtensionFilters;
+  technicalFilters?: TechnicalFilters;
+  skipFileExtensions?: string[];
+  customUrlFilters?: RegExp[];
+  normalizeUrlsForDeduplication: boolean;
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `userAgent` | `string` | `'Spider/1.0'` | User agent string for requests |
-| `respectRobotsTxt` | `boolean` | `true` | Whether to check and obey robots.txt |
-| `requestDelay` | `number` | `1000` | Delay between requests (milliseconds) |
-| `maxConcurrency` | `number` | `1` | Maximum concurrent requests |
-| `timeout` | `number` | `30000` | Request timeout (milliseconds) |
-
-### Retry Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `retryAttempts` | `number` | `3` | Maximum retry attempts for failed requests |
-| `retryDelay` | `number` | `1000` | Delay between retry attempts (milliseconds) |
-
-### Crawling Limits
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `maxPages` | `number` | `Infinity` | Maximum pages to crawl |
-| `maxDepth` | `number` | `Infinity` | Maximum crawl depth |
-
-### Network Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `followRedirects` | `boolean` | `true` | Whether to follow HTTP redirects |
-| `defaultHeaders` | `Record<string, string>` | `{}` | Default headers for all requests |
-
-### Browser Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `useBrowser` | `boolean` | `false` | Use browser engine for JavaScript rendering |
-
-## Middleware Configuration
-
-### RateLimitConfig
-
-```typescript
-interface RateLimitConfig {
+  // Performance
   maxConcurrentRequests: number;
   maxRequestsPerSecondPerDomain: number;
-  requestDelayMs?: number;
-  burstLimit?: number;
-  windowSizeMs?: number;
+
+  // Resumability
+  enableResumability: boolean;
+
+  // Advanced (v0.8+/v0.9+)
+  domainEquivalence?: DomainEquivalenceConfig;
+  fetchRetry?: FetchRetryConfig;
+  crossDomainRedirects?: CrossDomainRedirectConfig;
+  userAgentStrategy?: UserAgentStrategy;
 }
 ```
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `maxConcurrentRequests` | `number` | Yes | Global concurrent request limit |
-| `maxRequestsPerSecondPerDomain` | `number` | Yes | Per-domain rate limit |
-| `requestDelayMs` | `number` | No | Additional delay between requests |
-| `burstLimit` | `number` | No | Burst request allowance |
-| `windowSizeMs` | `number` | No | Rate limiting window size |
-
-**Example:**
-```typescript
-const rateLimiter = new RateLimitMiddleware({
-  maxConcurrentRequests: 5,
-  maxRequestsPerSecondPerDomain: 2,
-  requestDelayMs: 500,
-  burstLimit: 10,
-  windowSizeMs: 1000
-});
-```
-
-### LoggingConfig
-
-```typescript
-interface LoggingConfig {
-  logRequests?: boolean;
-  logResponses?: boolean;
-  logErrors?: boolean;
-  logLevel?: 'debug' | 'info' | 'warn' | 'error';
-  includeHeaders?: boolean;
-  includeBody?: boolean;
-  maxBodyLength?: number;
-}
-```
+### Core Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `logRequests` | `boolean` | `true` | Log outgoing requests |
-| `logResponses` | `boolean` | `true` | Log incoming responses |
-| `logErrors` | `boolean` | `true` | Log errors |
-| `logLevel` | `string` | `'info'` | Minimum log level |
-| `includeHeaders` | `boolean` | `false` | Include headers in logs |
-| `includeBody` | `boolean` | `false` | Include body content in logs |
-| `maxBodyLength` | `number` | `1000` | Maximum body length to log |
+| `ignoreRobotsTxt` | `boolean` | `false` | Skip robots.txt compliance checks |
+| `maxConcurrentWorkers` | `number` | `5` | Worker fibers per domain |
+| `concurrency` | `number \| 'unbounded' \| 'inherit'` | `4` | Inter-domain concurrency |
+| `requestDelayMs` | `number` | `1000` | Courtesy delay between fetches (ms) |
+| `maxRobotsCrawlDelayMs` | `number` | `2000` | Cap on robots.txt `Crawl-delay` (ms) |
+| `userAgent` | `string` | `'JambudipaSpider/1.0'` | Default user agent string |
+| `maxDepth` | `number` | — | Maximum BFS depth; unlimited if omitted |
+| `maxPages` | `number` | — | Hard page cap per domain; unlimited if omitted |
+| `followRedirects` | `boolean` | `true` | Follow HTTP redirects |
+| `respectNoFollow` | `boolean` | `true` | Honour `rel="nofollow"` link attributes |
+| `enableResumability` | `boolean` | `false` | Enable crawl-state persistence |
+| `normalizeUrlsForDeduplication` | `boolean` | `true` | Normalise URLs (strip trailing slashes, sort query params, etc.) before dedup |
 
-**Example:**
-```typescript
-const logger = new LoggingMiddleware({
-  logLevel: 'debug',
-  includeHeaders: true,
-  maxBodyLength: 500
-});
-```
-
-### UserAgentConfig
-
-```typescript
-interface UserAgentConfig {
-  userAgents: string | string[];
-  rotateOnEachRequest?: boolean;
-  rotationStrategy?: 'random' | 'sequential';
-}
-```
+### Domain and URL Filters
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `userAgents` | `string \| string[]` | Required | User agent string(s) |
-| `rotateOnEachRequest` | `boolean` | `false` | Rotate user agents per request |
-| `rotationStrategy` | `string` | `'sequential'` | How to rotate user agents |
+| `allowedDomains` | `string[]` | — | Restrict crawling to these hostnames |
+| `blockedDomains` | `string[]` | — | Never crawl these hostnames |
+| `allowedProtocols` | `string[]` | `['http:','https:','file:','ftp:']` | Permitted URL schemes |
+| `customUrlFilters` | `RegExp[]` | — | URLs matching any pattern are skipped |
+| `skipFileExtensions` | `string[]` | — | Explicit extension blocklist (overrides `fileExtensionFilters`) |
+
+### Performance
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxConcurrentRequests` | `number` | `10` | Total concurrent HTTP requests |
+| `maxRequestsPerSecondPerDomain` | `number` | `2` | Per-domain rate cap |
+
+---
+
+## FileExtensionFilters
+
+Granular control over which file-extension categories to skip. All categories default to `true` (filtered out).
+
+```typescript
+interface FileExtensionFilters {
+  filterArchives?: boolean;        // .zip, .tar, .gz, .rar, …
+  filterImages?: boolean;          // .jpg, .png, .gif, .svg, …
+  filterAudio?: boolean;           // .mp3, .wav, .ogg, …
+  filterVideo?: boolean;           // .mp4, .avi, .mov, …
+  filterOfficeDocuments?: boolean; // .pdf, .doc, .xls, .ppt, …
+  filterOther?: boolean;           // .exe, .bin, .iso, …
+}
+```
+
+**Example — allow images, filter everything else:**
+
+```typescript
+makeSpiderConfig({
+  fileExtensionFilters: {
+    filterArchives: true,
+    filterImages: false, // allow images
+    filterAudio: true,
+    filterVideo: true,
+    filterOfficeDocuments: true,
+    filterOther: true,
+  },
+})
+```
+
+---
+
+## TechnicalFilters
+
+Controls automatic rejection of technically problematic URLs. All options default to `true` (filtered).
+
+```typescript
+interface TechnicalFilters {
+  filterUnsupportedSchemes?: boolean; // reject mailto:, javascript:, data:, …
+  filterLongUrls?: boolean;           // reject URLs over maxUrlLength
+  maxUrlLength?: number;              // default 2083 (IE/Scrapy limit)
+  filterMalformedUrls?: boolean;      // reject unparseable URLs
+}
+```
+
+---
+
+## DomainEquivalenceConfig
+
+Controls how hostnames are compared when restricting a crawl to its starting domain. Added in v0.8.
+
+```typescript
+interface DomainEquivalenceConfig {
+  wwwHandling: 'strict' | 'ignore-www';
+  protocolHandling: 'strict' | 'ignore-protocol';
+  subdomainHandling: 'strict' | 'allow-subdomains';
+}
+```
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `wwwHandling` | `'strict'` / `'ignore-www'` | Whether `www.example.com` and `example.com` are treated as the same domain |
+| `protocolHandling` | `'strict'` / `'ignore-protocol'` | Whether `http://` and `https://` variants are equivalent |
+| `subdomainHandling` | `'strict'` / `'allow-subdomains'` | Whether `sub.example.com` is considered part of `example.com` |
+
+**Default (`defaultDomainEquivalence`):**
+
+```typescript
+{ wwwHandling: 'ignore-www', protocolHandling: 'ignore-protocol', subdomainHandling: 'strict' }
+```
+
+---
+
+## FetchRetryConfig
+
+Retry policy for the page-fetch pipeline. Added in v0.8. `makeSpiderConfig` throws `ConfigError` if `maxAttempts < 1`.
+
+```typescript
+interface FetchRetryConfig {
+  maxAttempts: number;
+  baseBackoffMs: number;
+  retryOn: RetryableErrorKind[];
+}
+
+type RetryableErrorKind = 'timeout' | 'dns' | 'http_4xx' | 'http_429' | 'http_5xx' | 'connection_refused' | 'other';
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `maxAttempts` | `3` | Total attempts (including the first); must be ≥ 1 |
+| `baseBackoffMs` | `500` | Initial exponential-backoff delay |
+| `retryOn` | `['timeout','http_5xx','connection_refused']` | Which error kinds trigger a retry |
 
 **Example:**
+
 ```typescript
-const userAgent = new UserAgentMiddleware({
-  userAgents: [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-  ],
-  rotateOnEachRequest: true,
-  rotationStrategy: 'random'
-});
+makeSpiderConfig({
+  fetchRetry: {
+    maxAttempts: 4,
+    baseBackoffMs: 1000,
+    retryOn: ['timeout', 'http_429', 'http_5xx', 'connection_refused'],
+  },
+})
 ```
+
+---
+
+## CrossDomainRedirectConfig
+
+Handles 3xx redirects that cross hostname boundaries when following a start URL. Added in v0.9.
+
+```typescript
+interface CrossDomainRedirectConfig {
+  enabled: boolean;
+  maxHops: number;
+}
+```
+
+When `enabled: true`, a depth-0 redirect to a different hostname updates the per-domain crawl restriction so subsequent links are followed on the final domain. `StartUrlRedirectedEvent` is emitted.
+
+**Default (`defaultCrossDomainRedirects`):** `{ enabled: false, maxHops: 3 }`
+
+---
+
+## UserAgentStrategy
+
+Replaces the `userAgent` shorthand when more advanced behaviour is needed. Added in v0.9.
+
+```typescript
+type UserAgentStrategy =
+  | { kind: 'static'; userAgent: string }
+  | { kind: 'rotating'; pool: string[]; perDomain: boolean }
+  | { kind: 'custom'; resolver: (url: string) => string };
+```
+
+| Kind | Description |
+|------|-------------|
+| `static` | Always sends the same user agent |
+| `rotating` | Picks from `pool`; when `perDomain: true` the same agent is used for all requests to a given domain within a single crawl |
+| `custom` | Calls `resolver(url)` per request |
+
+**Example:**
+
+```typescript
+makeSpiderConfig({
+  userAgentStrategy: {
+    kind: 'rotating',
+    pool: ['BotA/1.0', 'BotB/1.0', 'BotC/1.0'],
+    perDomain: true,
+  },
+})
+```
+
+---
 
 ## Resumability Configuration
 
-### ResumabilityConfig
+### enableResumability
+
+Set `enableResumability: true` in `makeSpiderConfig` to enable state persistence. The spider uses `SpiderSchedulerService` internally; no separate layer configuration is needed for file-backed storage.
+
+### FileStorageBackend
 
 ```typescript
-interface ResumabilityConfig {
-  storageBackend: StorageBackend;
-  enableResumption: boolean;
-  retryFailedUrls?: boolean;
-  maxRetries?: number;
-  persistenceStrategy?: PersistenceStrategy;
-  autoSaveInterval?: number;
-  compressionEnabled?: boolean;
-}
+import { FileStorageBackend } from '@jambudipa/spider';
+
+const backend = new FileStorageBackend('./spider-state');
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `storageBackend` | `StorageBackend` | Required | Storage implementation |
-| `enableResumption` | `boolean` | Required | Enable resumable operations |
-| `retryFailedUrls` | `boolean` | `true` | Retry failed URLs on resume |
-| `maxRetries` | `number` | `3` | Maximum retry attempts |
-| `persistenceStrategy` | `PersistenceStrategy` | `FullStatePersistence` | Persistence strategy |
-| `autoSaveInterval` | `number` | `5000` | Auto-save interval (milliseconds) |
-| `compressionEnabled` | `boolean` | `false` | Compress stored state |
+Constructor accepts a single `basePath: string` argument pointing to a writable directory.
 
-### Storage Backend Configurations
-
-#### FileStorageBackend
-
-```typescript
-interface FileStorageConfig {
-  basePath: string;
-  persistInterval?: number;
-  maxFileSize?: number;
-  backupCount?: number;
-  compressionLevel?: number;
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `basePath` | `string` | Required | Directory for state files |
-| `persistInterval` | `number` | `5000` | Save interval (milliseconds) |
-| `maxFileSize` | `number` | `100MB` | Maximum file size |
-| `backupCount` | `number` | `3` | Number of backups to keep |
-| `compressionLevel` | `number` | `6` | Gzip compression level (0-9) |
-
-**Example:**
-```typescript
-const fileStorage = new FileStorageBackend({
-  basePath: './spider-state',
-  persistInterval: 10000,
-  maxFileSize: 50 * 1024 * 1024, // 50MB
-  backupCount: 5
-});
-```
-
-#### PostgresStorageBackend
+### PostgresStorageBackend
 
 ```typescript
 interface PostgresStorageConfig {
@@ -236,58 +272,20 @@ interface PostgresStorageConfig {
 |--------|------|---------|-------------|
 | `connectionString` | `string` | Required | PostgreSQL connection string |
 | `tableName` | `string` | `'spider_state'` | Table name for state storage |
-| `persistInterval` | `number` | `5000` | Save interval (milliseconds) |
-| `batchSize` | `number` | `100` | Batch size for bulk operations |
+| `persistInterval` | `number` | `5000` | Save interval (ms) |
+| `batchSize` | `number` | `100` | Bulk operation batch size |
 
 **Example:**
+
 ```typescript
 const postgresStorage = new PostgresStorageBackend({
   connectionString: 'postgresql://user:pass@localhost:5432/spider_db',
   tableName: 'crawl_sessions',
-  persistInterval: 2000,
   batchSize: 500,
-  connectionPool: {
-    min: 2,
-    max: 10,
-    idleTimeoutMillis: 30000
-  }
 });
 ```
 
-#### RedisStorageBackend
-
-```typescript
-interface RedisStorageConfig {
-  host: string;
-  port: number;
-  password?: string;
-  database?: number;
-  keyPrefix?: string;
-  persistInterval?: number;
-  ttl?: number;
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `host` | `string` | Required | Redis server hostname |
-| `port` | `number` | Required | Redis server port |
-| `password` | `string` | - | Redis password |
-| `database` | `number` | `0` | Redis database number |
-| `keyPrefix` | `string` | `'spider:'` | Key prefix for stored data |
-| `persistInterval` | `number` | `5000` | Save interval (milliseconds) |
-| `ttl` | `number` | - | Time-to-live for keys (seconds) |
-
-**Example:**
-```typescript
-const redisStorage = new RedisStorageBackend({
-  host: 'localhost',
-  port: 6379,
-  password: 'secret',
-  keyPrefix: 'myapp:spider:',
-  ttl: 86400 // 24 hours
-});
-```
+---
 
 ## Persistence Strategies
 
@@ -296,181 +294,49 @@ const redisStorage = new RedisStorageBackend({
 Saves complete state on each persistence operation.
 
 ```typescript
-const fullStrategy = new FullStatePersistence({
-  interval: 10000 // Save every 10 seconds
-});
+const fullStrategy = new FullStatePersistence();
 ```
 
 ### DeltaPersistence
 
-Saves only changes since last persistence.
+Saves only changes since the last full save.
 
 ```typescript
-const deltaStrategy = new DeltaPersistence({
-  interval: 1000,     // Save deltas every second
-  maxDeltas: 100      // Full save after 100 deltas
-});
+const deltaStrategy = new DeltaPersistence();
 ```
 
 ### HybridPersistence
 
-Combines delta and full state persistence.
+Interleaves delta saves with periodic full saves.
 
 ```typescript
 const hybridStrategy = new HybridPersistence({
-  deltaInterval: 1000,      // Delta saves every second
-  fullStateInterval: 30000, // Full saves every 30 seconds
-  maxDeltaCount: 200        // Full save after 200 deltas
+  deltaInterval: 1000,
+  fullStateInterval: 30000,
+  maxDeltaCount: 200,
 });
 ```
 
-## Browser Configuration
-
-### BrowserConfig
-
-```typescript
-interface BrowserConfig {
-  headless?: boolean;
-  viewport?: {
-    width: number;
-    height: number;
-  };
-  userAgent?: string;
-  timeout?: number;
-  waitForContent?: boolean;
-  javascript?: boolean;
-  images?: boolean;
-  css?: boolean;
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `headless` | `boolean` | `true` | Run browser in headless mode |
-| `viewport` | `object` | `{width: 1920, height: 1080}` | Browser viewport size |
-| `userAgent` | `string` | - | Override browser user agent |
-| `timeout` | `number` | `30000` | Page load timeout |
-| `waitForContent` | `boolean` | `true` | Wait for dynamic content |
-| `javascript` | `boolean` | `true` | Enable JavaScript execution |
-| `images` | `boolean` | `false` | Load images |
-| `css` | `boolean` | `true` | Load CSS |
-
-**Example:**
-```typescript
-import { Effect } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig, SpiderLoggerLive } from '@jambudipa/spider';
-
-const browserProgram = Effect.gen(function* () {
-  const spider = yield* SpiderService;
-  
-  // Browser configuration would be handled via SpiderConfig
-  // Example usage here
-});
-
-const browserConfig = makeSpiderConfig({
-  // Browser options would be configured here
-  userAgent: 'Browser Spider 1.0'
-});
-
-Effect.runPromise(
-  browserProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(browserConfig)),
-    Effect.provide(SpiderLoggerLive)
-  )
-).catch(console.error);
-```
-
-## Authentication Configuration
-
-### SessionConfig
-
-```typescript
-interface SessionConfig {
-  persistToFile?: string;
-  cookieJar?: CookieJar;
-  sessionTimeout?: number;
-  autoRenew?: boolean;
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `persistToFile` | `string` | - | File to persist session data |
-| `cookieJar` | `CookieJar` | - | Custom cookie jar |
-| `sessionTimeout` | `number` | `3600000` | Session timeout (milliseconds) |
-| `autoRenew` | `boolean` | `false` | Automatically renew expired sessions |
-
-### CookieConfig
-
-```typescript
-interface CookieConfig {
-  persistCookies?: boolean;
-  cookieFile?: string;
-  domain?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `persistCookies` | `boolean` | `false` | Persist cookies to file |
-| `cookieFile` | `string` | - | File to store cookies |
-| `domain` | `string` | - | Default domain for cookies |
-| `secure` | `boolean` | `false` | Only send over HTTPS |
-| `httpOnly` | `boolean` | `true` | Prevent JavaScript access |
-
-## Environment Variables
-
-Spider recognises these environment variables:
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `SPIDER_USER_AGENT` | `string` | Default user agent |
-| `SPIDER_RESPECT_ROBOTS` | `boolean` | Respect robots.txt |
-| `SPIDER_REQUEST_DELAY` | `number` | Default request delay |
-| `SPIDER_MAX_CONCURRENCY` | `number` | Default concurrency |
-| `SPIDER_TIMEOUT` | `number` | Default timeout |
-| `SPIDER_LOG_LEVEL` | `string` | Logging level |
-| `SPIDER_STORAGE_PATH` | `string` | Default storage path |
-
-**Example:**
-```bash
-export SPIDER_USER_AGENT="MyBot/2.0"
-export SPIDER_RESPECT_ROBOTS=true
-export SPIDER_REQUEST_DELAY=2000
-export SPIDER_MAX_CONCURRENCY=3
-```
+---
 
 ## Configuration Validation
 
-Spider validates configuration at runtime and provides helpful error messages:
+`makeSpiderConfig` validates options synchronously and throws `ConfigError` for programmer errors caught at startup:
 
 ```typescript
-import { Effect } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig, ConfigurationError } from '@jambudipa/spider';
+import { ConfigError, makeSpiderConfig } from '@jambudipa/spider';
 
-const validationProgram = Effect.gen(function* () {
-  try {
-    // Configuration validation happens during config creation
-    const invalidConfig = makeSpiderConfig({
-      maxConcurrentWorkers: -1, // Invalid
-      requestDelayMs: -500 // Invalid
-    });
-  } catch (error) {
-    if (error instanceof ConfigurationError) {
-      console.error(`Configuration error: ${error.message}`);
-    }
+try {
+  const config = makeSpiderConfig({
+    fetchRetry: { maxAttempts: 0 }, // throws — must be >= 1
+  });
+} catch (error) {
+  if (error instanceof ConfigError) {
+    console.error(`Config error: ${error.field} — ${error.reason}`);
   }
-});
+}
 ```
 
-Common validation errors:
+Known validation rules:
 
-- `maxConcurrency` must be a positive integer
-- `requestDelay` must be a non-negative number
-- `timeout` must be a positive number
-- `maxPages` and `maxDepth` must be positive integers
-- `userAgent` must be a non-empty string
-- Storage backend must implement required interface
+- `fetchRetry.maxAttempts` must be a positive integer ≥ 1

@@ -122,25 +122,30 @@ const program = Effect.gen(function* () {
     responseAnalyzed: 0
   };
 
-  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result) =>
+  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
     Effect.gen(function* () {
       middlewareStats.requestsProcessed++;
 
-      yield* Effect.logInfo(`Page processed: ${result.pageData.url}`);
-      yield* Effect.logInfo(`  Title: ${result.pageData.title ?? '(no title)'}`);
-      yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
-      yield* Effect.logInfo(`  Processing time: ${result.pageData.scrapeDurationMs}ms`);
+      if (CrawlResult.isOk(result)) {
+        yield* Effect.logInfo(`Page processed: ${result.pageData.url}`);
+        yield* Effect.logInfo(`  Title: ${result.pageData.title ?? '(no title)'}`);
+        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
+        yield* Effect.logInfo(`  Processing time: ${result.pageData.scrapeDurationMs}ms`);
 
-      middlewareStats.totalProcessingTime += result.pageData.scrapeDurationMs;
+        middlewareStats.totalProcessingTime += result.pageData.scrapeDurationMs;
 
-      // Check for middleware-added headers (if any)
-      if (result.pageData.headers) {
-        const customHeaders = Object.keys(result.pageData.headers)
-          .filter(key => key.startsWith('x-spider-') || key.startsWith('X-Spider-'));
+        // Check for middleware-added headers (if any)
+        if (result.pageData.headers) {
+          const customHeaders = Object.keys(result.pageData.headers)
+            .filter(key => key.startsWith('x-spider-') || key.startsWith('X-Spider-'));
 
-        if (customHeaders.length > 0) {
-          yield* Effect.logInfo(`  Custom headers: ${customHeaders.join(', ')}`);
+          if (customHeaders.length > 0) {
+            yield* Effect.logInfo(`  Custom headers: ${customHeaders.join(', ')}`);
+          }
         }
+      } else {
+        middlewareStats.errorsHandled++;
+        yield* Effect.logWarning(`Failed: ${result.url} (${result.error.kind})`);
       }
     })
   );

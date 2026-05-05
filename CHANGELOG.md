@@ -1,5 +1,43 @@
 # @jambudipa/spider
 
+## 0.9.0
+
+### Minor Changes
+
+- **BREAKING**: `ScraperService.fetchAndParse` now returns `{ pageData: PageData; finalUrl: string }` instead of `PageData` directly. External callers must destructure the result.
+- Added `StartUrlEntry` — `crawl()` now accepts `string | StartUrlEntry | ReadonlyArray<string | StartUrlEntry>`. `StartUrlEntry` supports `{ url, fallbackUrls?, metadata? }`; each candidate is HEAD-probed (5 s timeout) and the first reachable URL is used. `StartUrlChosenEvent` reports the selected URL.
+- Added `CrossDomainRedirectConfig` (`enabled`, `maxHops`) via `SpiderConfigOptions.crossDomainRedirects`. When enabled, a depth-0 redirect to a different hostname updates the per-domain crawl restriction and emits `StartUrlRedirectedEvent`.
+- Added `UserAgentStrategy` (`static | rotating | custom`) via `SpiderConfigOptions.userAgentStrategy`. The `rotating` variant with `perDomain: true` maintains a sticky user-agent per domain for the duration of a crawl session.
+- Added `FileExtensionFilters` and `TechnicalFilters` for granular URL filter control via `SpiderConfigOptions.fileExtensionFilters` and `SpiderConfigOptions.technicalFilters`.
+- New exports: `StartUrlEntry`, `FileExtensionFilters`, `TechnicalFilters`, `CrossDomainRedirectConfig`, `UserAgentStrategy`.
+
+## 0.8.0
+
+### Minor Changes
+
+- **BREAKING**: The results channel is now drained by a single serial fibre. Sink handlers are no longer invoked concurrently across domains; any sink that relied on concurrent execution will now run sequentially.
+- Added `DomainEquivalenceConfig` (`wwwHandling`, `protocolHandling`, `subdomainHandling`) via `SpiderConfigOptions.domainEquivalence`. Controls how `www.` prefix, HTTP vs HTTPS, and subdomains are treated during URL deduplication.
+- Added `FetchRetryConfig` (`maxAttempts`, `baseBackoffMs`, `retryOn: RetryableErrorKind[]`) via `SpiderConfigOptions.fetchRetry`. `makeSpiderConfig` throws `ConfigError` synchronously if `fetchRetry.maxAttempts < 1`.
+- New exports: `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`.
+
+## 0.7.0
+
+### Minor Changes
+
+- **BREAKING**: `CrawlResult` is now a discriminated union `CrawlResultOk | CrawlResultError`. Sinks that assumed every result carried `.pageData` must add an `isOk` guard: `CrawlResult.isOk(result)` / `CrawlResult.isError(result)`.
+- Added `RobotsBlockedEvent` — emitted when `robots.txt` disallows a URL before any fetch attempt is made.
+- Changed `DomainCompleteEvent` — now carries `finalStartUrl`, `pagesAttempted`, `pagesFailed` (breakdown by `PageFetchErrorKind`), `reason` (`'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed'`), and `durationMs`.
+- Added `PageFetchError` — structured error type on `CrawlResultError.error`, with `kind: PageFetchErrorKind`, `durationMs`, `statusCode?`, `message`, `attemptsMade`.
+- Added `PageFetchErrorKind` — `'timeout' | 'dns' | 'http_4xx' | 'http_429' | 'http_5xx' | 'connection_refused' | 'other'`.
+- New exports: `CrawlResultOk`, `CrawlResultError`, `CrawlResult`, `PageFetchError`, `PageFetchErrorKind`, `RobotsBlockedEvent`.
+
+## 0.6.0
+
+### Minor Changes
+
+- **BREAKING**: `SpiderEvent` members are now `Data.TaggedClass` instances. Consumers that construct event objects directly (e.g. in custom sinks or tests) must use `new EventClass({…})` instead of plain object literals.
+- All nine concrete event classes are now exported from the package entry point: `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`.
+
 ## 0.5.0
 
 ### Minor Changes

@@ -119,6 +119,12 @@ export default [
       'eslint.config.cjs',
       // Code style resources are documentation/examples - not production code
       'code-style/**',
+      // BMad framework directories — workflow artifacts, not project source.
+      '_bmad/**',
+      '_bmad-output/**',
+      // Tool sidecar directories — not project source.
+      '.ai/**',
+      '.serena/**',
       // Config files not in tsconfig - build/tool configs
       '**/vite.config.ts',
       '**/vitest.config.ts',

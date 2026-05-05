@@ -33,7 +33,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.title).toBe('Test Page');
@@ -52,7 +52,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com/missing', 0);
+          return (yield* scraper.fetchAndParse('https://example.com/missing', 0)).pageData;
         })
       );
       // 404 pages still get parsed - they have content
@@ -71,7 +71,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.title).toBe('My Title');
@@ -90,7 +90,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.metadata['description']).toBe('A test page');
@@ -108,7 +108,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.metadata).toBeDefined();
@@ -128,7 +128,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.metadata['og:title']).toBe('OG Title');
@@ -148,7 +148,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.metadata['twitter:card']).toBe('summary');
@@ -162,7 +162,7 @@ describe('Scraper Service', () => {
         Effect.provide(
           Effect.gen(function* () {
             const scraper = yield* ScraperService;
-            return yield* scraper.fetchAndParse('https://unreachable.example.com', 0);
+            return (yield* scraper.fetchAndParse('https://unreachable.example.com', 0)).pageData;
           }),
           ScraperService.Default
         )
@@ -183,7 +183,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.title).toBe('Oops');
@@ -201,7 +201,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.title).toBe('Ünïcödé');
@@ -220,11 +220,86 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       // PageData should contain the page HTML which includes the canonical link
       expect(result.html).toContain('canonical');
+    });
+
+    it('should send the configured User-Agent header on the request', async () => {
+      const html = htmlPage('UA Test', '<p>ok</p>');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        })
+      );
+
+      await runWithScraper(
+        Effect.gen(function* () {
+          const scraper = yield* ScraperService;
+          return yield* scraper.fetchAndParse(
+            'https://example.com',
+            0,
+            'CustomBot/2.5'
+          );
+        })
+      );
+
+      expect(fetchSpy).toHaveBeenCalled();
+      const callArgs = fetchSpy.mock.calls[0];
+      expect(callArgs).toBeDefined();
+      const init = callArgs?.[1];
+      expect(init).toBeDefined();
+      const headers = init!.headers as Record<string, string>;
+      expect(headers['User-Agent']).toBe('CustomBot/2.5');
+    });
+
+    it('should fall back to the default User-Agent when none is provided', async () => {
+      const html = htmlPage('UA Default', '<p>ok</p>');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        })
+      );
+
+      await runWithScraper(
+        Effect.gen(function* () {
+          const scraper = yield* ScraperService;
+          return yield* scraper.fetchAndParse('https://example.com', 0);
+        })
+      );
+
+      const init = fetchSpy.mock.calls[0]?.[1];
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['User-Agent']).toBe('JambudipaSpider/1.0');
+    });
+
+    it('should expose the response.url as finalUrl in the return value', async () => {
+      const html = htmlPage('Final URL Test', '<p>ok</p>');
+      // `Response.url` is read-only on the constructor; mock the entire
+      // response shape so we can assert finalUrl propagation.
+      const fakeResponse = new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+      Object.defineProperty(fakeResponse, 'url', {
+        value: 'https://final.example.com/',
+        configurable: true,
+      });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeResponse);
+
+      const result = await runWithScraper(
+        Effect.gen(function* () {
+          const scraper = yield* ScraperService;
+          return yield* scraper.fetchAndParse('https://start.example.com', 0);
+        })
+      );
+
+      expect(result.finalUrl).toBe('https://final.example.com/');
+      expect(result.pageData.url).toBe('https://start.example.com');
     });
 
     it('should record scrape duration', async () => {
@@ -239,7 +314,7 @@ describe('Scraper Service', () => {
       const result = await runWithScraper(
         Effect.gen(function* () {
           const scraper = yield* ScraperService;
-          return yield* scraper.fetchAndParse('https://example.com', 0);
+          return (yield* scraper.fetchAndParse('https://example.com', 0)).pageData;
         })
       );
       expect(result.scrapeDurationMs).toBeGreaterThanOrEqual(0);

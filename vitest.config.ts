@@ -40,8 +40,8 @@ export default defineConfig({
       all: true,
     },
     testTimeout: 30000,
-    hookTimeout: 10000,
-    teardownTimeout: 10000,
+    hookTimeout: 30000,
+    teardownTimeout: 15000,
     reporters: process.env.CI 
       ? ['verbose', 'junit']
       : ['verbose'],

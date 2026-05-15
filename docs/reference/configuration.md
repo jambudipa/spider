@@ -42,6 +42,9 @@ interface SpiderConfigOptions {
   fetchRetry?: FetchRetryConfig;
   crossDomainRedirects?: CrossDomainRedirectConfig;
   userAgentStrategy?: UserAgentStrategy;
+
+  // Stop behaviour (v0.10+)
+  stopMode?: StopMode;
 }
 ```
 
@@ -340,3 +343,77 @@ try {
 Known validation rules:
 
 - `fetchRetry.maxAttempts` must be a positive integer ≥ 1
+
+---
+
+## StopMode (v0.10+)
+
+Controls what happens to in-flight work when a stop condition fires (`maxPages` reached, external abort signal).
+
+```typescript
+type StopMode =
+  | 'drain'                                        // default
+  | 'interrupt'
+  | { kind: 'interrupt'; gracePeriodMs?: number };  // tune grace period
+```
+
+| Value | Behaviour |
+|-------|-----------|
+| `'drain'` (default) | Current behaviour — in-flight tasks complete their full retry schedule before the domain exits. |
+| `'interrupt'` | Cancel in-flight fetches immediately. Workers exit within `gracePeriodMs` (5 000 ms by default). |
+| `{ kind: 'interrupt', gracePeriodMs: N }` | Same as `'interrupt'` with a custom grace period in milliseconds. |
+
+**Examples:**
+
+```typescript
+// Opt-in to interrupt mode with default 5 s grace period
+makeSpiderConfig({
+  maxPages: 50,
+  stopMode: 'interrupt',
+});
+
+// Tune grace period to 3 seconds
+makeSpiderConfig({
+  maxPages: 50,
+  stopMode: { kind: 'interrupt', gracePeriodMs: 3000 },
+});
+```
+
+**External abort handle:**
+
+Pass a `Deferred<void>` via `crawl()` options to abort from outside the crawl. Only has effect when `stopMode` is `'interrupt'`.
+
+```typescript
+import { Deferred, Effect } from 'effect';
+import { makeSpiderConfig, SpiderService, SpiderConfig } from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  const stopSignal = yield* Deferred.make<void>();
+  const spider = yield* SpiderService;
+
+  // Fork the crawl so we can resolve the stop signal concurrently
+  const crawlFiber = yield* Effect.fork(
+    spider.crawl(urls, sink, { externalStopSignal: stopSignal })
+  );
+
+  // Abort after 30 seconds
+  yield* Effect.sleep('30 seconds');
+  yield* Deferred.succeed(stopSignal, undefined);
+  yield* Fiber.join(crawlFiber);
+});
+```
+
+**New events emitted in interrupt mode:**
+
+| Event | When emitted |
+|-------|-------------|
+| `WorkerInterruptedEvent` | Once per interrupted worker fiber |
+| `DomainStoppedEvent` | Once per domain when it stops due to an interrupt signal |
+| `SpiderStoppedEvent` | Once when the whole-spider external abort signal resolves |
+
+**`DomainCompleteEvent.reason` values added in v0.10+:**
+
+| Reason | Meaning |
+|--------|---------|
+| `'interrupted'` | Workers exited cleanly within `gracePeriodMs` |
+| `'interrupt_grace_exceeded'` | Grace period expired before workers exited; domain was force-completed |

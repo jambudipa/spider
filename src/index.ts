@@ -27,6 +27,8 @@ export type {
   UserAgentStrategy,
   FileExtensionFilters,
   TechnicalFilters,
+  StopMode,
+  ResolvedStopMode,
 } from './lib/Config/SpiderConfig.service.js';
 export {
   SpiderConfig,
@@ -175,6 +177,9 @@ export {
   SpiderEventSinkNoop,
   StartUrlChosenEvent,
   StartUrlRedirectedEvent,
+  WorkerInterruptedEvent,
+  DomainStoppedEvent,
+  SpiderStoppedEvent,
 } from './lib/Logging/SpiderEventSink.js';
 
 // Export HTTP Client components

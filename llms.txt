@@ -101,7 +101,7 @@ program.pipe(
 Lifecycle and progress signals are emitted as a typed discriminated union:
 
 ```typescript
-// All nine events are Data.TaggedClass instances (v0.6+).
+// All twelve events are Data.TaggedClass instances (v0.6+).
 // Construct with `new EventClass({...})`, not plain object literals.
 type SpiderEvent =
   | SpiderStartEvent    // { _tag: 'SpiderStart';    details?: Record<string, unknown> }
@@ -110,10 +110,14 @@ type SpiderEvent =
   | DomainStartEvent    // { _tag: 'DomainStart';  domain; startUrl }
   | DomainCompleteEvent // { _tag: 'DomainComplete'; domain; startUrl; finalStartUrl; pagesScraped;
                         //   pagesAttempted; pagesFailed: {kind,count}[]; reason; durationMs }
+                        //   reason now includes 'interrupted' | 'interrupt_grace_exceeded' — v0.10+
   | PageScrapedEvent    // { _tag: 'PageScraped';   url; domain; pageNumber }
   | RobotsBlockedEvent  // { _tag: 'RobotsBlocked'; url; domain; disallowRule? }       — v0.7+
   | StartUrlChosenEvent // { _tag: 'StartUrlChosen'; domain; attempted: string[]; chosen }  — v0.9+
-  | StartUrlRedirectedEvent; // { _tag: 'StartUrlRedirected'; domain; from; to; chain }  — v0.9+
+  | StartUrlRedirectedEvent // { _tag: 'StartUrlRedirected'; domain; from; to; chain }  — v0.9+
+  | WorkerInterruptedEvent  // { _tag: 'WorkerInterrupted'; workerId; domain; url; reason } — v0.10+
+  | DomainStoppedEvent      // { _tag: 'DomainStopped'; domain; reason; gracefulMs; forced } — v0.10+
+  | SpiderStoppedEvent;     // { _tag: 'SpiderStopped'; reason; totalDomains; totalPages; wallclockMs } — v0.10+
 ```
 
 Subscribe with a layer:
@@ -140,8 +144,8 @@ Top-level exports from `@jambudipa/spider`:
 
 - **Spider**: `SpiderService`, `CrawlResult`, `CrawlResultOk`, `CrawlResultError`, `CrawlTask`, `StartUrlEntry`, `SpiderLinkExtractionOptions`, `DataExtractionConfig`, `FieldExtractionConfig`, `SPIDER_DEFAULTS`
 - **Error types (result-level)**: `PageFetchError`, `PageFetchErrorKind`
-- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `resolveUserAgent`
-- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`
+- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `StopMode`, `ResolvedStopMode`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `resolveUserAgent`
+- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`, `WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`
 - **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
 - **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`
@@ -170,6 +174,8 @@ makeSpiderConfig({
   userAgent: 'MyBot/1.0',
   maxConcurrentWorkers: 5,  // workers per domain
   requestDelayMs: 500,      // courtesy delay between fetches
+  stopMode: 'interrupt',    // v0.10+: cancel in-flight fetches when stop fires
+  // stopMode: { kind: 'interrupt', gracePeriodMs: 3000 }  — tune grace period
 })
 ```
 
@@ -189,6 +195,42 @@ makeSpiderConfig({
   // Rotate user agents, sticky per domain
   userAgentStrategy: { kind: 'rotating', pool: ['BotA/1.0', 'BotB/1.0'], perDomain: true },
 })
+```
+
+## Interrupt mode (v0.10+)
+
+When `stopMode: 'interrupt'`, in-flight fetches are cancelled immediately when a stop condition fires (`maxPages`, external signal). Workers exit within `gracePeriodMs` (default 5 000 ms). Default `'drain'` preserves previous behaviour.
+
+External abort via `Deferred` (requires `stopMode: 'interrupt'` in config):
+
+```typescript
+import { Deferred, Effect, Fiber } from 'effect';
+import { makeSpiderConfig, SpiderService, SpiderConfig } from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  const stopSignal = yield* Deferred.make<void>();
+  const spider = yield* SpiderService;
+
+  const crawlFiber = yield* Effect.fork(
+    spider.crawl(urls, sink, { externalStopSignal: stopSignal })
+  );
+
+  yield* Effect.sleep('30 seconds');
+  yield* Deferred.succeed(stopSignal, undefined); // abort crawl
+  return yield* Fiber.join(crawlFiber);
+});
+```
+
+Subscribe to interrupt events in a `SpiderEventSink`:
+
+```typescript
+const MySink = Layer.succeed(SpiderEventSink, {
+  emit: (event) => Effect.sync(() => {
+    if (event._tag === 'WorkerInterrupted') { /* per-worker */ }
+    if (event._tag === 'DomainStopped')     { /* per-domain */ }
+    if (event._tag === 'SpiderStopped')     { /* whole spider */ }
+  }),
+});
 ```
 
 ## Common error types

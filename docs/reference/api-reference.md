@@ -300,7 +300,7 @@ program.pipe(
 
 #### SpiderEvent
 
-Discriminated union of all nine event types. Switch on `_tag` for exhaustive handling.
+Discriminated union of all twelve event types. Switch on `_tag` for exhaustive handling.
 
 All events are `Data.TaggedClass` instances (v0.6+) — construct with `new EventClass({…})`.
 
@@ -315,8 +315,13 @@ All events are `Data.TaggedClass` instances (v0.6+) — construct with `new Even
 | `RobotsBlockedEvent` | `'RobotsBlocked'` | `url`, `domain`, `disallowRule?` | 0.7 |
 | `StartUrlChosenEvent` | `'StartUrlChosen'` | `domain`, `attempted`, `chosen` | 0.9 |
 | `StartUrlRedirectedEvent` | `'StartUrlRedirected'` | `domain`, `from`, `to`, `chain` | 0.9 |
+| `WorkerInterruptedEvent` | `'WorkerInterrupted'` | `workerId`, `domain`, `url`, `reason` | 0.10 |
+| `DomainStoppedEvent` | `'DomainStopped'` | `domain`, `reason`, `gracefulMs`, `forced` | 0.10 |
+| `SpiderStoppedEvent` | `'SpiderStopped'` | `reason`, `totalDomains`, `totalPages`, `wallclockMs` | 0.10 |
 
-`DomainCompleteEvent.reason` values: `'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed'`
+`DomainCompleteEvent.reason` values: `'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded'`
+
+The three interrupt-mode events (`WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`) are only emitted when `stopMode: 'interrupt'` is configured. See the [configuration reference](./configuration.md#stopmode-v010) for details.
 
 See `src/examples/10-custom-logging.ts` for a complete example.
 
@@ -451,6 +456,11 @@ export interface SpiderLinkExtractionOptions {
   readonly replaceBasicExtraction?: boolean;
   /** Data extraction configuration for structured data extraction */
   readonly extractData?: Record<string, any>;
+  /**
+   * Optional external stop signal (v0.10+). Resolve this `Deferred` to abort the
+   * crawl early. Only takes effect when `stopMode: 'interrupt'` is configured.
+   */
+  readonly externalStopSignal?: Deferred<void, never>;
 }
 ```
 

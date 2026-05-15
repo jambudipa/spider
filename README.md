@@ -384,6 +384,63 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 | `crossDomainRedirects` | `CrossDomainRedirectConfig` | Follow cross-domain redirects from start URLs |
 | `userAgentStrategy` | `UserAgentStrategy` | `static`, `rotating`, or `custom` user-agent selection |
 
+## Interrupt Mode (v0.10+)
+
+By default, when a stop condition fires (`maxPages` reached, queue empty) the spider lets every in-flight fetch finish its full retry schedule before exiting. With production configs (`maxAttempts: 5`, `baseBackoffMs: 1000`) a stuck URL can tail for several minutes per worker.
+
+`stopMode: 'interrupt'` changes this: when a stop condition fires, in-flight fetches are cancelled immediately and workers exit within `gracePeriodMs` (default 5 seconds).
+
+```typescript
+makeSpiderConfig({
+  maxPages: 50,
+  stopMode: 'interrupt',            // cancel in-flight on stop
+  // or tune grace period:
+  // stopMode: { kind: 'interrupt', gracePeriodMs: 3000 },
+})
+```
+
+### External abort handle
+
+To abort a running crawl programmatically, pass a `Deferred<void>` via `crawl()` options. Requires `stopMode: 'interrupt'` in the config.
+
+```typescript
+import { Deferred, Effect, Fiber } from 'effect';
+import { makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  const stopSignal = yield* Deferred.make<void>();
+  const spider = yield* SpiderService;
+
+  // Fork so we can resolve the stop signal concurrently
+  const crawlFiber = yield* Effect.fork(
+    spider.crawl(['https://example.com'], sink, { externalStopSignal: stopSignal })
+  );
+
+  // Abort after 30 seconds
+  yield* Effect.sleep('30 seconds');
+  yield* Deferred.succeed(stopSignal, undefined);
+  return yield* Fiber.join(crawlFiber);
+}).pipe(
+  Effect.provide(SpiderService.Default),
+  Effect.provide(SpiderConfig.Live(makeSpiderConfig({ stopMode: 'interrupt' }))),
+  Effect.provide(SpiderEventSinkNoop),
+);
+```
+
+### Interrupt events
+
+Subscribe to new events emitted in interrupt mode via `SpiderEventSink`:
+
+| Event | When emitted |
+|-------|-------------|
+| `WorkerInterruptedEvent` | Per interrupted worker fiber — fields: `workerId`, `domain`, `url`, `reason` |
+| `DomainStoppedEvent` | Per domain that stopped — fields: `domain`, `reason`, `gracefulMs`, `forced` |
+| `SpiderStoppedEvent` | When external abort fires — fields: `reason`, `totalDomains`, `totalPages`, `wallclockMs` |
+
+`DomainCompleteEvent.reason` gains two new values: `'interrupted'` (clean exit within grace period) and `'interrupt_grace_exceeded'` (grace period expired, domain force-completed).
+
+---
+
 ## Error Handling
 
 Fetch errors are surfaced as `CrawlResultError` values inside the sink — they do not fail the Effect channel. Inspect `result.error.kind` (a `PageFetchErrorKind`) to branch on the failure type:

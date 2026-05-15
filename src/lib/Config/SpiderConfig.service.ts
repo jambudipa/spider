@@ -174,6 +174,38 @@ export type UserAgentStrategy =
   | { readonly kind: 'custom'; readonly resolver: (url: string) => string };
 
 /**
+ * Behaviour when a stop condition fires (`maxPages`, external abort signal).
+ *
+ * - `'drain'` — current behaviour: let every in-flight task finish naturally.
+ * - `'interrupt'` — new: cancel in-flight fetches and exit within `gracePeriodMs`.
+ * - Object form allows tuning `gracePeriodMs` (default 5 000 ms).
+ *
+ * @group Configuration
+ * @public
+ */
+export type StopMode =
+  | 'drain'
+  | 'interrupt'
+  | { readonly kind: 'interrupt'; readonly gracePeriodMs?: number };
+
+/**
+ * Normalised stop-mode after defaults are applied.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface ResolvedStopMode {
+  readonly kind: 'drain' | 'interrupt';
+  readonly gracePeriodMs: number;
+}
+
+const resolveStopMode = (mode?: StopMode): ResolvedStopMode => {
+  if (!mode || mode === 'drain') return { kind: 'drain', gracePeriodMs: 5000 };
+  if (mode === 'interrupt') return { kind: 'interrupt', gracePeriodMs: 5000 };
+  return { kind: 'interrupt', gracePeriodMs: mode.gracePeriodMs ?? 5000 };
+};
+
+/**
  * Resolve the User-Agent string for a given request.
  *
  * Pure function — `cache` is mutated in place when `rotating` + `perDomain`
@@ -400,6 +432,16 @@ export interface SpiderConfigOptions {
    * @default undefined
    */
   readonly userAgentStrategy?: UserAgentStrategy;
+  /**
+   * Behaviour when a stop condition fires (`maxPages`, external abort signal).
+   *
+   * - `'drain'` (default) — let in-flight tasks finish naturally.
+   * - `'interrupt'` — cancel in-flight fetches and exit within `gracePeriodMs` (default 5 000 ms).
+   * - Object form: `{ kind: 'interrupt', gracePeriodMs: 3000 }` to tune the grace period.
+   *
+   * @default 'drain'
+   */
+  readonly stopMode?: StopMode;
 }
 
 /**
@@ -470,6 +512,8 @@ export interface SpiderConfigService {
   getDomainEquivalence: () => Effect.Effect<DomainEquivalenceConfig>;
   /** Get cross-domain redirect policy (returns defaults when not configured). */
   getCrossDomainRedirects: () => Effect.Effect<CrossDomainRedirectConfig>;
+  /** Get the resolved stop-mode settings. */
+  getStopMode: () => Effect.Effect<ResolvedStopMode>;
 }
 
 /**
@@ -1050,5 +1094,6 @@ export const makeSpiderConfig = (
       Effect.succeed(
         config.crossDomainRedirects ?? defaultCrossDomainRedirects
       ),
+    getStopMode: () => Effect.succeed(resolveStopMode(config.stopMode)),
   };
 };

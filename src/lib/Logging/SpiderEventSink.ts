@@ -55,7 +55,7 @@ export class DomainCompleteEvent extends Data.TaggedClass('DomainComplete')<{
   readonly pagesScraped: number;
   readonly pagesAttempted: number;
   readonly pagesFailed: ReadonlyArray<{ readonly kind: PageFetchErrorKind; readonly count: number }>;
-  readonly reason: 'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed';
+  readonly reason: 'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded';
   readonly durationMs: number;
 }> {}
 
@@ -81,6 +81,51 @@ export class RobotsBlockedEvent extends Data.TaggedClass('RobotsBlocked')<{
   readonly url: string;
   readonly domain: string;
   readonly disallowRule?: string;
+}> {}
+
+/**
+ * A worker fiber was interrupted by a stop signal.
+ *
+ * @group Observability
+ * @public
+ */
+export class WorkerInterruptedEvent extends Data.TaggedClass('WorkerInterrupted')<{
+  readonly workerId: string;
+  readonly domain: string;
+  readonly url: string;
+  readonly reason: string;
+}> {}
+
+/**
+ * A domain's crawl was stopped early by an interrupt signal.
+ *
+ * Emitted once per domain when `stopMode: 'interrupt'` fires.
+ * `forced` is `true` when the grace period expired before workers exited cleanly.
+ *
+ * @group Observability
+ * @public
+ */
+export class DomainStoppedEvent extends Data.TaggedClass('DomainStopped')<{
+  readonly domain: string;
+  readonly reason: string;
+  readonly gracefulMs: number;
+  readonly forced: boolean;
+}> {}
+
+/**
+ * The entire spider was stopped by an external abort signal.
+ *
+ * Emitted once when an `externalStopSignal` Deferred is resolved while
+ * a `crawl()` is in progress.
+ *
+ * @group Observability
+ * @public
+ */
+export class SpiderStoppedEvent extends Data.TaggedClass('SpiderStopped')<{
+  readonly reason: string;
+  readonly totalDomains: number;
+  readonly totalPages: number;
+  readonly wallclockMs: number;
 }> {}
 
 /**
@@ -142,7 +187,10 @@ export type SpiderEvent =
   | PageScrapedEvent
   | RobotsBlockedEvent
   | StartUrlChosenEvent
-  | StartUrlRedirectedEvent;
+  | StartUrlRedirectedEvent
+  | WorkerInterruptedEvent
+  | DomainStoppedEvent
+  | SpiderStoppedEvent;
 
 /**
  * Service interface for consuming {@link SpiderEvent} signals.

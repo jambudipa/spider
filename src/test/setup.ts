@@ -8,7 +8,9 @@ vi.hoisted(() => {
   }
 });
 
-// Extend test timeout for Effect-based tests
+// Extend test timeout for Effect-based tests and live-site scenario tests
+// (Playwright navigation to web-scraping.dev can exceed 10s when the site is
+// slow). Matches the global `testTimeout` set in vitest.config.ts.
 vi.setConfig({
-  testTimeout: 10000,
+  testTimeout: 30000,
 });

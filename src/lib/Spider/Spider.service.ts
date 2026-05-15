@@ -2,6 +2,7 @@ import {
   Chunk,
   Data,
   DateTime,
+  Deferred,
   Duration,
   Effect,
   Fiber,
@@ -21,6 +22,7 @@ import {
   buildFetchRetrySchedule,
   resolveUserAgent,
   type UserAgentStrategy,
+  type ResolvedStopMode,
 } from '../Config/SpiderConfig.service.js';
 import { UrlDeduplicatorService } from '../UrlDeduplicator/UrlDeduplicator.service.js';
 import { ScraperService } from '../Scraper/Scraper.service.js';
@@ -36,13 +38,16 @@ import { classifyFetchError, type PageFetchError, type PageFetchErrorKind } from
 import {
   DomainCompleteEvent,
   DomainStartEvent,
+  DomainStoppedEvent,
   PageScrapedEvent,
   RobotsBlockedEvent,
   SpiderCompleteEvent,
   SpiderEventSink,
   SpiderStartEvent,
+  SpiderStoppedEvent,
   StartUrlChosenEvent,
   StartUrlRedirectedEvent,
+  WorkerInterruptedEvent,
 } from '../Logging/SpiderEventSink.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
 import { SPIDER_DEFAULTS } from './Spider.defaults.js';
@@ -222,6 +227,22 @@ export interface SpiderLinkExtractionOptions {
   readonly replaceBasicExtraction?: boolean;
   /** Data extraction configuration for structured data extraction */
   readonly extractData?: DataExtractionConfig;
+  /**
+   * Optional external stop signal. Resolve this `Deferred` to abort the crawl
+   * early. Only takes effect when `stopMode` is `'interrupt'` in the config.
+   *
+   * @example
+   * ```typescript
+   * const stopSignal = yield* Deferred.make<void>();
+   * const crawlFiber = yield* Effect.fork(
+   *   spider.crawl(urls, sink, { externalStopSignal: stopSignal })
+   * );
+   * // … later:
+   * yield* Deferred.succeed(stopSignal, undefined);
+   * yield* Fiber.join(crawlFiber);
+   * ```
+   */
+  readonly externalStopSignal?: Deferred.Deferred<void>;
 }
 
 export class SpiderService extends Effect.Service<SpiderService>()(
@@ -417,6 +438,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             }
 
             // Emit spider lifecycle start
+            const spiderStartTime = yield* DateTime.now;
+            const spiderStartMs = DateTime.toEpochMillis(spiderStartTime);
             yield* events.emit(
               new SpiderStartEvent({
                 details: {
@@ -427,6 +450,28 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 },
               })
             );
+
+            // When an externalStopSignal is provided and stopMode === 'interrupt',
+            // emit SpiderStoppedEvent as soon as the signal resolves.
+            const crawlStopMode: ResolvedStopMode = yield* (yield* SpiderConfig).getStopMode();
+            if (crawlStopMode.kind === 'interrupt' && options?.externalStopSignal) {
+              yield* Effect.fork(
+                Deferred.await(options.externalStopSignal).pipe(
+                  Effect.flatMap(() =>
+                    Effect.gen(function* () {
+                      const now = yield* DateTime.now;
+                      yield* events.emit(new SpiderStoppedEvent({
+                        reason: 'external_abort',
+                        totalDomains: deduplicatedUrls.length,
+                        totalPages: 0,
+                        wallclockMs: DateTime.toEpochMillis(now) - spiderStartMs,
+                      }));
+                    })
+                  ),
+                  Effect.ignore
+                )
+              );
+            }
 
             // Run each URL as a separate crawling operation with its own infrastructure.
             // ALWAYS restrict to starting domain to prevent crawling external sites.
@@ -507,7 +552,19 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const entry = HashMap.get(entriesByUrl, deduped.url).pipe(
                     Option.getOrElse(() => fallback)
                   );
-                  const chosen = yield* resolveStartUrl(entry, probeUserAgent);
+                  // In interrupt mode, race start-URL probing against the
+                  // external stop signal so a hung HEAD probe can't pin the
+                  // crawl for PROBE_TIMEOUT_MS after the caller aborts.
+                  const chosen = yield* (
+                    crawlStopMode.kind === 'interrupt' && options?.externalStopSignal
+                      ? Effect.raceFirst(
+                          resolveStartUrl(entry, probeUserAgent),
+                          Deferred.await(options.externalStopSignal).pipe(
+                            Effect.map(() => entry.url)
+                          )
+                        )
+                      : resolveStartUrl(entry, probeUserAgent)
+                  );
                   const chosenDomain = yield* Effect.try({
                     try: () => new URL(chosen).hostname,
                     catch: () => 'invalid-url',
@@ -659,6 +716,27 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // a separate one-shot CAS for "exactly one DomainCompleteEvent".
             const domainCompleted = MutableRef.make(false);
             const domainCompleteEmitted = MutableRef.make(false);
+
+            // Stop-signal infrastructure (used only when stopMode === 'interrupt')
+            const stopMode: ResolvedStopMode = yield* config.getStopMode();
+            const domainStopSignal = yield* Deferred.make<void>();
+            const domainStopReason = MutableRef.make<Option.Option<string>>(Option.none());
+            // Tracks the URL currently being fetched so WorkerInterruptedEvent
+            // can report it accurately when the fiber is interrupted.
+            const currentTaskUrl = MutableRef.make('');
+
+            // Cascade an external stop signal → domain stop signal
+            if (stopMode.kind === 'interrupt' && options?.externalStopSignal) {
+              yield* Effect.fork(
+                Deferred.await(options.externalStopSignal).pipe(
+                  Effect.flatMap(() => {
+                    MutableRef.set(domainStopReason, Option.some('external_abort'));
+                    return Deferred.complete(domainStopSignal, Effect.void);
+                  }),
+                  Effect.ignore
+                )
+              );
+            }
 
             const domainStartTime = yield* DateTime.now;
             const domainStartMs = DateTime.toEpochMillis(domainStartTime);
@@ -1152,12 +1230,19 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   // drift apart silently.
                   const retrySchedule = buildFetchRetrySchedule(fetchRetry);
 
+                  // Track current task URL so WorkerInterruptedEvent can
+                  // report it if this fiber is interrupted mid-fetch.
+                  MutableRef.set(currentTaskUrl, task.url);
+
                   // Fetch and parse the page with aggressive timeout.
                   // Wrap the success branch in `Option.some` so the catchAll
                   // branch can return `Option.none` and the resulting type is
                   // a clean `Option.Option<FetchOk>` — no runtime cast needed.
+                  // In interrupt mode the fetch is raced against the domain
+                  // stop signal so an in-flight retry schedule is abandoned
+                  // immediately when the signal resolves.
                   type FetchOk = { pageData: PageData; finalUrl: string };
-                  const maybeFetchResult: Option.Option<FetchOk> = yield* scraper
+                  const fetchCore = scraper
                     .fetchAndParse(task.url, task.depth, userAgent)
                     .pipe(
                       // Add overall timeout to prevent workers from hanging
@@ -1168,6 +1253,17 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         )
                       ),
                       Effect.retry(retrySchedule),
+                    );
+                  const maybeFetchResult: Option.Option<FetchOk> = yield* (
+                    stopMode.kind === 'interrupt'
+                      ? Effect.raceFirst(
+                          fetchCore,
+                          Deferred.await(domainStopSignal).pipe(
+                            Effect.flatMap(() => Effect.interrupt)
+                          )
+                        )
+                      : fetchCore
+                  ).pipe(
                       Effect.map((result): Option.Option<FetchOk> =>
                         Option.some(result)
                       ),
@@ -1586,6 +1682,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           maxPages,
                         })
                       );
+                      // In interrupt mode, resolve the stop signal so
+                      // peer workers abandon their in-flight fetches.
+                      if (stopMode.kind === 'interrupt') {
+                        MutableRef.set(domainStopReason, Option.some('max_pages'));
+                        yield* Deferred.complete(domainStopSignal, Effect.void).pipe(
+                          Effect.ignore
+                        );
+                      }
                       break;
                     }
                   }
@@ -1620,6 +1724,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   })
                 );
               }).pipe(
+                // Emit WorkerInterruptedEvent when this fiber is interrupted
+                // by a stop signal (interrupt mode only).
+                Effect.onInterrupt(() =>
+                  events.emit(new WorkerInterruptedEvent({
+                    workerId,
+                    domain,
+                    url: MutableRef.get(currentTaskUrl),
+                    reason: Option.getOrElse(MutableRef.get(domainStopReason), () => 'interrupted'),
+                  })).pipe(Effect.ignore)
+                ),
                 // Ensure this runs even if the worker is interrupted/crashes
                 Effect.ensuring(
                   Effect.logDebug('worker exiting_loop').pipe(
@@ -1695,6 +1809,47 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               workerFibersChunk = Chunk.append(workerFibersChunk, fiber);
             }
             const workerFibers = Chunk.toArray(workerFibersChunk);
+
+            // Grace period enforcer: when stopMode === 'interrupt' and the stop
+            // signal fires, interrupt all worker fibers then wait gracePeriodMs.
+            // If DomainCompleteEvent has not been emitted by then, force-emit it
+            // with reason 'interrupt_grace_exceeded' as a belt-and-braces cap.
+            if (stopMode.kind === 'interrupt') {
+              yield* Effect.fork(Effect.gen(function* () {
+                yield* Deferred.await(domainStopSignal);
+                const stopTime = yield* DateTime.now;
+
+                // Interrupt workers that are still running
+                yield* Fiber.interruptAll(workerFibers).pipe(Effect.ignore);
+
+                // Wait gracePeriodMs for clean exit
+                yield* Effect.sleep(Duration.millis(stopMode.gracePeriodMs));
+
+                const wasFirst = MutableRef.compareAndSet(domainCompleteEmitted, false, true);
+                if (wasFirst) {
+                  const finalCount = yield* localDeduplicator.size();
+                  const now = yield* DateTime.now;
+                  const gracefulMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(stopTime);
+                  const failedMap = MutableRef.get(pagesFailed);
+                  yield* events.emit(new DomainCompleteEvent({
+                    domain,
+                    startUrl: urlString,
+                    finalStartUrl: MutableRef.get(effectiveStartUrl),
+                    pagesScraped: finalCount,
+                    pagesAttempted: MutableRef.get(pagesAttempted),
+                    pagesFailed: Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count })),
+                    reason: 'interrupt_grace_exceeded',
+                    durationMs: DateTime.toEpochMillis(now) - domainStartMs,
+                  }));
+                  yield* events.emit(new DomainStoppedEvent({
+                    domain,
+                    reason: Option.getOrElse(MutableRef.get(domainStopReason), () => 'interrupted'),
+                    gracefulMs,
+                    forced: true,
+                  }));
+                }
+              }).pipe(Effect.ignore));
+            }
 
             // Start worker health monitoring
             const healthMonitorFiber = yield* Effect.fork(workerHealthMonitor);
@@ -1799,9 +1954,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
             const failureDetectorFiber = yield* Effect.fork(failureDetector);
 
-            // Wait for all workers to complete (they will exit when domain is completed)
+            // Wait for all workers to complete. In interrupt mode workers may
+            // be interrupted by the grace period enforcer; Effect.ignore only
+            // catches typed errors, so we use catchAllCause which also absorbs
+            // interruptions. In drain mode workers exit cleanly so this is a no-op.
             yield* Effect.all(
-              workerFibers.map((f) => Fiber.join(f)),
+              workerFibers.map((f) =>
+                Fiber.join(f).pipe(Effect.catchAllCause(() => Effect.void))
+              ),
               { concurrency: 'unbounded' }
             );
 
@@ -1826,19 +1986,22 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             const robotsBlocked = MutableRef.get(robotsBlockedCount);
             const failedCountMap = MutableRef.get(pagesFailed);
             const totalFailed = Array.from(HashMap.values(failedCountMap)).reduce((a, b) => a + b, 0);
+            const stopReasonValue = MutableRef.get(domainStopReason);
             const completionReason: DomainCompleteEvent['reason'] =
-              maxPages && finalPageCount >= maxPages
-                ? 'max_pages'
-                : totalAttempts === 0 && robotsBlocked > 0
-                  ? 'robots_blocked'
-                  : totalAttempts > 0 && totalFailed === totalAttempts
-                    ? 'all_fetches_failed'
-                    : 'queue_empty';
+              Option.isSome(stopReasonValue) && stopMode.kind === 'interrupt'
+                ? 'interrupted'
+                : maxPages && finalPageCount >= maxPages
+                  ? 'max_pages'
+                  : totalAttempts === 0 && robotsBlocked > 0
+                    ? 'robots_blocked'
+                    : totalAttempts > 0 && totalFailed === totalAttempts
+                      ? 'all_fetches_failed'
+                      : 'queue_empty';
             const pagesFailedArray = Array.from(HashMap.entries(failedCountMap)).map(([kind, count]) => ({ kind, count }));
             // Gate emission on the dedicated `domainCompleteEmitted` ref
             // (NOT `domainCompleted`, which workers flip for loop-exit).
-            // Failure-detector path uses the same CAS so the two paths
-            // can't both fire for the same crawlSingle invocation.
+            // Failure-detector path and grace-period enforcer use the same CAS
+            // so only one DomainCompleteEvent fires per crawlSingle invocation.
             const wasFirstToEmit = MutableRef.compareAndSet(
               domainCompleteEmitted,
               false,
@@ -1859,6 +2022,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     DateTime.toEpochMillis(completeTime) - domainStartMs,
                 })
               );
+              // Emit DomainStoppedEvent when domain was cleanly interrupted
+              // (i.e. workers exited within the grace period).
+              if (completionReason === 'interrupted') {
+                yield* events.emit(new DomainStoppedEvent({
+                  domain,
+                  reason: Option.getOrElse(stopReasonValue, () => 'interrupted'),
+                  gracefulMs: DateTime.toEpochMillis(completeTime) - domainStartMs,
+                  forced: false,
+                }));
+              }
             }
 
             return {

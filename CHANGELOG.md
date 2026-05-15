@@ -1,5 +1,18 @@
 # @jambudipa/spider
 
+## 0.10.0
+
+### Minor Changes
+
+- Added `stopMode` config option (`'drain' | 'interrupt' | { kind: 'interrupt'; gracePeriodMs?: number }`). Default `'drain'` preserves existing behaviour. `'interrupt'` cancels in-flight fetches and exits within `gracePeriodMs` (default 5 000 ms) when a stop condition fires.
+- Added `externalStopSignal?: Deferred.Deferred<void, never>` to `SpiderLinkExtractionOptions`. Pass a `Deferred` to `crawl()` to abort a running crawl programmatically; only takes effect when `stopMode: 'interrupt'`.
+- Added three new `SpiderEvent` types (v0.10+):
+  - `WorkerInterruptedEvent` — emitted per interrupted worker fiber (`workerId`, `domain`, `url`, `reason`)
+  - `DomainStoppedEvent` — emitted per domain stopped by an interrupt signal (`domain`, `reason`, `gracefulMs`, `forced`)
+  - `SpiderStoppedEvent` — emitted when an external abort signal resolves (`reason`, `totalDomains`, `totalPages`, `wallclockMs`)
+- `DomainCompleteEvent.reason` now includes `'interrupted'` and `'interrupt_grace_exceeded'` variants.
+- New exports: `StopMode`, `ResolvedStopMode`, `WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`.
+
 ## 0.9.0
 
 ### Minor Changes

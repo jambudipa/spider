@@ -542,6 +542,43 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
 - `contains(url: string): Effect<boolean, never>`
 - `size(): Effect<number, never>`
 
+### WorkerHealthMonitor
+
+Standalone worker-health tracker exported alongside the spider's inline checks. The staleness threshold defaults to `SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS` (300 s in v0.12+). Independent of `SpiderConfig` — direct consumers don't need to provide the full spider configuration layer.
+
+```typescript
+export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
+  '@jambudipa.io/WorkerHealthMonitor',
+  { /* implementation */ }
+) {}
+```
+
+**Methods:**
+- `recordActivity(workerId: string, domain: string, activity: { url?: string; fetchStart?: boolean }): Effect<void, never>`
+- `removeWorker(workerId: string): Effect<void, never>`
+- `getStuckWorkers: Effect<WorkerStatus[], never>` — single read; does not modify state.
+- `startMonitoring: Effect<void, never>` — repeats every 30 s, logs `event: 'worker_stuck_detected'` for each stale worker.
+
+**Static factory (v0.12+):**
+
+- `WorkerHealthMonitor.WithThreshold(stuckThresholdMs: number): Layer<WorkerHealthMonitor>` — build a layer with a custom stuck-worker threshold. Throws synchronously when `stuckThresholdMs` is not a positive integer between `1` and `2_147_483_647`.
+
+```typescript
+import { Effect } from 'effect';
+import { WorkerHealthMonitor } from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  const monitor = yield* WorkerHealthMonitor;
+  yield* monitor.recordActivity('worker-1', 'example.com', { url: 'https://example.com/x' });
+});
+
+Effect.runPromise(
+  program.pipe(Effect.provide(WorkerHealthMonitor.WithThreshold(60_000)))
+);
+```
+
+For per-spider override of the spider's own inline checks, use `SpiderConfig.staleWorkerThresholdMs` instead — see the [configuration reference](./configuration.md#worker-heartbeat-v012).
+
 ## HttpAdapter (v0.11+)
 
 The pluggable HTTP fetcher slot. See the [configuration reference](./configuration.md#httpadapter-v011) for the full contract, examples, and rules. This section enumerates only the exported types.

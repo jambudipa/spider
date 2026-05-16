@@ -116,4 +116,58 @@ describe('Fetch retry filter', () => {
     expect(exit._tag).toBe('Failure');
     expect(getCalls()).toBe(1);
   });
+
+  it('fires the onAttempt hook once per failure that the schedule receives', async () => {
+    // Schedule.tapInput fires whenever the schedule receives an input —
+    // i.e. once per failed attempt during Effect.retry. With maxAttempts: 3
+    // and a permanently failing effect, all 3 attempts feed input into
+    // the schedule, so the hook fires 3 times.
+    const { eff } = failingEffect(Number.POSITIVE_INFINITY);
+    const taps = MutableRef.make(0);
+    const onAttempt = Effect.sync(() => {
+      MutableRef.update(taps, (n) => n + 1);
+    });
+    const schedule = buildFetchRetrySchedule(
+      { maxAttempts: 3, baseBackoffMs: 1, retryOn: ['http_5xx'] },
+      onAttempt
+    );
+    await Effect.runPromiseExit(eff.pipe(Effect.retry(schedule)));
+
+    expect(MutableRef.get(taps)).toBe(3);
+  });
+
+  it('fires the onAttempt hook only on failures (success short-circuits the schedule)', async () => {
+    // Two failures then success: only the two failures feed input into
+    // the schedule, so the hook fires twice — never on the successful
+    // final attempt.
+    const { eff } = failingEffect(2);
+    const taps = MutableRef.make(0);
+    const onAttempt = Effect.sync(() => {
+      MutableRef.update(taps, (n) => n + 1);
+    });
+    const schedule = buildFetchRetrySchedule(
+      { maxAttempts: 3, baseBackoffMs: 1, retryOn: ['http_5xx'] },
+      onAttempt
+    );
+    await Effect.runPromiseExit(eff.pipe(Effect.retry(schedule)));
+
+    expect(MutableRef.get(taps)).toBe(2);
+  });
+
+  it('fires the onAttempt hook once when maxAttempts === 1 and the single attempt fails', async () => {
+    // Even with no retries permitted, the schedule still receives the
+    // single failure input before deciding "no more retries".
+    const { eff } = failingEffect(Number.POSITIVE_INFINITY);
+    const taps = MutableRef.make(0);
+    const onAttempt = Effect.sync(() => {
+      MutableRef.update(taps, (n) => n + 1);
+    });
+    const schedule = buildFetchRetrySchedule(
+      { maxAttempts: 1, baseBackoffMs: 1, retryOn: ['http_5xx'] },
+      onAttempt
+    );
+    await Effect.runPromiseExit(eff.pipe(Effect.retry(schedule)));
+
+    expect(MutableRef.get(taps)).toBe(1);
+  });
 });

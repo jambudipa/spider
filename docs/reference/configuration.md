@@ -48,6 +48,11 @@ interface SpiderConfigOptions {
 
   // Pluggable HTTP fetcher (v0.11+)
   httpAdapter?: HttpAdapter | HttpAdapterSelector;
+
+  // Worker heartbeat & long fetches (v0.12+)
+  staleWorkerThresholdMs?: number;
+  staleWorkerCheckIntervalMs?: number;
+  workerHeartbeatMode?: 'per-iteration' | 'per-attempt';
 }
 ```
 
@@ -498,3 +503,53 @@ makeSpiderConfig({
 - **Error kinds map to existing retry config.** `HttpAdapterError.kind` reuses `PageFetchErrorKind`, so `fetchRetry.retryOn` keys (`'timeout'`, `'http_5xx'`, etc.) work for both default and custom adapters.
 - **User-Agent precedence.** Caller-supplied `User-Agent` in `request.headers` is ignored by `defaultUndiciAdapter` — the spider's resolved `userAgent` always wins.
 - **Selector safety.** A selector that throws synchronously OR returns a non-adapter value fails the single fetch with `kind: 'other'`; the worker does not crash.
+
+## Worker heartbeat (v0.12+)
+
+The spider's worker loop fires a heartbeat per iteration to drive the dead-worker detector. With slow `HttpAdapter` implementations a single task — bounded by `fetchRetry.maxAttempts × adapter timeout + backoff` — can run for minutes, which used to exceed the pre-0.12 60 s staleness threshold and got busy workers flagged dead mid-fetch.
+
+### staleWorkerThresholdMs
+
+```typescript
+makeSpiderConfig({
+  staleWorkerThresholdMs: 600_000, // 10 min for very slow adapters
+});
+```
+
+- **Type:** `number` (milliseconds)
+- **Default:** `300_000` (5 minutes; bumped from 60 s in v0.12)
+- **Bounds:** `1..2_147_483_647`. Validated at `makeSpiderConfig`; `ConfigError` on non-positive, non-integer, `NaN`, `Infinity`, or out-of-bounds values.
+- **Guideline:** `fetchRetry.maxAttempts × per-attempt adapter timeout + sum(backoff) + 30 s` for headroom.
+
+### staleWorkerCheckIntervalMs
+
+How often the worker-health monitor scans for stale workers.
+
+```typescript
+makeSpiderConfig({
+  staleWorkerCheckIntervalMs: 5_000, // scan every 5 s
+});
+```
+
+- **Type:** `number` (milliseconds)
+- **Default:** `15_000`
+- **Bounds:** same as `staleWorkerThresholdMs`. Same validation.
+
+### workerHeartbeatMode
+
+Controls whether the worker heartbeat refreshes between retry attempts.
+
+```typescript
+makeSpiderConfig({
+  workerHeartbeatMode: 'per-attempt', // refresh on each retry-decision input
+});
+```
+
+- **Type:** `'per-iteration' | 'per-attempt'`
+- **Default:** `'per-iteration'` (preserves pre-0.12 behaviour byte-for-byte)
+- **`'per-attempt'`** wires `reportWorkerHealth` into the fetch retry schedule via `Schedule.tapInput`, firing on each failure input (before the backoff delay). Recommended whenever a single attempt can approach `staleWorkerThresholdMs / maxAttempts` — e.g. TLS-impersonating adapters, sidecar APIs.
+- Runtime-validated; `ConfigError` on values outside the union.
+
+Note: the `WorkerHealthMonitor` standalone service shares the new 300 s default but is independent of `SpiderConfig`. Use `WorkerHealthMonitor.WithThreshold(ms)` for a custom threshold there.
+
+The spider emits a debug-level `event: 'worker_heartbeat'` log record on every heartbeat. Default-level loggers filter these out; raise `minimumLogLevel` to `Debug` only when actively diagnosing heartbeat behaviour.

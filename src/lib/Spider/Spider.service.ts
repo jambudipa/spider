@@ -11,6 +11,7 @@ import {
   Option,
   Queue,
   Random,
+  Ref,
   Schedule,
   Sink,
   Stream,
@@ -720,6 +721,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
             // Stop-signal infrastructure (used only when stopMode === 'interrupt')
             const stopMode: ResolvedStopMode = yield* config.getStopMode();
+
+            // Read worker-heartbeat policy once per domain scope — same source
+            // of truth for the workerHealthMonitor's stale-threshold check and
+            // for the per-task decision about firing between-retry heartbeats.
+            const staleWorkerThresholdMs = yield* config.getStaleWorkerThreshold();
+            const workerHeartbeatMode = yield* config.getWorkerHeartbeatMode();
+            const staleWorkerCheckIntervalMs =
+              yield* config.getStaleWorkerCheckInterval();
             const domainStopSignal = yield* Deferred.make<void>();
             const domainStopReason = MutableRef.make<Option.Option<string>>(Option.none());
             // Tracks the URL currently being fetched so WorkerInterruptedEvent
@@ -762,30 +771,79 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Create semaphore for atomic queue operations (mutex with 1 permit)
             const queueMutex = yield* Effect.makeSemaphore(1);
 
-            // Worker health monitoring system - using HashMap and DateTime for Effect-idiomatic code
-            const workerHealthChecks = MutableRef.make<HashMap.HashMap<string, DateTime.Utc>>(
-              HashMap.empty()
-            );
+            // Worker health monitoring system. `Ref` (not `MutableRef`) so
+            // concurrent `reportWorkerHealth` calls — top-of-loop from many
+            // workers plus `Schedule.tapInput` taps from per-attempt mode —
+            // each get an atomic read-modify-write and no heartbeat is lost
+            // to a last-writer-wins race.
+            const workerHealthChecks = yield* Ref.make<
+              HashMap.HashMap<string, DateTime.Utc>
+            >(HashMap.empty());
 
             const reportWorkerHealth = (workerId: string) =>
               Effect.gen(function* () {
                 const now = yield* DateTime.now;
-                const currentMap = MutableRef.get(workerHealthChecks);
-                const updatedMap = HashMap.set(currentMap, workerId, now);
-                MutableRef.set(workerHealthChecks, updatedMap);
-                return updatedMap;
+                yield* Ref.update(workerHealthChecks, (m) =>
+                  HashMap.set(m, workerId, now)
+                );
+                // Debug-level so production logs aren't affected; tests can
+                // raise the log level and count `event: 'worker_heartbeat'`
+                // records to assert per-iteration vs per-attempt behaviour.
+                yield* Effect.logDebug('worker heartbeat').pipe(
+                  Effect.annotateLogs({
+                    event: 'worker_heartbeat',
+                    domain,
+                    workerId,
+                  })
+                );
               });
 
             const workerHealthMonitor = Effect.gen(function* () {
-              const healthMap = MutableRef.get(workerHealthChecks);
               const now = yield* DateTime.now;
-              const staleThreshold = SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS;
+              const nowMs = DateTime.toEpochMillis(now);
+              const staleThreshold = staleWorkerThresholdMs;
 
-              // Iterate over HashMap entries and collect stale workers using Chunk
-              let staleWorkersChunk = Chunk.empty<string>();
-              for (const [workerId, lastCheck] of healthMap) {
-                const elapsed = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(lastCheck);
+              // Identify stale workers from a snapshot, then re-check each
+              // candidate against a fresh map read before removing it — a
+              // heartbeat that arrives between snapshot and removal would
+              // otherwise see the entry vanish and the worker would
+              // silently drop out of monitoring while still alive.
+              const snapshot = yield* Ref.get(workerHealthChecks);
+              let candidatesChunk = Chunk.empty<readonly [string, number]>();
+              for (const [workerId, lastCheck] of snapshot) {
+                const elapsed = nowMs - DateTime.toEpochMillis(lastCheck);
+                // Negative elapsed = clock moved backwards (NTP step,
+                // suspend/resume). Skip; the next tick will see a sensible
+                // positive elapsed.
+                if (elapsed < 0) continue;
                 if (elapsed > staleThreshold) {
+                  candidatesChunk = Chunk.append(
+                    candidatesChunk,
+                    [workerId, elapsed] as const
+                  );
+                }
+              }
+
+              const candidates = Chunk.toArray(candidatesChunk);
+              if (candidates.length === 0) return;
+
+              // Atomic confirm-and-remove for each candidate: only emit the
+              // death warning if the entry is *still* stale after a fresh
+              // read. Closes the heartbeat-vs-removal race.
+              for (const [workerId, elapsed] of candidates) {
+                const stillStale = yield* Ref.modify(
+                  workerHealthChecks,
+                  (m) => {
+                    const opt = HashMap.get(m, workerId);
+                    if (Option.isNone(opt)) return [false, m] as const;
+                    const elapsedNow = nowMs - DateTime.toEpochMillis(opt.value);
+                    if (elapsedNow > staleThreshold) {
+                      return [true, HashMap.remove(m, workerId)] as const;
+                    }
+                    return [false, m] as const;
+                  }
+                );
+                if (stillStale) {
                   yield* Effect.logWarning(
                     `dead worker: ${workerId} - no heartbeat for ${Math.round(elapsed / 1000)}s`
                   ).pipe(
@@ -796,21 +854,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       lastSeenMs: elapsed,
                     })
                   );
-                  staleWorkersChunk = Chunk.append(staleWorkersChunk, workerId);
                 }
-              }
-
-              // Remove stale workers from health tracking (immutably)
-              const staleWorkers = Chunk.toArray(staleWorkersChunk);
-              if (staleWorkers.length > 0) {
-                let updatedMap = healthMap;
-                for (const workerId of staleWorkers) {
-                  updatedMap = HashMap.remove(updatedMap, workerId);
-                }
-                MutableRef.set(workerHealthChecks, updatedMap);
               }
             }).pipe(
-              Effect.repeat(Schedule.fixed(SPIDER_DEFAULTS.HEALTH_CHECK_INTERVAL))
+              Effect.repeat(
+                Schedule.fixed(Duration.millis(staleWorkerCheckIntervalMs))
+              )
             );
 
             // Atomic queue manager - synchronizes queue operations with worker state using semaphore
@@ -1228,8 +1277,26 @@ export class SpiderService extends Effect.Service<SpiderService>()(
 
                   // Schedule built from config — single source of truth in
                   // `buildFetchRetrySchedule` so production and tests can't
-                  // drift apart silently.
-                  const retrySchedule = buildFetchRetrySchedule(fetchRetry);
+                  // drift apart silently. When `workerHeartbeatMode` is
+                  // `'per-attempt'` the schedule fires a heartbeat on each
+                  // failure input (before the backoff delay) so long retry
+                  // chains don't trigger the dead-worker detector.
+                  // `reportWorkerHealth` is infallible (only `DateTime.now`,
+                  // `MutableRef` ops, and `Effect.logDebug` — none can fail in
+                  // the error channel). The schedule hook is typed
+                  // `Effect.Effect<unknown, never>` so we don't wrap with
+                  // `Effect.ignore` — that would also swallow defects, hiding
+                  // real bugs (e.g. logger encoder crashes) instead of
+                  // surfacing them.
+                  const heartbeatOnAttempt: Effect.Effect<unknown> | undefined =
+                    workerHeartbeatMode === 'per-attempt'
+                      ? reportWorkerHealth(workerId)
+                      // eslint-disable-next-line effect/no-undefined-use-option -- `heartbeatOnAttempt` is the optional `onAttempt` slot of buildFetchRetrySchedule; absence is the JS shape, not a value-absence to encode in Option
+                      : undefined;
+                  const retrySchedule = buildFetchRetrySchedule(
+                    fetchRetry,
+                    heartbeatOnAttempt
+                  );
 
                   // Track current task URL so WorkerInterruptedEvent can
                   // report it if this fiber is interrupted mid-fetch.

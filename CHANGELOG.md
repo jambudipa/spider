@@ -1,5 +1,36 @@
 # @jambudipa/spider
 
+## 0.12.0
+
+### Minor Changes
+
+- Worker heartbeat refresh during long fetches.
+  - New `staleWorkerThresholdMs` config option overrides the worker-health
+    staleness threshold. Default raised from 60 s to 300 s to match the
+    documented worst case of the default `fetchRetry` policy. Validated
+    with an upper bound of 2_147_483_647 ms.
+  - New `staleWorkerCheckIntervalMs` config option overrides the monitor
+    scan interval (default 15_000 ms).
+  - New `workerHeartbeatMode: 'per-iteration' | 'per-attempt'` config
+    option. `'per-attempt'` refreshes the heartbeat on each retry decision
+    via `Schedule.tapInput`, so slow adapters (got-scraping, sidecars)
+    with long retry chains aren't flagged as dead workers mid-fetch.
+    Default `'per-iteration'` preserves v0.11 behaviour byte-for-byte.
+  - `buildFetchRetrySchedule` gains an optional second parameter
+    `onAttempt?: Effect.Effect<unknown, never>` exposing the per-retry
+    hook for downstream callers.
+  - The standalone `WorkerHealthMonitor` service's internal threshold is
+    now sourced from `SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS` so the
+    two heartbeat surfaces share one default. New
+    `WorkerHealthMonitor.WithThreshold(ms)` layer factory lets consumers
+    construct the service with a custom threshold without forking.
+  - `reportWorkerHealth` switched from `MutableRef` to `Ref` for atomic
+    read-modify-write under concurrent worker heartbeats. The monitor's
+    stale-worker removal path now re-checks each candidate against a
+    fresh map read before removal (closes the heartbeat-vs-removal race)
+    and guards against negative elapsed time (clock-rewind under NTP
+    step or suspend/resume).
+
 ## 0.11.0
 
 ### Minor Changes

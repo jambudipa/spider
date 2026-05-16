@@ -10,6 +10,7 @@ import {
 } from 'effect';
 import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
 import { classifyFetchError } from '../Spider/Spider.types.js';
+import { SPIDER_DEFAULTS } from '../Spider/Spider.defaults.js';
 import { ConfigError } from '../errors/effect-errors.js';
 import type {
   HttpAdapter,
@@ -91,11 +92,20 @@ export const defaultFetchRetry: FetchRetryConfig = {
  * gated by `whileInput(isRetryable)` so non-retryable error kinds stop
  * the schedule immediately.
  *
+ * @param cfg - Retry policy.
+ * @param onAttempt - Optional infallible side-effect fired by the schedule
+ * each time it receives a failure input — i.e. once per retry decision,
+ * before the backoff delay is awaited. Used by the spider to refresh the
+ * worker heartbeat between attempts so long retry chains aren't flagged
+ * as a dead worker. The hook is typed `Effect.Effect<unknown, never>` so
+ * it cannot corrupt the retry chain by failing.
+ *
  * @group Configuration
  * @public
  */
 export const buildFetchRetrySchedule = (
-  cfg: FetchRetryConfig
+  cfg: FetchRetryConfig,
+  onAttempt?: Effect.Effect<unknown>
 ): Schedule.Schedule<readonly [Duration.Duration, number]> => {
   // `classifyFetchError` could in principle throw on exotic wrapped
   // errors (FiberFailure, Cause); a throw inside the predicate would
@@ -111,10 +121,14 @@ export const buildFetchRetrySchedule = (
       return false;
     }
   };
-  return Schedule.exponential(Duration.millis(cfg.baseBackoffMs)).pipe(
+  const base = Schedule.exponential(Duration.millis(cfg.baseBackoffMs)).pipe(
     Schedule.intersect(Schedule.recurs(Math.max(0, cfg.maxAttempts - 1))),
     Schedule.whileInput(isRetryable)
   );
+  // eslint-disable-next-line effect/no-undefined-use-option -- `onAttempt` is an optional function parameter (Effect-or-omitted); the absence check is the natural JS shape, and Option would force callers to wrap every invocation
+  return onAttempt === undefined
+    ? base
+    : base.pipe(Schedule.tapInput(() => onAttempt));
 };
 
 /**
@@ -447,6 +461,47 @@ export interface SpiderConfigOptions {
    */
   readonly stopMode?: StopMode;
   /**
+   * Override for the worker-health staleness threshold in milliseconds.
+   *
+   * When unset, the spider uses {@link SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS}
+   * (300 000 ms). Raise this when your `HttpAdapter` or `fetchRetry`
+   * configuration produces a worst-case task time that exceeds the
+   * default — guideline:
+   * `fetchRetry.maxAttempts × per-attempt timeout + sum(backoff) + 30 s`.
+   *
+   * Must be a positive integer (`Number.isInteger(n) && n >= 1`).
+   * Invalid values throw `ConfigError` at `makeSpiderConfig` time.
+   *
+   * @default 300_000
+   */
+  readonly staleWorkerThresholdMs?: number;
+  /**
+   * Override for the worker-health monitor's check interval in milliseconds.
+   *
+   * When unset, the spider checks for stale workers every 15 000 ms.
+   * Lower values let tests exercise the dead-worker detection path in
+   * real time; production callers rarely need to override this.
+   *
+   * Must be a positive integer between 1 and {@link STALE_THRESHOLD_MAX_MS}.
+   * Invalid values throw `ConfigError` at `makeSpiderConfig` time.
+   *
+   * @default 15_000
+   */
+  readonly staleWorkerCheckIntervalMs?: number;
+  /**
+   * Worker heartbeat refresh behaviour.
+   *
+   * - `'per-iteration'` (default) — heartbeat fires once per worker-loop
+   *   iteration, at the top. Matches behaviour up to and including v0.11.
+   * - `'per-attempt'` — additionally refreshes the heartbeat each time the
+   *   retry schedule receives a failure input (i.e. between attempts).
+   *   Recommended for any non-undici adapter whose per-attempt timeout can
+   *   approach or exceed `staleWorkerThresholdMs / maxAttempts`.
+   *
+   * @default 'per-iteration'
+   */
+  readonly workerHeartbeatMode?: 'per-iteration' | 'per-attempt';
+  /**
    * Pluggable HTTP fetcher. When provided, the spider dispatches every
    * page fetch through this adapter instead of the built-in undici path.
    * Leave undefined to keep today's behaviour (default).
@@ -538,6 +593,25 @@ export interface SpiderConfigService {
   getCrossDomainRedirects: () => Effect.Effect<CrossDomainRedirectConfig>;
   /** Get the resolved stop-mode settings. */
   getStopMode: () => Effect.Effect<ResolvedStopMode>;
+  /**
+   * Get the worker-health staleness threshold in milliseconds.
+   *
+   * Returns the configured override when set, otherwise
+   * {@link SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS}.
+   */
+  getStaleWorkerThreshold: () => Effect.Effect<number>;
+  /**
+   * Get the worker heartbeat refresh mode.
+   *
+   * Returns `'per-iteration'` when unset.
+   */
+  getWorkerHeartbeatMode: () => Effect.Effect<'per-iteration' | 'per-attempt'>;
+  /**
+   * Get the worker-health monitor check interval in milliseconds.
+   *
+   * Returns the configured override when set, otherwise `15_000`.
+   */
+  getStaleWorkerCheckInterval: () => Effect.Effect<number>;
   /**
    * Get the configured HTTP adapter (or selector). Returns `undefined`
    * when no override was provided — callers should fall back to
@@ -815,6 +889,71 @@ export const makeSpiderConfig = (
         field: 'fetchRetry.maxAttempts',
         value: n,
         reason: 'must be a positive integer >= 1 (the initial attempt counts as 1)',
+      });
+    }
+  }
+
+  // Same validation shape as fetchRetry.maxAttempts: reject NaN, Infinity,
+  // negatives, non-integers, and zero at startup rather than letting the
+  // value flow into the worker health monitor where misbehaviour would be
+  // much harder to diagnose. Upper bound matches the maximum signed 32-bit
+  // millisecond value (~24.8 days) — beyond that, JS timer-related code
+  // paths and `setTimeout` clamping become surprising, and any sensible
+  // configuration is far below this ceiling.
+  const STALE_THRESHOLD_MAX_MS = 2_147_483_647;
+  const staleThresholdOpt = Option.fromNullable(options.staleWorkerThresholdMs);
+  if (Option.isSome(staleThresholdOpt)) {
+    const n = staleThresholdOpt.value;
+    if (
+      typeof n !== 'number' ||
+      !Number.isInteger(n) ||
+      n < 1 ||
+      n > STALE_THRESHOLD_MAX_MS
+    ) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'staleWorkerThresholdMs',
+        value: n,
+        reason: `must be a positive integer between 1 and ${STALE_THRESHOLD_MAX_MS} (milliseconds)`,
+      });
+    }
+  }
+
+  // Same bounds as the threshold; same rationale (32-bit ms ceiling).
+  const checkIntervalOpt = Option.fromNullable(
+    options.staleWorkerCheckIntervalMs
+  );
+  if (Option.isSome(checkIntervalOpt)) {
+    const n = checkIntervalOpt.value;
+    if (
+      typeof n !== 'number' ||
+      !Number.isInteger(n) ||
+      n < 1 ||
+      n > STALE_THRESHOLD_MAX_MS
+    ) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'staleWorkerCheckIntervalMs',
+        value: n,
+        reason: `must be a positive integer between 1 and ${STALE_THRESHOLD_MAX_MS} (milliseconds)`,
+      });
+    }
+  }
+
+  // Runtime validation for `workerHeartbeatMode` — TypeScript narrows to
+  // the union literally at compile time, but untyped callers (JSON config,
+  // dynamic options) can sneak invalid strings through; without this check
+  // the strict-equality branch at `Spider.service.ts:per-task` would
+  // silently downgrade to `'per-iteration'`.
+  const heartbeatModeOpt = Option.fromNullable(options.workerHeartbeatMode);
+  if (Option.isSome(heartbeatModeOpt)) {
+    const m = heartbeatModeOpt.value;
+    if (m !== 'per-iteration' && m !== 'per-attempt') {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'workerHeartbeatMode',
+        value: m,
+        reason: "must be 'per-iteration' or 'per-attempt'",
       });
     }
   }
@@ -1128,5 +1267,16 @@ export const makeSpiderConfig = (
       ),
     getStopMode: () => Effect.succeed(resolveStopMode(config.stopMode)),
     getHttpAdapter: () => Effect.succeed(config.httpAdapter),
+    getStaleWorkerThreshold: () =>
+      Effect.succeed(
+        config.staleWorkerThresholdMs ?? SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS
+      ),
+    getWorkerHeartbeatMode: () =>
+      Effect.succeed(config.workerHeartbeatMode ?? 'per-iteration'),
+    getStaleWorkerCheckInterval: () =>
+      Effect.succeed(
+        config.staleWorkerCheckIntervalMs ??
+          SPIDER_DEFAULTS.STALE_WORKER_CHECK_INTERVAL_MS
+      ),
   };
 };

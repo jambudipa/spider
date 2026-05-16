@@ -366,6 +366,9 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 | `maxRequestsPerSecondPerDomain` | `number` | `2` | Per-domain rate cap |
 | `requestDelayMs` | `number` | `1000` | Base courtesy delay (ms) |
 | `maxRobotsCrawlDelayMs` | `number` | `2000` | Max robots.txt crawl-delay cap (ms) |
+| `staleWorkerThresholdMs` | `number` | `300_000` | Worker-health staleness threshold (ms). Override for slow adapters. |
+| `staleWorkerCheckIntervalMs` | `number` | `15_000` | How often the monitor scans for stale workers (ms). |
+| `workerHeartbeatMode` | `'per-iteration' \| 'per-attempt'` | `'per-iteration'` | When `'per-attempt'`, heartbeat refreshes between retry attempts so long retry chains aren't flagged dead. |
 
 ### URL Filtering
 
@@ -384,6 +387,48 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 | `crossDomainRedirects` | `CrossDomainRedirectConfig` | Follow cross-domain redirects from start URLs |
 | `userAgentStrategy` | `UserAgentStrategy` | `static`, `rotating`, or `custom` user-agent selection |
 | `httpAdapter` | `HttpAdapter \| HttpAdapterSelector` | Pluggable HTTP fetcher; defaults to the built-in undici path (v0.11+) |
+
+## Worker health & long fetches (v0.12+)
+
+The spider's worker loop fires a heartbeat per iteration to drive the dead-worker detector. With slow `HttpAdapter` implementations (TLS-impersonating clients, sidecar APIs) a single task — bounded by `fetchRetry.maxAttempts × adapter timeout + backoff` — can run for minutes, which exceeded the pre-0.12 60 s threshold and got busy workers flagged dead mid-fetch.
+
+Two changes address this:
+
+1. **`STALE_WORKER_THRESHOLD_MS` default bumped 60 s → 300 s.** Matches the worst case of the default `fetchRetry` policy: `maxAttempts (3) × per-attempt timeout (~45 s) + exponential backoff (1 s + 2 s) ≈ 138 s`, with ~160 s headroom. Override per-spider via `staleWorkerThresholdMs` (positive integer, capped at `2_147_483_647` ms).
+
+2. **Opt-in `workerHeartbeatMode: 'per-attempt'`** refreshes the heartbeat on each retry decision via `Schedule.tapInput`. Recommended whenever a single attempt can approach `staleWorkerThresholdMs / maxAttempts`.
+
+Sample config for a very slow adapter with 5 retries (worst case = `5 × 60 s + (1 + 2 + 4 + 8) s = 315 s` ≈ 5.25 min, so 600 s gives ~50% headroom):
+
+```typescript
+makeSpiderConfig({
+  httpAdapter: gotScrapingAdapter,            // slow per-attempt fetcher (~60 s timeout)
+  workerHeartbeatMode: 'per-attempt',          // refresh between retries
+  staleWorkerThresholdMs: 600_000,             // 10 min
+  fetchRetry: { maxAttempts: 5, baseBackoffMs: 1000, retryOn: ['timeout', 'connection_refused'] },
+})
+```
+
+Note: the default undici adapter returns 5xx responses to the spider as successful fetches (no automatic retry on status code); for status-code-driven retries the adapter must classify them as errors. The retry kinds in the snippet above (`timeout`, `connection_refused`) are the kinds reliably surfaced by the built-in adapter.
+
+The standalone `WorkerHealthMonitor` service (`@jambudipa.io/WorkerHealthMonitor`) shares the new 300 s default but is independent of `SpiderConfig`. Consumers wanting a different threshold for that service provide a custom layer via the `WithThreshold` factory:
+
+```typescript
+import { Effect } from 'effect';
+import { WorkerHealthMonitor } from '@jambudipa/spider';
+
+// Stricter 60 s detection for a high-throughput producer.
+const program = Effect.gen(function* () {
+  const monitor = yield* WorkerHealthMonitor;
+  // ...
+});
+
+Effect.runPromise(
+  program.pipe(Effect.provide(WorkerHealthMonitor.WithThreshold(60_000)))
+);
+```
+
+> **Note on log volume.** The spider emits a debug-level `event: 'worker_heartbeat'` log record for every `reportWorkerHealth` call. With `'per-attempt'` mode under heavy concurrency this can add tens to hundreds of records per second. Default-level loggers filter these out; raise your `minimumLogLevel` to `Debug` only when actively diagnosing heartbeat behaviour.
 
 ## Interrupt Mode (v0.10+)
 

@@ -112,7 +112,9 @@ describe('SPIDER_DEFAULTS', () => {
   });
 
   it('should contain all expected operational defaults', () => {
-    expect(SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS).toBe(60_000);
+    expect(SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS).toBe(300_000);
+    expect(SPIDER_DEFAULTS.STALE_WORKER_CHECK_INTERVAL_MS).toBe(15_000);
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- exhaustive defaults assertion intentionally covers the legacy string-form field too, until it is removed in a future major
     expect(SPIDER_DEFAULTS.HEALTH_CHECK_INTERVAL).toBe('15 seconds');
     expect(SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES).toBe(1024 * 1024 * 1024);
     expect(SPIDER_DEFAULTS.QUEUE_SIZE_THRESHOLD).toBe(10_000);
@@ -121,4 +123,115 @@ describe('SPIDER_DEFAULTS', () => {
     expect(SPIDER_DEFAULTS.FETCH_RETRY_COUNT).toBe(2);
     expect(SPIDER_DEFAULTS.FAILURE_DETECTOR_INTERVAL).toBe('30 seconds');
   });
+});
+
+describe('SpiderConfig worker heartbeat options', () => {
+  it('should leave the two heartbeat fields undefined when no override is provided', async () => {
+    const config = makeSpiderConfig({});
+    const opts = await run(config.getOptions());
+    expect(opts.staleWorkerThresholdMs).toBeUndefined();
+    expect(opts.workerHeartbeatMode).toBeUndefined();
+  });
+
+  it('should return the default stale-worker threshold via the getter', async () => {
+    const config = makeSpiderConfig({});
+    const value = await run(config.getStaleWorkerThreshold());
+    expect(value).toBe(300_000);
+  });
+
+  it('should return the configured stale-worker threshold via the getter', async () => {
+    const config = makeSpiderConfig({ staleWorkerThresholdMs: 90_000 });
+    const value = await run(config.getStaleWorkerThreshold());
+    expect(value).toBe(90_000);
+  });
+
+  it("should return 'per-iteration' for the worker heartbeat mode by default", async () => {
+    const config = makeSpiderConfig({});
+    const mode = await run(config.getWorkerHeartbeatMode());
+    expect(mode).toBe('per-iteration');
+  });
+
+  it("should return 'per-attempt' when explicitly configured", async () => {
+    const config = makeSpiderConfig({ workerHeartbeatMode: 'per-attempt' });
+    const mode = await run(config.getWorkerHeartbeatMode());
+    expect(mode).toBe('per-attempt');
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER,
+    2_147_483_648,
+  ])(
+    'should reject invalid staleWorkerThresholdMs value %p',
+    (invalid) => {
+      expect(() => makeSpiderConfig({ staleWorkerThresholdMs: invalid })).toThrow(
+        expect.objectContaining({
+          field: 'staleWorkerThresholdMs',
+          value: invalid,
+        })
+      );
+    }
+  );
+
+  it('should accept staleWorkerThresholdMs at the documented upper bound', async () => {
+    const config = makeSpiderConfig({ staleWorkerThresholdMs: 2_147_483_647 });
+    const value = await run(config.getStaleWorkerThreshold());
+    expect(value).toBe(2_147_483_647);
+  });
+
+  // `null` and `undefined` are intentionally treated as "no override"
+  // (per Option.fromNullable semantics — matches every other optional config
+  // field). The validator rejects only defined non-string or wrong-string
+  // values.
+  it('should return the default stale-worker check interval via the getter', async () => {
+    const config = makeSpiderConfig({});
+    const value = await run(config.getStaleWorkerCheckInterval());
+    expect(value).toBe(15_000);
+  });
+
+  it('should return the configured stale-worker check interval via the getter', async () => {
+    const config = makeSpiderConfig({ staleWorkerCheckIntervalMs: 250 });
+    const value = await run(config.getStaleWorkerCheckInterval());
+    expect(value).toBe(250);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
+    'should reject invalid staleWorkerCheckIntervalMs value %p',
+    (invalid) => {
+      expect(() =>
+        makeSpiderConfig({ staleWorkerCheckIntervalMs: invalid })
+      ).toThrow(
+        expect.objectContaining({
+          field: 'staleWorkerCheckIntervalMs',
+          value: invalid,
+        })
+      );
+    }
+  );
+
+  it.each(['perAttempt', 'PER-ATTEMPT', '', 'never', 'PerAttempt'])(
+    'should reject invalid workerHeartbeatMode value %p',
+    (invalid) => {
+      expect(() =>
+        makeSpiderConfig({
+          // Cast to bypass the compile-time check — runtime callers (JSON
+          // config, untyped JS) can sneak invalid strings through and this
+          // test is the safety net.
+          workerHeartbeatMode: invalid as unknown as
+            | 'per-iteration'
+            | 'per-attempt',
+        })
+      ).toThrow(
+        expect.objectContaining({
+          field: 'workerHeartbeatMode',
+          value: invalid,
+        })
+      );
+    }
+  );
 });

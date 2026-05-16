@@ -199,8 +199,25 @@ makeSpiderConfig({
   // Pluggable HTTP fetcher (v0.11+) — see "HTTP adapter slot" section below
   // httpAdapter: defaultUndiciAdapter, // single adapter
   // httpAdapter: (req) => domainSet.has(host) ? gotScrapingAdapter : defaultUndiciAdapter, // selector
+
+  // Worker-health & long fetches (v0.12+) — see "Worker heartbeat" section below
+  // staleWorkerThresholdMs: 600_000,         // raise for very slow adapters
+  // staleWorkerCheckIntervalMs: 5_000,       // scan more often (default 15_000)
+  // workerHeartbeatMode: 'per-attempt',      // refresh heartbeat between retries
 })
 ```
+
+## Worker heartbeat (v0.12+)
+
+Long retry chains under slow adapters can run past the worker-health staleness threshold and get the still-busy worker flagged dead mid-fetch. Three knobs address this:
+
+- `staleWorkerThresholdMs` (default `300_000`, bounds `1..2_147_483_647`) — override the per-worker staleness threshold in milliseconds. Guideline: `fetchRetry.maxAttempts × per-attempt timeout + sum(backoff) + 30 s`. Default raised from 60 s in v0.12 to cover the default retry chain. Validated at `makeSpiderConfig` (`ConfigError` on `NaN`, `Infinity`, negatives, non-integers, zero, or values above the upper bound).
+- `staleWorkerCheckIntervalMs` (default `15_000`, same bounds) — how often the monitor scans for stale workers. Lower for tests, raise for low-overhead production.
+- `workerHeartbeatMode` (default `'per-iteration'`) — set to `'per-attempt'` to additionally refresh the worker heartbeat between retry attempts (via `Schedule.tapInput` on the fetch retry schedule). Recommended for any non-undici adapter whose per-attempt timeout can approach `staleWorkerThresholdMs / maxAttempts`.
+
+The standalone `WorkerHealthMonitor` service shares the new 300 s default but is independent of `SpiderConfig`. Use `WorkerHealthMonitor.WithThreshold(ms)` to construct a layer with a different threshold.
+
+The spider emits a debug-level `event: 'worker_heartbeat'` log record on every heartbeat. Default-level loggers filter these out; raise `minimumLogLevel` to `Debug` only when actively diagnosing heartbeat behaviour.
 
 ## HTTP adapter slot (v0.11+)
 

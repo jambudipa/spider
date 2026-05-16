@@ -1,36 +1,129 @@
-import { DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
-import { NetworkError, ResponseError, ContentTypeError, RequestAbortError } from '../errors/effect-errors.js';
+import {
+  NetworkError,
+  ContentTypeError,
+  RequestAbortError,
+  ResponseError,
+} from '../errors/effect-errors.js';
+import type {
+  HttpAdapter,
+  HttpAdapterError,
+  HttpAdapterRequest,
+  HttpAdapterResponse,
+  HttpAdapterSelector,
+} from '../HttpAdapter/HttpAdapter.types.js';
+import { resolveAdapter } from '../HttpAdapter/HttpAdapter.types.js';
+import { defaultUndiciAdapter } from '../HttpAdapter/defaultUndiciAdapter.js';
+
+/**
+ * Map an {@link HttpAdapterError} to the existing typed errors expected
+ * by the upstream Spider retry/classification pipeline. Keeping this
+ * translation here means callers that already pattern-match on
+ * `NetworkError`/`RequestAbortError`/etc. see no behavioural change when
+ * a custom adapter is in use.
+ *
+ * For http_* kinds, a missing `statusCode` is inferred from the kind
+ * itself (4xx→400, 429→429, 5xx→500) so the downstream
+ * `classifyFetchError` round-trip preserves the kind even when the
+ * adapter omits the field.
+ *
+ * For dns/connection_refused, we tag the `cause` with a sentinel string
+ * that `classifyFetchError` recognises. The sentinel is bracketed
+ * (`[adapter-kind:dns]`) rather than using raw `ENOTFOUND`/`ECONNREFUSED`
+ * markers so a caller-supplied message containing those substrings can't
+ * collide with the round-trip.
+ *
+ * @internal
+ */
+export const ADAPTER_DNS_SENTINEL = '[adapter-kind:dns:ENOTFOUND]';
+export const ADAPTER_CONN_REFUSED_SENTINEL =
+  '[adapter-kind:connection_refused:ECONNREFUSED]';
+
+/* eslint-disable effect/no-undefined-use-option -- interop helper: `statusCode?` field on both HttpAdapterError and NetworkError is bare optional by existing convention; lifting through Option here would change the public field shape */
+const inferStatusCode = (
+  kind: HttpAdapterError['kind'],
+  provided: number | undefined
+): number | undefined => {
+  if (provided !== undefined) return provided;
+  if (kind === 'http_4xx') return 400;
+  if (kind === 'http_429') return 429;
+  if (kind === 'http_5xx') return 500;
+  return undefined;
+};
+/* eslint-enable effect/no-undefined-use-option */
+
+const adapterErrorToTypedError = (
+  url: string,
+  durationMs: number,
+  err: HttpAdapterError
+): NetworkError | RequestAbortError => {
+  if (err.kind === 'timeout') {
+    return RequestAbortError.timeout(url, durationMs);
+  }
+  if (
+    err.kind === 'http_4xx' ||
+    err.kind === 'http_429' ||
+    err.kind === 'http_5xx'
+  ) {
+    return new NetworkError({
+      url,
+      statusCode: inferStatusCode(err.kind, err.statusCode),
+      method: 'GET',
+      cause: err.cause ?? err.message,
+    });
+  }
+  if (err.kind === 'dns') {
+    return new NetworkError({
+      url,
+      method: 'GET',
+      cause: `${ADAPTER_DNS_SENTINEL} ${err.message}`,
+    });
+  }
+  if (err.kind === 'connection_refused') {
+    return new NetworkError({
+      url,
+      method: 'GET',
+      cause: `${ADAPTER_CONN_REFUSED_SENTINEL} ${err.message}`,
+    });
+  }
+  // other or any unknown kind a custom JS adapter may emit.
+  return new NetworkError({
+    url,
+    method: 'GET',
+    cause: err.cause ?? err.message,
+  });
+};
 
 /**
  * Service responsible for fetching HTML content and parsing basic page information.
- * 
+ *
  * The ScraperService handles the core HTTP fetching and HTML parsing functionality
  * for the Spider framework. It provides robust error handling, timeout management,
  * and content type validation to ensure reliable data extraction.
- * 
+ *
  * **Key Features:**
- * - Automatic timeout handling with AbortController
+ * - Pluggable HTTP fetch via the {@link HttpAdapter} extension point
+ *   (defaults to undici-backed `globalThis.fetch` when no adapter supplied)
  * - Content type validation (skips binary files)
  * - Comprehensive error handling with typed errors
  * - Performance monitoring and logging
  * - Effect integration for composability
- * 
+ *
  * **Note:** This service focuses solely on fetching and parsing HTML content.
  * Link extraction is handled separately by LinkExtractorService for better
  * separation of concerns and modularity.
- * 
+ *
  * @example
  * ```typescript
  * const program = Effect.gen(function* () {
  *   const scraper = yield* ScraperService;
- *   const pageData = yield* scraper.fetchAndParse('https://example.com', 0);
+ *   const { pageData } = yield* scraper.fetchAndParse('https://example.com', 0);
  *   console.log(`Title: ${pageData.title}`);
- *   console.log(`Content length: ${pageData.html.length}`);
  * });
  * ```
- * 
+ *
  * @group Services
  * @public
  */
@@ -40,101 +133,68 @@ export class ScraperService extends Effect.Service<ScraperService>()(
     effect: Effect.sync(() => ({
       /**
        * Fetches a URL and parses the HTML to extract basic page information.
-       * 
-       * This method performs the following operations:
-       * 1. Fetches the URL with configurable timeout (30 seconds)
-       * 2. Validates content type (skips binary files)
-       * 3. Parses HTML content with cheerio
-       * 4. Extracts basic page metadata (title, description, etc.)
-       * 5. Returns structured PageData object
-       * 
-       * The method uses AbortController for proper timeout handling to prevent
-       * workers from hanging on malformed URLs or slow responses.
-       * 
+       *
+       * Dispatches the actual HTTP fetch through the supplied
+       * {@link HttpAdapter} (or {@link defaultUndiciAdapter} when none is
+       * provided). The adapter owns the fetch timeout; ScraperService only
+       * handles content-type validation and HTML parsing of the response.
+       *
        * @param url - The URL to fetch and parse
        * @param depth - The crawl depth for logging purposes (default: 0)
+       * @param userAgent - Resolved User-Agent string for this request
+       * @param httpAdapter - HTTP adapter, selector, or undefined. When
+       *                      undefined, {@link defaultUndiciAdapter} is
+       *                      used and behaviour matches the pre-adapter
+       *                      undici fetch path exactly.
        * @returns Effect containing PageData with extracted information
-       * @throws NetworkError for network-related failures
-       * @throws ResponseError for HTTP error responses
-       * 
+       *
        * @example
-       * Basic usage:
        * ```typescript
-       * const pageData = yield* scraper.fetchAndParse('https://example.com');
-       * console.log(`Page title: ${pageData.title}`);
+       * const { pageData } = yield* scraper.fetchAndParse('https://example.com');
        * ```
-       * 
-       * With depth tracking:
-       * ```typescript
-       * const pageData = yield* scraper.fetchAndParse('https://example.com/page', 2);
-       * ```
-       * 
-       * Error handling:
-       * ```typescript
-       * const result = yield* scraper.fetchAndParse('https://example.com').pipe(
-       *   Effect.catchTags({
-       *     NetworkError: (error) => {
-       *       console.log('Network error:', error.message);
-       *       return Effect.succeed(null);
-       *     },
-       *     ResponseError: (error) => {
-       *       console.log('HTTP error:', error.statusCode);
-       *       return Effect.succeed(null);
-       *     }
-       *   })
-       * );
-       * ```
-       * 
-       * @performance 
-       * - Request timeout: 30 seconds
-       * - Response parsing timeout: 10 seconds
-       * - Memory usage: ~2-5MB per page depending on content size
-       * 
-       * @security
-       * - Validates content types to prevent processing binary files
-       * - Uses AbortController to prevent hanging requests
-       * - No execution of JavaScript content (static HTML parsing only)
        */
       fetchAndParse: (
         url: string,
         depth = 0,
-        userAgent: string = 'JambudipaSpider/1.0'
+        userAgent: string = 'JambudipaSpider/1.0',
+        httpAdapter?: HttpAdapter | HttpAdapterSelector
       ) =>
         Effect.gen(function* () {
           const startTime = yield* DateTime.now;
           const startMs = DateTime.toEpochMillis(startTime);
           const domain = new URL(url).hostname;
 
-          // Log fetch start is handled by spider already
+          const timeoutMs = 30000; // 30 seconds — kept inside ScraperService
+                                   // (and passed to the adapter) for parity
+                                   // with the previous behaviour.
 
-          const timeoutMs = 30000; // 30 seconds
+          // Build a per-request id from crypto.randomUUID() — node 20+
+          // exposes this globally and we declare node>=20 in engines.
+          const requestId = globalThis.crypto.randomUUID();
+          const request: HttpAdapterRequest = {
+            url,
+            userAgent,
+            timeoutMs,
+            requestId,
+          };
+          const adapter = resolveAdapter(
+            httpAdapter,
+            request,
+            defaultUndiciAdapter
+          );
 
-          // Create the fetch effect with timeout. `signal` is auto-injected by
-          // Effect.tryPromise — fiber interruption (incl. the timeoutOption
-          // below) cancels the underlying fetch, releasing the socket.
-          const fetchEffect = Effect.tryPromise({
-            try: (signal) =>
-              globalThis.fetch(url, {
-                headers: { 'User-Agent': userAgent },
-                signal,
-              }),
-            catch: (error) => {
-              if (error instanceof Error && error.name === 'AbortError') {
-                return RequestAbortError.timeout(url, timeoutMs);
-              }
-              return NetworkError.fromCause(url, error);
-            },
-          });
-
-          // Apply timeout and handle timeout case
-          const fetchWithTimeout = fetchEffect.pipe(
-            Effect.timeoutOption(Duration.millis(timeoutMs)),
-            Effect.flatMap((maybeResponse) =>
-              Option.match(maybeResponse, {
-                onNone: () =>
-                  Effect.gen(function* () {
-                    const currentTime = yield* DateTime.now;
-                    const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
+          // Dispatch via the adapter. The adapter owns timeout enforcement;
+          // we map its structured error union back to the existing typed
+          // errors so the Spider retry/classification pipeline is unchanged.
+          const adapterResponse: HttpAdapterResponse = yield* adapter
+            .fetch(request)
+            .pipe(
+              Effect.catchAll((err) =>
+                Effect.gen(function* () {
+                  const failTime = yield* DateTime.now;
+                  const durationMs =
+                    DateTime.toEpochMillis(failTime) - startMs;
+                  if (err.kind === 'timeout') {
                     yield* Effect.logWarning(
                       'fetch abort (timeout)'
                     ).pipe(
@@ -147,22 +207,17 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                         timeoutMs,
                       })
                     );
-                    return yield* Effect.fail(
-                      RequestAbortError.timeout(url, durationMs)
-                    );
-                  }),
-                onSome: (response) => Effect.succeed(response),
-              })
-            )
-          );
-
-          // Fetch HTML with Effect-based timeout
-          // JUSTIFICATION: Effect's timeout properly handles cancellation via Fiber interruption.
-          // Previous implementation used AbortController, now using idiomatic Effect patterns.
-          const response = yield* fetchWithTimeout;
+                  }
+                  return yield* Effect.fail(
+                    adapterErrorToTypedError(url, durationMs, err)
+                  );
+                })
+              )
+            );
 
           // Check content type - skip binary files
-          const contentType = response.headers.get('content-type') ?? '';
+          const contentType =
+            adapterResponse.headers['content-type'] ?? '';
           if (
             !contentType.includes('text/html') &&
             !contentType.includes('application/xhtml') &&
@@ -170,54 +225,32 @@ export class ScraperService extends Effect.Service<ScraperService>()(
             contentType !== ''
           ) {
             return yield* Effect.fail(
-              ContentTypeError.create(
+              ContentTypeError.create(url, contentType, [
+                'text/html',
+                'application/xhtml+xml',
+                'text/*',
+              ])
+            );
+          }
+
+          // Defensive runtime check: the contract requires `body: string`,
+          // but a JS adapter may pass `null`/`undefined`/`Buffer`. Surface
+          // contract violations as a ResponseError rather than letting
+          // cheerio crash deep in parsing.
+          if (typeof adapterResponse.body !== 'string') {
+            const bodyTypeName =
+              adapterResponse.body === null // eslint-disable-line effect/no-null-use-option -- discriminates null vs undefined in a runtime contract-violation diagnostic message; not a model of absence
+                ? 'null'
+                : typeof adapterResponse.body;
+            return yield* Effect.fail(
+              ResponseError.fromCause(
                 url,
-                contentType,
-                ['text/html', 'application/xhtml+xml', 'text/*']
+                `HttpAdapter contract violation: response.body must be a string, got ${bodyTypeName}`
               )
             );
           }
 
-          // Parse response with timeout protection
-          const textTimeoutMs = 10000; // 10 seconds
-
-          // Create the text parsing effect
-          const parseTextEffect = Effect.tryPromise({
-            try: () => response.text(),
-            catch: (error) => ResponseError.fromCause(url, error),
-          });
-
-          // Apply timeout and handle timeout case
-          const parseWithTimeout = parseTextEffect.pipe(
-            Effect.timeoutOption(Duration.millis(textTimeoutMs)),
-            Effect.flatMap((maybeHtml) =>
-              Option.match(maybeHtml, {
-                onNone: () =>
-                  Effect.gen(function* () {
-                    const currentTime = yield* DateTime.now;
-                    const durationMs = DateTime.toEpochMillis(currentTime) - startMs;
-                    yield* Effect.logWarning(
-                      'response text abort (timeout)'
-                    ).pipe(
-                      Effect.annotateLogs({
-                        event: 'response_text_abort_triggered',
-                        domain,
-                        url,
-                        durationMs,
-                        reason: 'timeout',
-                        timeoutMs: textTimeoutMs,
-                      })
-                    );
-                    return yield* Effect.fail(
-                      RequestAbortError.timeout(url, durationMs)
-                    );
-                  }),
-                onSome: (html) => Effect.succeed(html),
-              })
-            )
-          );
-
-          const html = yield* parseWithTimeout;
+          const html = adapterResponse.body;
 
           // Parse with Cheerio
           const $ = cheerio.load(html);
@@ -244,11 +277,9 @@ export class ScraperService extends Effect.Service<ScraperService>()(
             robots: metadata['robots'],
           };
 
-          // Extract all headers
-          const headers: Record<string, string> = {};
-          response.headers.forEach((value, key) => {
-            headers[key] = value;
-          });
+          // Copy headers into the existing PageData shape. Adapter
+          // contract guarantees `Record<string, string>`.
+          const headers: Record<string, string> = { ...adapterResponse.headers };
 
           // Calculate duration
           const endTime = yield* DateTime.now;
@@ -271,7 +302,7 @@ export class ScraperService extends Effect.Service<ScraperService>()(
             title: Option.getOrUndefined(title),
             metadata,
             commonMetadata: Option.getOrUndefined(maybeCommonMetadata),
-            statusCode: response.status,
+            statusCode: adapterResponse.statusCode,
             headers,
             fetchedAt: DateTime.toDate(startTime),
             scrapeDurationMs: durationMs,
@@ -280,9 +311,9 @@ export class ScraperService extends Effect.Service<ScraperService>()(
 
           // Validate with schema
           const validated = yield* Schema.decode(PageDataSchema)(pageData);
-          // `response.url` is the final URL after all HTTP redirects
-          // (Node.js native fetch, Node 18+).
-          return { pageData: validated, finalUrl: response.url };
+          // `adapterResponse.url` is the final URL after redirects
+          // (Node.js native fetch exposes this via `Response.url`).
+          return { pageData: validated, finalUrl: adapterResponse.url };
         }),
     })),
   }

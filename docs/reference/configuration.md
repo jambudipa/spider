@@ -45,6 +45,9 @@ interface SpiderConfigOptions {
 
   // Stop behaviour (v0.10+)
   stopMode?: StopMode;
+
+  // Pluggable HTTP fetcher (v0.11+)
+  httpAdapter?: HttpAdapter | HttpAdapterSelector;
 }
 ```
 
@@ -417,3 +420,81 @@ const program = Effect.gen(function* () {
 |--------|---------|
 | `'interrupted'` | Workers exited cleanly within `gracePeriodMs` |
 | `'interrupt_grace_exceeded'` | Grace period expired before workers exited; domain was force-completed |
+
+---
+
+## HttpAdapter (v0.11+)
+
+Pluggable HTTP fetcher slot. When `httpAdapter` is undefined, the spider uses `defaultUndiciAdapter` and behaviour matches v0.10 exactly. When set, every page fetch is dispatched through the adapter (or per-request selector).
+
+```typescript
+type HttpAdapterSelector = (request: HttpAdapterRequest) => HttpAdapter;
+
+interface HttpAdapter {
+  readonly fetch: (request: HttpAdapterRequest) =>
+    Effect.Effect<HttpAdapterResponse, HttpAdapterError>;
+}
+
+interface HttpAdapterRequest {
+  readonly url: string;
+  readonly userAgent: string;        // resolved via userAgentStrategy
+  readonly timeoutMs: number;        // adapter MUST honour this
+  readonly requestId: string;        // per-request id for adapter logs
+  readonly headers?: Readonly<Record<string, string>>; // reserved
+}
+
+interface HttpAdapterResponse {
+  readonly url: string;              // post-redirect final URL
+  readonly statusCode: number;       // 4xx/5xx returned as success (v0.10 parity)
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;             // decoded body
+}
+
+interface HttpAdapterError {
+  readonly kind: PageFetchErrorKind; // timeout | dns | http_4xx | http_429 | http_5xx | connection_refused | other
+  readonly message: string;
+  readonly statusCode?: number;      // present for http_* kinds
+  readonly cause?: unknown;
+}
+```
+
+**Single adapter:**
+
+```typescript
+import { defaultUndiciAdapter, makeSpiderConfig } from '@jambudipa/spider';
+
+makeSpiderConfig({
+  httpAdapter: defaultUndiciAdapter, // explicit; equivalent to omitting the field
+});
+```
+
+**Per-domain selector** — route a small set of anti-bot domains to a TLS-impersonating adapter, leave the bulk of the crawl on undici:
+
+```typescript
+import {
+  defaultUndiciAdapter,
+  makeSpiderConfig,
+  type HttpAdapterSelector,
+} from '@jambudipa/spider';
+import { gotScrapingAdapter } from './got-scraping-adapter.js'; // your impl
+
+const promoted = new Set(['example.com', 'other-cdn.com']);
+const httpAdapter: HttpAdapterSelector = (req) =>
+  promoted.has(new URL(req.url).hostname.replace(/^www\./, ''))
+    ? gotScrapingAdapter
+    : defaultUndiciAdapter;
+
+makeSpiderConfig({
+  stopMode: { kind: 'interrupt', gracePeriodMs: 5000 },
+  httpAdapter,
+});
+```
+
+### Contract rules
+
+- **Cancellable Effect.** The returned `Effect` must be cancellable so `stopMode: 'interrupt'` propagates. Promise-based adapters should use `Effect.tryPromise` so the auto-injected `AbortSignal` reaches the underlying request.
+- **Adapter owns the timeout.** The spider does not layer additional `Effect.timeout` on adapter calls; the adapter must honour `request.timeoutMs` itself.
+- **All status codes return as success in `defaultUndiciAdapter`.** Matching v0.10, 4xx and 5xx responses flow through as `HttpAdapterResponse` with the status intact. Custom adapters may opt into failing with `kind: 'http_5xx'` for retry semantics.
+- **Error kinds map to existing retry config.** `HttpAdapterError.kind` reuses `PageFetchErrorKind`, so `fetchRetry.retryOn` keys (`'timeout'`, `'http_5xx'`, etc.) work for both default and custom adapters.
+- **User-Agent precedence.** Caller-supplied `User-Agent` in `request.headers` is ignored by `defaultUndiciAdapter` — the spider's resolved `userAgent` always wins.
+- **Selector safety.** A selector that throws synchronously OR returns a non-adapter value fails the single fetch with `kind: 'other'`; the worker does not crash.

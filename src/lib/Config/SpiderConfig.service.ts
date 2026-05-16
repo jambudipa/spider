@@ -11,6 +11,10 @@ import {
 import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
 import { classifyFetchError } from '../Spider/Spider.types.js';
 import { ConfigError } from '../errors/effect-errors.js';
+import type {
+  HttpAdapter,
+  HttpAdapterSelector,
+} from '../HttpAdapter/HttpAdapter.types.js';
 
 /**
  * Strategies for treating two hostnames/protocols as equivalent
@@ -442,6 +446,26 @@ export interface SpiderConfigOptions {
    * @default 'drain'
    */
   readonly stopMode?: StopMode;
+  /**
+   * Pluggable HTTP fetcher. When provided, the spider dispatches every
+   * page fetch through this adapter instead of the built-in undici path.
+   * Leave undefined to keep today's behaviour (default).
+   *
+   * Use the function form ({@link HttpAdapterSelector}) to choose between
+   * adapters per-request — e.g. undici for the bulk of the crawl and a
+   * TLS-impersonating adapter for known anti-bot portals:
+   *
+   * ```ts
+   * const promoted = new Set(['example.com']);
+   * const httpAdapter: HttpAdapterSelector = (req) =>
+   *   promoted.has(new URL(req.url).hostname.replace(/^www\./, ''))
+   *     ? gotScrapingAdapter
+   *     : defaultUndiciAdapter;
+   * ```
+   *
+   * @default undefined
+   */
+  readonly httpAdapter?: HttpAdapter | HttpAdapterSelector;
 }
 
 /**
@@ -514,6 +538,14 @@ export interface SpiderConfigService {
   getCrossDomainRedirects: () => Effect.Effect<CrossDomainRedirectConfig>;
   /** Get the resolved stop-mode settings. */
   getStopMode: () => Effect.Effect<ResolvedStopMode>;
+  /**
+   * Get the configured HTTP adapter (or selector). Returns `undefined`
+   * when no override was provided — callers should fall back to
+   * `defaultUndiciAdapter` in that case.
+   */
+  getHttpAdapter: () => Effect.Effect<
+    HttpAdapter | HttpAdapterSelector | undefined
+  >;
 }
 
 /**
@@ -1095,5 +1127,6 @@ export const makeSpiderConfig = (
         config.crossDomainRedirects ?? defaultCrossDomainRedirects
       ),
     getStopMode: () => Effect.succeed(resolveStopMode(config.stopMode)),
+    getHttpAdapter: () => Effect.succeed(config.httpAdapter),
   };
 };

@@ -492,7 +492,11 @@ export class ScraperService extends Effect.Service<ScraperService>()(
 ```
 
 **Methods:**
-- `fetchAndParse(url: string, depth: number): Effect<PageData, NetworkError | ParseError>`
+- `fetchAndParse(url: string, depth?: number, userAgent?: string, httpAdapter?: HttpAdapter | HttpAdapterSelector): Effect<{ pageData: PageData; finalUrl: string }, NetworkError | RequestAbortError | ContentTypeError | ResponseError>`
+  - `depth` defaults to `0` (logging only).
+  - `userAgent` defaults to `'JambudipaSpider/1.0'`.
+  - `httpAdapter` defaults to `defaultUndiciAdapter` when omitted (v0.11+; see [HttpAdapter](#httpadapter-v011)).
+  - `finalUrl` is the post-redirect URL reported by the adapter.
 
 ### RobotsService
 
@@ -538,6 +542,44 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
 - `contains(url: string): Effect<boolean, never>`
 - `size(): Effect<number, never>`
 
+## HttpAdapter (v0.11+)
+
+The pluggable HTTP fetcher slot. See the [configuration reference](./configuration.md#httpadapter-v011) for the full contract, examples, and rules. This section enumerates only the exported types.
+
+```typescript
+interface HttpAdapter {
+  readonly fetch: (request: HttpAdapterRequest) =>
+    Effect.Effect<HttpAdapterResponse, HttpAdapterError>;
+}
+
+interface HttpAdapterRequest {
+  readonly url: string;
+  readonly userAgent: string;
+  readonly timeoutMs: number;
+  readonly requestId: string;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+interface HttpAdapterResponse {
+  readonly url: string;
+  readonly statusCode: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
+interface HttpAdapterError {
+  readonly kind: PageFetchErrorKind;
+  readonly message: string;
+  readonly statusCode?: number;
+  readonly cause?: unknown;
+}
+
+type HttpAdapterSelector = (request: HttpAdapterRequest) => HttpAdapter;
+```
+
+**Built-in adapter:**
+- `defaultUndiciAdapter: HttpAdapter` — wraps `globalThis.fetch`; used automatically when `SpiderConfigOptions.httpAdapter` is undefined.
+
 ## Effect Patterns
 
 ### Service Access
@@ -553,8 +595,8 @@ const program = Effect.gen(function* () {
   
   // Use services within the Effect context
   const userAgent = yield* config.getUserAgent();
-  const pageData = yield* scraper.fetchAndParse('https://example.com', 0);
-  
+  const { pageData } = yield* scraper.fetchAndParse('https://example.com', 0);
+
   return { userAgent, pageData };
 });
 ```

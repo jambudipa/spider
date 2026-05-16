@@ -1,5 +1,19 @@
 # @jambudipa/spider
 
+## 0.11.0
+
+### Minor Changes
+
+- Added pluggable `HttpAdapter` slot for `ScraperService`.
+  - New optional `httpAdapter?: HttpAdapter | HttpAdapterSelector` on `SpiderConfigOptions`. Provide a single adapter applied to every page fetch, or a per-request selector function (e.g. route a small set of anti-bot domains to a TLS-impersonating adapter while the bulk of the crawl stays on undici). Pure addition — when undefined, behaviour matches v0.10 exactly via the new exported `defaultUndiciAdapter`.
+  - Effect-native contract: `fetch(request) => Effect<HttpAdapterResponse, HttpAdapterError>`. The Effect must be cancellable so `stopMode: 'interrupt'` propagates; promise-based adapters should use `Effect.tryPromise` so the auto-injected `AbortSignal` reaches the underlying request.
+  - `HttpAdapterError.kind` is drawn from the existing `PageFetchErrorKind` union (`timeout | dns | http_4xx | http_429 | http_5xx | connection_refused | other`) so `fetchRetry.retryOn` configuration keys work unchanged for both default and custom adapters.
+  - The adapter owns timeout enforcement via `request.timeoutMs`; the spider no longer layers an additional `Effect.timeout` on top of adapter calls. The removed wrapper was redundant with the adapter's own timeout and contradicted the contract.
+  - `defaultUndiciAdapter` preserves `Set-Cookie` multi-value semantics correctly via `Headers.getSetCookie()` (Node 20+), joining recovered entries with `\n`. This is a strict improvement over v0.10, where repeated `Set-Cookie` headers were silently overwritten by `Headers.forEach` leaving only the last value in `PageData.headers`.
+  - A selector function that throws synchronously OR returns a non-adapter value fails the single fetch with `kind: 'other'` rather than crashing the worker fiber.
+  - User-Agent precedence: caller-supplied `User-Agent` in `request.headers` is ignored by `defaultUndiciAdapter` — the spider's resolved `userAgent` (from `userAgentStrategy`) always wins.
+  - New exports: `HttpAdapter`, `HttpAdapterRequest`, `HttpAdapterResponse`, `HttpAdapterError`, `HttpAdapterSelector`, `defaultUndiciAdapter`.
+
 ## 0.10.0
 
 ### Minor Changes

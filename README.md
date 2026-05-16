@@ -383,6 +383,7 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 | `fetchRetry` | `FetchRetryConfig` | Retry policy: `maxAttempts`, `baseBackoffMs`, `retryOn` |
 | `crossDomainRedirects` | `CrossDomainRedirectConfig` | Follow cross-domain redirects from start URLs |
 | `userAgentStrategy` | `UserAgentStrategy` | `static`, `rotating`, or `custom` user-agent selection |
+| `httpAdapter` | `HttpAdapter \| HttpAdapterSelector` | Pluggable HTTP fetcher; defaults to the built-in undici path (v0.11+) |
 
 ## Interrupt Mode (v0.10+)
 
@@ -438,6 +439,53 @@ Subscribe to new events emitted in interrupt mode via `SpiderEventSink`:
 | `SpiderStoppedEvent` | When external abort fires — fields: `reason`, `totalDomains`, `totalPages`, `wallclockMs` |
 
 `DomainCompleteEvent.reason` gains two new values: `'interrupted'` (clean exit within grace period) and `'interrupt_grace_exceeded'` (grace period expired, domain force-completed).
+
+## Pluggable HTTP Adapter (v0.11+)
+
+By default the spider fetches pages through `globalThis.fetch` (Node's built-in undici). For sites behind anti-bot CDNs that fingerprint the TLS ClientHello (JA3/JA4), undici's deterministic handshake is rejected before the HTTP layer sees a response. The `httpAdapter` config option lets you swap in a TLS-impersonating fetcher (got-scraping, curl-impersonate sidecar, etc.) without forking the spider.
+
+Provide a single adapter to apply it to every request, or a selector function to dispatch per-request (e.g. route a small set of anti-bot domains to the alternative adapter while the bulk of the crawl stays on undici):
+
+```typescript
+import {
+  defaultUndiciAdapter,
+  makeSpiderConfig,
+  type HttpAdapter,
+  type HttpAdapterSelector,
+} from '@jambudipa/spider';
+import { gotScrapingAdapter } from './got-scraping-adapter.js'; // your impl
+
+const promoted = new Set(['example.com', 'other-cdn.com']);
+const httpAdapter: HttpAdapterSelector = (req) =>
+  promoted.has(new URL(req.url).hostname.replace(/^www\./, ''))
+    ? gotScrapingAdapter
+    : defaultUndiciAdapter;
+
+makeSpiderConfig({
+  stopMode: { kind: 'interrupt', gracePeriodMs: 5000 },
+  httpAdapter,
+});
+```
+
+When `httpAdapter` is undefined, behaviour matches v0.10 exactly (the built-in `defaultUndiciAdapter` is used).
+
+### Adapter contract
+
+An `HttpAdapter` is an object with a single `fetch` method returning an `Effect`:
+
+```typescript
+interface HttpAdapter {
+  readonly fetch: (request: HttpAdapterRequest) =>
+    Effect.Effect<HttpAdapterResponse, HttpAdapterError>;
+}
+```
+
+Key contract points:
+
+- **Cancellable.** The returned `Effect` must be cancellable so `stopMode: 'interrupt'` propagates. Wrap promise-based libraries with `Effect.tryPromise` so the auto-injected `AbortSignal` reaches the underlying request.
+- **Owns its timeout.** The adapter is responsible for honouring `request.timeoutMs`. The spider does not layer an additional `Effect.timeout` on top.
+- **Structured error kinds.** `HttpAdapterError.kind` is drawn from the existing `PageFetchErrorKind` union (`timeout | dns | http_4xx | http_429 | http_5xx | connection_refused | other`) so the spider's `fetchRetry.retryOn` keys keep working unchanged.
+- **All status codes return as success.** The built-in `defaultUndiciAdapter` returns 4xx and 5xx responses as `HttpAdapterResponse` with the status code intact (matching v0.10 behaviour where these still get parsed into `PageData`). Custom adapters may opt into failing with `kind: 'http_5xx'` for retry semantics.
 
 ---
 

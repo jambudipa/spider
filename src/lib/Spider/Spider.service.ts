@@ -673,6 +673,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             const config = yield* SpiderConfig;
             const fetchRetry = yield* config.getFetchRetry();
             const configOptions = yield* config.getOptions();
+            const httpAdapter = yield* config.getHttpAdapter();
 
             // Extract domain from URL using Effect error handling
             const domain = yield* Effect.try({
@@ -1242,11 +1243,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   // stop signal so an in-flight retry schedule is abandoned
                   // immediately when the signal resolves.
                   type FetchOk = { pageData: PageData; finalUrl: string };
+                  // The HttpAdapter contract puts timeout enforcement on the
+                  // adapter itself (request.timeoutMs); the spider does not
+                  // layer an additional Effect.timeout. Buggy adapters that
+                  // ignore the deadline can still be interrupted via
+                  // stopMode: 'interrupt'.
                   const fetchCore = scraper
-                    .fetchAndParse(task.url, task.depth, userAgent)
+                    .fetchAndParse(task.url, task.depth, userAgent, httpAdapter)
                     .pipe(
-                      // Add overall timeout to prevent workers from hanging
-                      Effect.timeout(SPIDER_DEFAULTS.FETCH_TIMEOUT),
                       Effect.tapError(() =>
                         Effect.sync(() =>
                           MutableRef.update(attemptCounter, (n) => n + 1)

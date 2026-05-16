@@ -145,6 +145,7 @@ Top-level exports from `@jambudipa/spider`:
 - **Spider**: `SpiderService`, `CrawlResult`, `CrawlResultOk`, `CrawlResultError`, `CrawlTask`, `StartUrlEntry`, `SpiderLinkExtractionOptions`, `DataExtractionConfig`, `FieldExtractionConfig`, `SPIDER_DEFAULTS`
 - **Error types (result-level)**: `PageFetchError`, `PageFetchErrorKind`
 - **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `StopMode`, `ResolvedStopMode`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `resolveUserAgent`
+- **HTTP adapter (v0.11+)**: `HttpAdapter`, `HttpAdapterRequest`, `HttpAdapterResponse`, `HttpAdapterError`, `HttpAdapterSelector`, `defaultUndiciAdapter`
 - **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`, `WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`
 - **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
@@ -194,8 +195,36 @@ makeSpiderConfig({
 
   // Rotate user agents, sticky per domain
   userAgentStrategy: { kind: 'rotating', pool: ['BotA/1.0', 'BotB/1.0'], perDomain: true },
+
+  // Pluggable HTTP fetcher (v0.11+) — see "HTTP adapter slot" section below
+  // httpAdapter: defaultUndiciAdapter, // single adapter
+  // httpAdapter: (req) => domainSet.has(host) ? gotScrapingAdapter : defaultUndiciAdapter, // selector
 })
 ```
+
+## HTTP adapter slot (v0.11+)
+
+Pluggable fetcher. By default the spider uses `globalThis.fetch` (undici); sites behind anti-bot CDNs that fingerprint the TLS ClientHello (JA3/JA4) reject undici before any HTTP response. Provide an `httpAdapter` (single object or per-request selector function) to route through a TLS-impersonating library without forking the spider.
+
+```typescript
+import { defaultUndiciAdapter, makeSpiderConfig, type HttpAdapterSelector } from '@jambudipa/spider';
+import { gotScrapingAdapter } from './got-scraping-adapter.js';
+
+const promoted = new Set(['example.com']);
+const httpAdapter: HttpAdapterSelector = (req) =>
+  promoted.has(new URL(req.url).hostname.replace(/^www\./, ''))
+    ? gotScrapingAdapter
+    : defaultUndiciAdapter;
+
+makeSpiderConfig({ httpAdapter });
+```
+
+Contract:
+- `fetch(request) => Effect<HttpAdapterResponse, HttpAdapterError>` — Effect must be cancellable so `stopMode: 'interrupt'` propagates.
+- Adapter owns timeout enforcement via `request.timeoutMs`; the spider does not layer additional `Effect.timeout` on adapter calls.
+- `HttpAdapterError.kind` is drawn from the existing `PageFetchErrorKind` union so `fetchRetry.retryOn` keys keep working unchanged.
+- `defaultUndiciAdapter` returns 4xx/5xx as successful `HttpAdapterResponse` (matching v0.10 — these still get parsed into `PageData`). Custom adapters may opt into failing with `kind: 'http_5xx'` for retry semantics.
+- When `httpAdapter` is undefined, behaviour is identical to v0.10.
 
 ## Interrupt mode (v0.10+)
 

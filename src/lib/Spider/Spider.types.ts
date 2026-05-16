@@ -41,6 +41,13 @@ export const classifyFetchError = (
         return { kind: 'http_4xx', durationMs, attemptsMade, statusCode: status, message: error.message };
     }
     const causeStr = String(error.cause ?? '');
+    // Adapter sentinels are checked first so a caller-supplied error
+    // message containing raw `ENOTFOUND`/`ECONNREFUSED` substrings cannot
+    // override an explicit adapter classification.
+    if (causeStr.includes('[adapter-kind:dns:'))
+      return { kind: 'dns', durationMs, attemptsMade, message: error.message };
+    if (causeStr.includes('[adapter-kind:connection_refused:'))
+      return { kind: 'connection_refused', durationMs, attemptsMade, message: error.message };
     if (
       causeStr.includes('ENOTFOUND') ||
       causeStr.includes('ENONAME') ||

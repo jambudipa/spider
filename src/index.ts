@@ -182,6 +182,18 @@ export {
   SpiderStoppedEvent,
 } from './lib/Logging/SpiderEventSink.js';
 
+// Export HTTP Adapter slot (pluggable fetcher). `resolveAdapter` is
+// deliberately kept internal — only the contract types and the default
+// adapter are public surface.
+export type {
+  HttpAdapter,
+  HttpAdapterRequest,
+  HttpAdapterResponse,
+  HttpAdapterError,
+  HttpAdapterSelector,
+} from './lib/HttpAdapter/HttpAdapter.types.js';
+export { defaultUndiciAdapter } from './lib/HttpAdapter/defaultUndiciAdapter.js';
+
 // Export HTTP Client components
 export type {
   CookieManagerService,

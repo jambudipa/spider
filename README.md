@@ -366,6 +366,7 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 | `maxRequestsPerSecondPerDomain` | `number` | `2` | Per-domain rate cap |
 | `requestDelayMs` | `number` | `1000` | Base courtesy delay (ms) |
 | `maxRobotsCrawlDelayMs` | `number` | `2000` | Max robots.txt crawl-delay cap (ms) |
+| `resultChannelCapacity` | `number \| 'unbounded'` | `'unbounded'` | Buffered `CrawlResult` slots between workers and the sink. Set a positive integer to backpressure workers when the sink lags and keep heap flat under slow I/O sinks — see [docs/how-to/backpressure.md](./docs/how-to/backpressure.md). |
 | `staleWorkerThresholdMs` | `number` | `300_000` | Worker-health staleness threshold (ms). Override for slow adapters. |
 | `staleWorkerCheckIntervalMs` | `number` | `15_000` | How often the monitor scans for stale workers (ms). |
 | `workerHeartbeatMode` | `'per-iteration' \| 'per-attempt'` | `'per-iteration'` | When `'per-attempt'`, heartbeat refreshes between retry attempts so long retry chains aren't flagged dead. |

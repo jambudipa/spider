@@ -1,5 +1,18 @@
 # @jambudipa/spider
 
+## 0.13.0
+
+### Minor Changes
+
+- Add `resultChannelCapacity: number | 'unbounded'` to `SpiderConfigOptions`
+  to bound the worker → sink result channel.
+
+  Default is `'unbounded'` for back-compat. Set a positive integer to use a
+  bounded queue, which applies natural backpressure (workers suspend on
+  `Queue.offer` when full) and keeps heap growth flat under slow sinks. Fixes
+  unbounded heap growth observed when sinks do real I/O on long crawls with
+  large HTML payloads. See `docs/how-to/backpressure.md` for guidance.
+
 ## 0.12.0
 
 ### Minor Changes

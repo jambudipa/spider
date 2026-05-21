@@ -12,6 +12,7 @@ interface SpiderConfigOptions {
   ignoreRobotsTxt: boolean;
   maxConcurrentWorkers: number;
   concurrency: number | 'unbounded' | 'inherit';
+  resultChannelCapacity: number | 'unbounded';
   requestDelayMs: number;
   maxRobotsCrawlDelayMs: number;
   userAgent: string;
@@ -89,6 +90,7 @@ interface SpiderConfigOptions {
 |--------|------|---------|-------------|
 | `maxConcurrentRequests` | `number` | `10` | Total concurrent HTTP requests |
 | `maxRequestsPerSecondPerDomain` | `number` | `2` | Per-domain rate cap |
+| `resultChannelCapacity` | `number \| 'unbounded'` | `'unbounded'` | Buffered `CrawlResult` slots between workers and the sink. Numeric values apply backpressure on workers when the sink lags — see the [backpressure how-to](../how-to/backpressure.md). Validated: positive integer between 1 and 1,000,000. |
 
 ---
 

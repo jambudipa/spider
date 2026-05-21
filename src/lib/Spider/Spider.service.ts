@@ -599,12 +599,30 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // alone doesn't guarantee finaliser execution under all interrupt
             // scenarios. Stream.fromQueue terminates naturally when the
             // queue is shut down, so buffered offers drain before exit.
+            //
+            // Capacity is configurable: `'unbounded'` (default) preserves
+            // historical behaviour; a numeric capacity uses `Queue.bounded(n)`
+            // so `Queue.offer` suspends worker fibers when the sink lags,
+            // bounding heap retention to roughly `n × avg(CrawlResult)`.
+            const resultChannelCapacity = yield* config.getResultChannelCapacity();
             const resultChannel = yield* Effect.acquireRelease(
-              Queue.unbounded<CrawlResult>(),
+              resultChannelCapacity === 'unbounded'
+                ? Queue.unbounded<CrawlResult>()
+                : Queue.bounded<CrawlResult>(resultChannelCapacity),
               (q) => Queue.shutdown(q)
             );
+            // If the sink fails or defects, the serialiser fiber would exit
+            // without draining the channel — under `Queue.bounded`, workers
+            // suspended on `Queue.offer` would then deadlock waiting for a
+            // sink that no longer exists. `ensuring` runs `Queue.shutdown`
+            // on any exit (success, failure, defect, interrupt), which
+            // releases suspended offers so the main fiber can observe the
+            // failure and unwind cleanly.
             const serialiserFiber = yield* Effect.fork(
-              Stream.fromQueue(resultChannel).pipe(Stream.run(sink))
+              Stream.fromQueue(resultChannel).pipe(
+                Stream.run(sink),
+                Effect.ensuring(Queue.shutdown(resultChannel))
+              )
             );
 
             const results = yield* Effect.all(

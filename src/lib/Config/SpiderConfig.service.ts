@@ -316,6 +316,28 @@ export interface SpiderConfigOptions {
   readonly maxConcurrentWorkers: number;
   /** Concurrency level for crawling multiple starting URLs (default: 4) */
   readonly concurrency: number | 'unbounded' | 'inherit';
+  /**
+   * Maximum number of buffered `CrawlResult` values between worker fibers and
+   * the user-supplied sink (default: `'unbounded'`).
+   *
+   * When the sink lags behind worker fetch rate, results queue up here. With
+   * `'unbounded'`, the queue grows without limit — convenient for trivial
+   * sinks but causes heap growth for any sink doing real I/O (DB writes,
+   * downloads, etc.) because each buffered `CrawlResultOk` retains the full
+   * HTML body. With a numeric capacity, workers naturally suspend on
+   * `Queue.offer` when the queue is full, applying backpressure that matches
+   * fetch rate to sink drain rate. Heap stays flat at roughly
+   * `capacity × avg(CrawlResult)`.
+   *
+   * Recommended: a small multiple of `concurrency × maxConcurrentWorkers`.
+   * For the default `4 × 5 = 20` workers, capacity 50–100 gives sinks
+   * breathing room without unbounded growth.
+   *
+   * Must be a positive integer between 1 and 1,000,000 when numeric.
+   * Out-of-range values, non-integers, and explicit `null`/`undefined`
+   * are rejected by `makeSpiderConfig` with a `ConfigError`.
+   */
+  readonly resultChannelCapacity: number | 'unbounded';
   /** Base delay between requests in milliseconds (default: 1000) */
   readonly requestDelayMs: number;
   /** Maximum crawl delay from robots.txt in milliseconds (default: 10000 - 10 seconds) */
@@ -583,6 +605,15 @@ export interface SpiderConfigService {
   shouldNormalizeUrlsForDeduplication: () => Effect.Effect<boolean>;
   /** Get the concurrency level for crawling multiple starting URLs */
   getConcurrency: () => Effect.Effect<number | 'unbounded' | 'inherit'>;
+  /**
+   * Get the capacity for the worker → sink result channel.
+   *
+   * Returns `'unbounded'` (default) or a positive integer. Numeric values
+   * cause the channel to be constructed via `Queue.bounded(n)`, applying
+   * backpressure on workers when the sink lags. See
+   * {@link SpiderConfigOptions.resultChannelCapacity}.
+   */
+  getResultChannelCapacity: () => Effect.Effect<number | 'unbounded'>;
   /** Check if resumable crawling is enabled */
   isResumabilityEnabled: () => Effect.Effect<boolean>;
   /** Get the fetch-retry policy (returns defaults when not configured). */
@@ -958,6 +989,34 @@ export const makeSpiderConfig = (
     }
   }
 
+  // Reject invalid `resultChannelCapacity` values up front. `Queue.bounded`
+  // with zero or negative capacity would either reject all offers or behave
+  // surprisingly; non-integers would be coerced by the runtime. Catch at
+  // startup so the failure mode is a clear ConfigError, not a silent stall.
+  //
+  // `hasOwn` (not `Option.fromNullable`) so that explicit `null`/`undefined`
+  // is rejected rather than silently falling back to the default — the
+  // post-merge value would otherwise stay `null` and crash at
+  // `Queue.bounded(null)`.
+  const RESULT_CHANNEL_CAPACITY_MAX = 1_000_000;
+  if (Object.prototype.hasOwnProperty.call(options, 'resultChannelCapacity')) {
+    const c = options.resultChannelCapacity;
+    const isUnbounded = c === 'unbounded';
+    const isValidInt =
+      typeof c === 'number' &&
+      Number.isInteger(c) &&
+      c >= 1 &&
+      c <= RESULT_CHANNEL_CAPACITY_MAX;
+    if (!isUnbounded && !isValidInt) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'resultChannelCapacity',
+        value: c,
+        reason: `must be 'unbounded' or a positive integer between 1 and ${RESULT_CHANNEL_CAPACITY_MAX}`,
+      });
+    }
+  }
+
   // Default file extension filters (all enabled like Scrapy)
   const defaultFileExtensionFilters: FileExtensionFilters = {
     filterArchives: true,
@@ -980,6 +1039,7 @@ export const makeSpiderConfig = (
     ignoreRobotsTxt: false,
     maxConcurrentWorkers: 5,
     concurrency: 4,
+    resultChannelCapacity: 'unbounded',
     requestDelayMs: 1000,
     maxRobotsCrawlDelayMs: 2000, // Maximum 1 second for robots.txt crawl delay
     userAgent: 'JambudipaSpider/1.0',
@@ -1256,6 +1316,8 @@ export const makeSpiderConfig = (
     shouldNormalizeUrlsForDeduplication: () =>
       Effect.succeed(config.normalizeUrlsForDeduplication),
     getConcurrency: () => Effect.succeed(config.concurrency),
+    getResultChannelCapacity: () =>
+      Effect.succeed(config.resultChannelCapacity),
     isResumabilityEnabled: () => Effect.succeed(config.enableResumability),
     getFetchRetry: () =>
       Effect.succeed(config.fetchRetry ?? defaultFetchRetry),

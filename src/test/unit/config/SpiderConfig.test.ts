@@ -18,6 +18,74 @@ describe('SpiderConfig Service', () => {
       expect(typeof config.getUserAgent).toBe('function');
     });
 
+    describe('resultChannelCapacity', () => {
+      it("defaults to 'unbounded'", async () => {
+        const config = makeSpiderConfig();
+        const layer = Layer.succeed(SpiderConfig, config);
+
+        const program = Effect.gen(function* () {
+          const c = yield* SpiderConfig;
+          return yield* c.getResultChannelCapacity();
+        });
+
+        const result = await runTest(program.pipe(Effect.provide(layer)));
+        expect(result).toBe('unbounded');
+      });
+
+      it('round-trips a positive integer through the getter', async () => {
+        const config = makeSpiderConfig({ resultChannelCapacity: 50 });
+        const layer = Layer.succeed(SpiderConfig, config);
+
+        const program = Effect.gen(function* () {
+          const c = yield* SpiderConfig;
+          return yield* c.getResultChannelCapacity();
+        });
+
+        const result = await runTest(program.pipe(Effect.provide(layer)));
+        expect(result).toBe(50);
+      });
+
+      it("accepts explicit 'unbounded'", async () => {
+        const config = makeSpiderConfig({ resultChannelCapacity: 'unbounded' });
+        const layer = Layer.succeed(SpiderConfig, config);
+
+        const program = Effect.gen(function* () {
+          const c = yield* SpiderConfig;
+          return yield* c.getResultChannelCapacity();
+        });
+
+        const result = await runTest(program.pipe(Effect.provide(layer)));
+        expect(result).toBe('unbounded');
+      });
+
+      it.each([
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER,
+      ])('rejects invalid numeric value %p at construction', (badValue) => {
+        expect(() =>
+          makeSpiderConfig({ resultChannelCapacity: badValue })
+        ).toThrow(/resultChannelCapacity/);
+      });
+
+      it.each([null, undefined, '50', true, [], {}])(
+        'rejects non-numeric / non-string-literal value %p at construction',
+        (badValue) => {
+          expect(() =>
+            makeSpiderConfig({
+              // Force-cast to exercise the runtime guard against untyped
+              // callers (JSON config, dynamic options).
+              resultChannelCapacity:
+                badValue as unknown as number | 'unbounded',
+            })
+          ).toThrow(/resultChannelCapacity/);
+        }
+      );
+    });
+
     it('should merge custom options with defaults', async () => {
       const customOptions: Partial<SpiderConfigOptions> = {
         maxPages: 50,

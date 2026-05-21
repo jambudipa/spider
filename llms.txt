@@ -204,6 +204,9 @@ makeSpiderConfig({
   // staleWorkerThresholdMs: 600_000,         // raise for very slow adapters
   // staleWorkerCheckIntervalMs: 5_000,       // scan more often (default 15_000)
   // workerHeartbeatMode: 'per-attempt',      // refresh heartbeat between retries
+
+  // Bound the worker → sink result channel (v0.13+) — see "Result-channel backpressure" section below
+  // resultChannelCapacity: 100,              // positive int 1..1_000_000 — applies backpressure on slow sinks
 })
 ```
 
@@ -218,6 +221,16 @@ Long retry chains under slow adapters can run past the worker-health staleness t
 The standalone `WorkerHealthMonitor` service shares the new 300 s default but is independent of `SpiderConfig`. Use `WorkerHealthMonitor.WithThreshold(ms)` to construct a layer with a different threshold.
 
 The spider emits a debug-level `event: 'worker_heartbeat'` log record on every heartbeat. Default-level loggers filter these out; raise `minimumLogLevel` to `Debug` only when actively diagnosing heartbeat behaviour.
+
+## Result-channel backpressure (v0.13+)
+
+The serialiser channel between worker fibers and the user-supplied `Sink` defaulted to `Queue.unbounded`. Under a slow sink (DB writes, image downloads, expensive parsing), buffered `CrawlResultOk` values retain full HTML bodies and drive heap growth — observed at ~1.3 GB of retained HTML strings on long crawls.
+
+`resultChannelCapacity: number | 'unbounded'` (default `'unbounded'`) switches the channel to `Queue.bounded(n)` when numeric, so `Queue.offer` suspends worker fibers when the queue is full. Backpressure matches fetch rate to sink drain rate; heap stays flat at roughly `capacity × avg(CrawlResult)`. The default preserves v0.12 behaviour.
+
+Pick a small multiple of `concurrency × maxConcurrentWorkers` — for the default `4 × 5 = 20` workers, `50–100` gives sinks breathing room without unbounded growth. Validated: positive integer between 1 and 1,000,000; `'unbounded'`; nothing else. Explicit `null`/`undefined` is rejected with `ConfigError`. Use a finite `concurrency` when setting a numeric capacity — `concurrency: 'unbounded'` with a small bound shifts heap retention from buffered results to suspended fiber stacks.
+
+Service getter: `SpiderConfig.getResultChannelCapacity(): Effect<number | 'unbounded'>`. Full how-to: `docs/how-to/backpressure.md`.
 
 ## HTTP adapter slot (v0.11+)
 

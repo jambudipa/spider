@@ -1,5 +1,26 @@
 # @jambudipa/spider
 
+## 0.13.1
+
+### Patch Changes
+
+- Suppress `TypeError: terminated` from undici's `Fetch.onAborted` during
+  the abort-vs-TLS-socket-close race. The exception was emitted via an
+  EventEmitter rather than a Promise rejection, so the adapter's
+  `Effect.tryPromise` catch never saw it and Node's default
+  `uncaughtException` behaviour terminated the process mid-crawl.
+
+  A narrow process-level guard is installed for the lifetime of each
+  `SpiderService.crawl` scope (reference-counted across concurrent
+  crawls). It matches only TypeErrors whose message is `terminated` AND
+  whose stack contains both `Fetch.onAborted` and `Fetch.terminate`
+  frames — all other uncaught exceptions retain their normal behaviour
+  (other listeners run; Node's default fatal path fires when the guard
+  is the sole listener). Each suppression writes a structured
+  `undici_terminated_swallowed` JSON line to stderr for observability.
+
+  Upstream context: https://github.com/nodejs/undici/issues/3492
+
 ## 0.13.0
 
 ### Minor Changes

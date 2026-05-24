@@ -52,6 +52,7 @@ import {
 } from '../Logging/SpiderEventSink.js';
 import { deduplicateUrls } from '../utils/url-deduplication.js';
 import { SPIDER_DEFAULTS } from './Spider.defaults.js';
+import { acquireUndiciTerminatedGuard } from './undiciTerminatedGuard.js';
 
 /**
  * Configuration for extracting a nested field from an element.
@@ -321,6 +322,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           // for the resultChannel queue lifecycle. Eliminates Scope from R so
           // the public signature stays unchanged for callers.
           Effect.scoped(Effect.gen(function* () {
+            // Install a process-level guard for undici's
+            // `TypeError: terminated` race (Fetch abort vs TLS socket
+            // close). The exception escapes via EventEmitter and would
+            // otherwise crash the process mid-crawl, bypassing all
+            // Effect error plumbing. Reference-counted across concurrent
+            // crawls; removed on scope close.
+            yield* acquireUndiciTerminatedGuard;
+
             // Get config at runtime when crawl() is called - allows custom configs to override
             const config = yield* SpiderConfig;
 

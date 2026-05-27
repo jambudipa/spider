@@ -45,6 +45,10 @@ export class DomainStartEvent extends Data.TaggedClass('DomainStart')<{
 /**
  * Crawling completed for a domain.
  *
+ * `cycle` disambiguates events emitted by successive passes when `domainRetry`
+ * is enabled. `cycle: 0` is the initial pass (and the only event for callers
+ * who leave `domainRetry` disabled); subsequent passes increment `cycle`.
+ *
  * @group Observability
  * @public
  */
@@ -57,6 +61,51 @@ export class DomainCompleteEvent extends Data.TaggedClass('DomainComplete')<{
   readonly pagesFailed: ReadonlyArray<{ readonly kind: PageFetchErrorKind; readonly count: number }>;
   readonly reason: 'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded';
   readonly durationMs: number;
+  /**
+   * Pass index this completion belongs to. `0` for the initial pass (always
+   * the case when `domainRetry` is disabled); incremented for each retry
+   * pass triggered by `domainRetry`. Defaults to `0` for backwards
+   * compatibility.
+   */
+  readonly cycle: number;
+}> {}
+
+/**
+ * A residual domain has been scheduled for a retry pass.
+ *
+ * Emitted once per residual domain at the start of each retry pass (i.e.
+ * after pass 0 has finished and before pass 1 begins, repeated for each
+ * subsequent cycle when `domainRetry.maxPasses > 2`). The event fires
+ * *before* the `backoffMs` sleep so consumers can observe the intended
+ * retry schedule.
+ *
+ * @group Observability
+ * @public
+ */
+export class DomainRetryScheduledEvent extends Data.TaggedClass(
+  'DomainRetryScheduled'
+)<{
+  readonly domain: string;
+  readonly startUrl: string;
+  /** Reason from the just-completed `DomainCompleteEvent` that triggered the retry. */
+  readonly previousReason:
+    | 'queue_empty'
+    | 'max_pages'
+    | 'error'
+    | 'robots_blocked'
+    | 'all_fetches_failed'
+    | 'interrupted'
+    | 'interrupt_grace_exceeded';
+  /**
+   * The cycle index this retry pass will run at — i.e. `1` for the first
+   * retry, `2` for the second, etc.
+   */
+  readonly attempt: number;
+  /**
+   * Wall-clock epoch milliseconds at which the retry pass is expected to
+   * begin (`emittedAt + backoffMs`). Informational only.
+   */
+  readonly nextPassAt: number;
 }> {}
 
 /**
@@ -184,6 +233,7 @@ export type SpiderEvent =
   | SpiderErrorEvent
   | DomainStartEvent
   | DomainCompleteEvent
+  | DomainRetryScheduledEvent
   | PageScrapedEvent
   | RobotsBlockedEvent
   | StartUrlChosenEvent

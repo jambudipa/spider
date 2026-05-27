@@ -75,6 +75,10 @@ describe('DomainCompleteEvent emission', () => {
     );
     expect(domainCompletes).toHaveLength(1);
     expect(domainCompletes[0]?.domain).toBe('lifecycle.test');
+    // Regression guard for the additive `cycle` field. When `domainRetry`
+    // is omitted, every DomainCompleteEvent carries `cycle: 0` — preserving
+    // the pre-feature event shape for consumers who never opt in.
+    expect(domainCompletes[0]?.cycle).toBe(0);
   });
 
   it('emits exactly one DomainCompleteEvent across multiple parallel domains', async () => {
@@ -106,16 +110,25 @@ describe('DomainCompleteEvent emission', () => {
     );
 
     const events = await Effect.runPromise(Ref.get(eventsRef));
-    const completesByDomain = events
-      .filter((e): e is DomainCompleteEvent => e._tag === 'DomainComplete')
-      .reduce<Map<string, number>>((acc, e) => {
+    const allCompletes = events.filter(
+      (e): e is DomainCompleteEvent => e._tag === 'DomainComplete'
+    );
+    const completesByDomain = allCompletes.reduce<Map<string, number>>(
+      (acc, e) => {
         acc.set(e.domain, (acc.get(e.domain) ?? 0) + 1);
         return acc;
-      }, new Map<string, number>());
+      },
+      new Map<string, number>()
+    );
 
     expect(completesByDomain.size).toBe(5);
     for (const [, count] of completesByDomain) {
       expect(count).toBe(1);
+    }
+    // Regression guard: every multi-domain DomainCompleteEvent carries
+    // `cycle: 0` when `domainRetry` is omitted (additive field default).
+    for (const e of allCompletes) {
+      expect(e.cycle).toBe(0);
     }
   });
 });

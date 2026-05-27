@@ -83,3 +83,8 @@ fix-all-type-errors-loop.sh
 
 # Test output
 junit.xml
+
+# npm-publish debug artefacts
+.npm-pack-preview.json
+.changeset-status.txt
+*.tgz

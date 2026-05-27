@@ -54,6 +54,9 @@ interface SpiderConfigOptions {
   staleWorkerThresholdMs?: number;
   staleWorkerCheckIntervalMs?: number;
   workerHeartbeatMode?: 'per-iteration' | 'per-attempt';
+
+  // In-cycle domain-level retry (v0.14+)
+  domainRetry?: DomainRetryConfig;
 }
 ```
 
@@ -198,6 +201,105 @@ makeSpiderConfig({
   },
 })
 ```
+
+---
+
+## DomainRetryConfig (v0.14+)
+
+Opt-in **second layer** of retry, above `fetchRetry`. When a domain's start URL exhausts `fetchRetry.maxAttempts` early in the cycle — cold TLS handshake, DNS pressure, a transient burst of network turbulence — `fetchRetry` alone gives up and the domain is permanently lost for the rest of `Spider.crawl()`. `domainRetry` adds an outer multi-pass loop: residual domains matching `retryOn` are collected after pass 0, the spider sleeps `backoffMs`, and the residual set is re-run.
+
+All passes share the same undici connection pool (process-global), robots cache, result channel, and event sink — they run inside the same `Spider.crawl()` invocation, so sockets warmed during pass 0 are available to pass 1. The URL deduplicator is per-pass (fresh `localDeduplicator` per `crawlSingle` invocation) by design, so pass 1 actually re-attempts the start URL that pass 0 failed.
+
+```typescript
+interface DomainRetryConfig {
+  enabled: boolean;
+  maxPasses: number;
+  backoffMs: number;
+  retryOn: DomainRetryPredicate;
+  passOverrides?: DomainRetryPassOverrides;
+}
+
+interface DomainRetryPredicate {
+  reasons: ReadonlyArray<DomainCompleteReason>;
+  maxPagesAttempted: number;
+}
+
+interface DomainRetryPassOverrides {
+  concurrency?: number | 'unbounded' | 'inherit';
+  fetchRetry?: FetchRetryConfig;
+}
+
+type DomainCompleteReason =
+  | 'queue_empty' | 'max_pages' | 'error' | 'robots_blocked'
+  | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded';
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Master switch. When `false`, the rest of this config is ignored and behaviour is identical to pre-v0.14. |
+| `maxPasses` | `1` | Total passes including the initial one. `1` is the pre-feature default (pass 0 only); `2` means pass 0 + one retry pass. Must be ≥ 1; must be ≥ 2 when `enabled: true`. |
+| `backoffMs` | `60000` | Delay between passes in milliseconds. `Infinity` is not permitted; must be ≥ 0. |
+| `retryOn.reasons` | `['all_fetches_failed']` | Domain-completion reasons eligible for retry. Must be non-empty. |
+| `retryOn.maxPagesAttempted` | `1` | Upper bound on `pagesAttempted` for the just-completed pass. A domain that scraped more pages than this is treated as a partial-coverage failure (likely structural) and is NOT retried. `Infinity` permitted (no upper bound). |
+| `passOverrides.concurrency` | — | Override `concurrency` for retry passes. Useful for serial second passes (e.g. `1`) when first-pass parallelism caused the failure. |
+| `passOverrides.fetchRetry` | — | Override `fetchRetry` for retry passes. Useful for longer retry budgets on the second pass (e.g. `maxAttempts: 5, baseBackoffMs: 5000`). Wholesale replacement — not a merge. |
+
+**Default (`defaultDomainRetry`):**
+
+```typescript
+{
+  enabled: false,
+  maxPasses: 1,
+  backoffMs: 60_000,
+  retryOn: { reasons: ['all_fetches_failed'], maxPagesAttempted: 1 },
+}
+```
+
+**Example — recover ~13–15 pp of single-cycle coverage lost to transient start-URL failures:**
+
+```typescript
+makeSpiderConfig({
+  fetchRetry: {
+    maxAttempts: 3,
+    baseBackoffMs: 1000,
+    retryOn: ['timeout', 'http_5xx', 'connection_refused', 'http_429'],
+  },
+  domainRetry: {
+    enabled: true,
+    maxPasses: 2,
+    backoffMs: 60_000,
+    retryOn: {
+      reasons: ['all_fetches_failed'],
+      maxPagesAttempted: 1,
+    },
+    passOverrides: {
+      concurrency: 1,
+      fetchRetry: {
+        maxAttempts: 5,
+        baseBackoffMs: 5000,
+        retryOn: ['timeout', 'http_5xx', 'connection_refused', 'http_429'],
+      },
+    },
+  },
+})
+```
+
+**Lifecycle observability:**
+
+Between passes, the spider emits a `DomainRetryScheduledEvent` for every residual:
+
+```typescript
+class DomainRetryScheduledEvent {
+  readonly _tag: 'DomainRetryScheduled';
+  readonly domain: string;
+  readonly startUrl: string;
+  readonly previousReason: DomainCompleteReason;
+  readonly attempt: number;     // 1-based; the pass about to start
+  readonly nextPassAt: number;  // epoch-ms, advisory only
+}
+```
+
+Each pass emits its own `DomainCompleteEvent`, now carrying an additive `cycle: number` field (`0` = initial pass, `1` = first retry, …). Existing consumers that ignore `cycle` see no behavioural change.
 
 ---
 
@@ -353,6 +455,13 @@ try {
 Known validation rules:
 
 - `fetchRetry.maxAttempts` must be a positive integer ≥ 1
+- `domainRetry.maxPasses` must be a positive integer ≥ 1, and ≥ 2 when `domainRetry.enabled` is `true` (otherwise the opt-in would silently no-op)
+- `domainRetry.backoffMs` must be a finite number ≥ 0
+- `domainRetry.retryOn.reasons` must be a non-empty array of `DomainCompleteReason` values
+- `domainRetry.retryOn.maxPagesAttempted` must be a non-negative number (NaN and negatives rejected; `Infinity` permitted)
+- `domainRetry.passOverrides.fetchRetry.maxAttempts` (if set) must be a positive integer ≥ 1
+- `domainRetry.passOverrides.fetchRetry.baseBackoffMs` (if set) must be a finite number ≥ 0
+- `staleWorkerThresholdMs` and `staleWorkerCheckIntervalMs` must be positive integers between 1 and 2 147 483 647
 
 ---
 

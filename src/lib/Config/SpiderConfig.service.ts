@@ -82,6 +82,103 @@ export const defaultFetchRetry: FetchRetryConfig = {
 };
 
 /**
+ * Reason a domain finished a pass. Mirrors the `reason` field on
+ * {@link DomainCompleteEvent}. Re-declared here to avoid a circular
+ * import between Config and Logging.
+ *
+ * @group Configuration
+ * @public
+ */
+export type DomainCompleteReason =
+  | 'queue_empty'
+  | 'max_pages'
+  | 'error'
+  | 'robots_blocked'
+  | 'all_fetches_failed'
+  | 'interrupted'
+  | 'interrupt_grace_exceeded';
+
+/**
+ * Predicate used to decide whether a domain that just completed a pass should
+ * be retried in a subsequent pass. The match is conjunctive — both conditions
+ * must hold.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface DomainRetryPredicate {
+  /** Domain `reason` values eligible for retry. */
+  readonly reasons: ReadonlyArray<DomainCompleteReason>;
+  /**
+   * Upper bound on `pagesAttempted` for the just-completed pass. A domain that
+   * scraped more pages than this is treated as a partial-coverage failure
+   * (likely structural) rather than a transient burst — and so is NOT retried.
+   */
+  readonly maxPagesAttempted: number;
+}
+
+/**
+ * Per-pass overrides applied to retry passes (cycle &ge; 1). Each field is
+ * optional; when omitted, the base {@link SpiderConfigOptions} value flows
+ * through unchanged.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface DomainRetryPassOverrides {
+  /** Override {@link SpiderConfigOptions.concurrency} for retry passes. */
+  readonly concurrency?: number | 'unbounded' | 'inherit';
+  /** Override {@link SpiderConfigOptions.fetchRetry} for retry passes. */
+  readonly fetchRetry?: FetchRetryConfig;
+}
+
+/**
+ * Configuration for in-cycle domain-level retry. When `enabled` is true and
+ * a domain's pass-0 completion matches `retryOn`, the spider sleeps
+ * `backoffMs` and runs that domain's start URL again (up to `maxPasses` total
+ * passes). All passes share the same undici connection pool, URL
+ * deduplicator, robots cache, result channel, and event sink.
+ *
+ * Default behaviour preserves the pre-feature behaviour: `enabled: false`
+ * means a single pass is run.
+ *
+ * @group Configuration
+ * @public
+ */
+export interface DomainRetryConfig {
+  /** Master switch. When `false`, the rest of this config is ignored. */
+  readonly enabled: boolean;
+  /**
+   * Total passes including the initial one. Must be `>= 1`. `1` is the
+   * pre-feature default (pass 0 only); `2` means pass 0 + one retry pass.
+   */
+  readonly maxPasses: number;
+  /** Delay between passes, in milliseconds. Must be `>= 0`. */
+  readonly backoffMs: number;
+  /** Predicate selecting which pass-completion outcomes trigger a retry. */
+  readonly retryOn: DomainRetryPredicate;
+  /** Optional overrides applied to retry passes. */
+  readonly passOverrides?: DomainRetryPassOverrides;
+}
+
+/**
+ * Default domain-retry policy: disabled. Preserves pre-feature behaviour
+ * (one pass, no retry) when `domainRetry` is omitted from `SpiderConfigOptions`.
+ *
+ * @group Configuration
+ * @public
+ */
+export const defaultDomainRetry: DomainRetryConfig = {
+  enabled: false,
+  maxPasses: 1,
+  backoffMs: 60_000,
+  retryOn: {
+    reasons: ['all_fetches_failed'],
+    maxPagesAttempted: 1,
+  },
+};
+
+/**
  * Build the Effect retry schedule used by the page-fetch pipeline.
  *
  * Exported so callers (production code and tests) share a single source
@@ -457,6 +554,19 @@ export interface SpiderConfigOptions {
    */
   readonly fetchRetry?: FetchRetryConfig;
   /**
+   * In-cycle domain-level retry policy. When enabled, `Spider.crawl()` runs
+   * the start-URL list as a multi-pass loop: pass 0 is the existing
+   * behaviour, then residual domains matching `retryOn` are re-run after
+   * `backoffMs`. All passes share the same undici connection pool, URL
+   * deduplicator, robots cache, result channel, and event sink.
+   *
+   * Disabled by default — omitting this option (or setting `enabled: false`)
+   * preserves the pre-feature behaviour (one pass, no retry).
+   *
+   * @default defaultDomainRetry
+   */
+  readonly domainRetry?: DomainRetryConfig;
+  /**
    * Cross-domain redirect handling for start URLs. When enabled, a start URL
    * that 3xx-redirects to a different hostname updates the per-domain
    * restriction so the rest of the crawl follows links on the final domain.
@@ -618,6 +728,8 @@ export interface SpiderConfigService {
   isResumabilityEnabled: () => Effect.Effect<boolean>;
   /** Get the fetch-retry policy (returns defaults when not configured). */
   getFetchRetry: () => Effect.Effect<FetchRetryConfig>;
+  /** Get the domain-retry policy (returns defaults when not configured). */
+  getDomainRetry: () => Effect.Effect<DomainRetryConfig>;
   /** Get the domain-equivalence rules (returns defaults when not configured). */
   getDomainEquivalence: () => Effect.Effect<DomainEquivalenceConfig>;
   /** Get cross-domain redirect policy (returns defaults when not configured). */
@@ -921,6 +1033,107 @@ export const makeSpiderConfig = (
         value: n,
         reason: 'must be a positive integer >= 1 (the initial attempt counts as 1)',
       });
+    }
+  }
+
+  // Validate `domainRetry` shape up front. Like `fetchRetry.maxAttempts`,
+  // the multi-pass loop uses `cycle < maxPasses` as its termination
+  // predicate — a non-positive `maxPasses` would silently skip the
+  // initial pass, producing an empty crawl with no obvious cause.
+  // `backoffMs` is fed to `Effect.sleep`; negatives would either be
+  // coerced or surprise callers.
+  const domainRetryOpt = Option.fromNullable(options.domainRetry);
+  if (Option.isSome(domainRetryOpt)) {
+    const dr = domainRetryOpt.value;
+    if (!Number.isInteger(dr.maxPasses) || dr.maxPasses < 1) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'domainRetry.maxPasses',
+        value: dr.maxPasses,
+        reason:
+          'must be a positive integer >= 1 (the initial pass counts as 1; set to 2 to allow one retry)',
+      });
+    }
+    // `enabled: true` with `maxPasses: 1` is a silent no-op: the user opted
+    // in but only the initial pass runs, no retry happens, and no event
+    // surfaces the misconfiguration. Reject at construction so the footgun
+    // is caught at the boundary rather than silently degrading coverage.
+    if (dr.enabled && dr.maxPasses < 2) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'domainRetry.maxPasses',
+        value: dr.maxPasses,
+        reason:
+          'must be >= 2 when `domainRetry.enabled` is true (otherwise no retry pass runs and opting in has no effect)',
+      });
+    }
+    if (typeof dr.backoffMs !== 'number' || !Number.isFinite(dr.backoffMs) || dr.backoffMs < 0) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'domainRetry.backoffMs',
+        value: dr.backoffMs,
+        reason: 'must be a finite number >= 0 (milliseconds)',
+      });
+    }
+    // `retryOn.reasons` empty silently disables retries even with
+    // `enabled: true` and a sensible `maxPasses`. Reject so the
+    // misconfiguration surfaces at the boundary.
+    if (!Array.isArray(dr.retryOn.reasons) || dr.retryOn.reasons.length === 0) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'domainRetry.retryOn.reasons',
+        value: dr.retryOn.reasons,
+        reason: 'must be a non-empty array of DomainCompleteReason values',
+      });
+    }
+    // `retryOn.maxPagesAttempted`: allow `Infinity` (means "no upper bound")
+    // and any finite non-negative number. Reject NaN, negatives, and
+    // non-finite values that aren't `Infinity` so silent no-op predicates
+    // (NaN comparisons always false) can't slip through.
+    const mpa = dr.retryOn.maxPagesAttempted;
+    if (
+      typeof mpa !== 'number' ||
+      Number.isNaN(mpa) ||
+      mpa < 0 ||
+      (!Number.isFinite(mpa) && mpa !== Infinity)
+    ) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+      throw new ConfigError({
+        field: 'domainRetry.retryOn.maxPagesAttempted',
+        value: mpa,
+        reason:
+          'must be a non-negative number (Infinity is allowed; NaN and negatives are rejected)',
+      });
+    }
+    // Mirror the fetchRetry validation for any override carried in passOverrides.
+    const overrideMaxAttempts = dr.passOverrides?.fetchRetry?.maxAttempts;
+    // eslint-disable-next-line effect/no-undefined-use-option -- `overrideMaxAttempts` is an optional field on an optional nested config; the absence-check is the natural JS shape and mirrors the pattern used by the sibling fetchRetry validation above
+    if (overrideMaxAttempts !== undefined) {
+      if (!Number.isInteger(overrideMaxAttempts) || overrideMaxAttempts < 1) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+        throw new ConfigError({
+          field: 'domainRetry.passOverrides.fetchRetry.maxAttempts',
+          value: overrideMaxAttempts,
+          reason:
+            'must be a positive integer >= 1 (the initial attempt counts as 1)',
+        });
+      }
+    }
+    const overrideBaseBackoff = dr.passOverrides?.fetchRetry?.baseBackoffMs;
+    // eslint-disable-next-line effect/no-undefined-use-option -- optional nested config; sentinel-absence check
+    if (overrideBaseBackoff !== undefined) {
+      if (
+        typeof overrideBaseBackoff !== 'number' ||
+        !Number.isFinite(overrideBaseBackoff) ||
+        overrideBaseBackoff < 0
+      ) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+        throw new ConfigError({
+          field: 'domainRetry.passOverrides.fetchRetry.baseBackoffMs',
+          value: overrideBaseBackoff,
+          reason: 'must be a finite number >= 0 (milliseconds)',
+        });
+      }
     }
   }
 
@@ -1321,6 +1534,8 @@ export const makeSpiderConfig = (
     isResumabilityEnabled: () => Effect.succeed(config.enableResumability),
     getFetchRetry: () =>
       Effect.succeed(config.fetchRetry ?? defaultFetchRetry),
+    getDomainRetry: () =>
+      Effect.succeed(config.domainRetry ?? defaultDomainRetry),
     getDomainEquivalence: () =>
       Effect.succeed(config.domainEquivalence ?? defaultDomainEquivalence),
     getCrossDomainRedirects: () =>

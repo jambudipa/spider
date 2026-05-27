@@ -29,6 +29,10 @@ export type {
   TechnicalFilters,
   StopMode,
   ResolvedStopMode,
+  DomainRetryConfig,
+  DomainRetryPredicate,
+  DomainRetryPassOverrides,
+  DomainCompleteReason,
 } from './lib/Config/SpiderConfig.service.js';
 export {
   SpiderConfig,
@@ -37,6 +41,7 @@ export {
   defaultDomainEquivalence,
   defaultFetchRetry,
   defaultCrossDomainRedirects,
+  defaultDomainRetry,
   resolveUserAgent,
 } from './lib/Config/SpiderConfig.service.js';
 
@@ -171,6 +176,7 @@ export {
   SpiderErrorEvent,
   DomainStartEvent,
   DomainCompleteEvent,
+  DomainRetryScheduledEvent,
   PageScrapedEvent,
   RobotsBlockedEvent,
   SpiderEventSink,

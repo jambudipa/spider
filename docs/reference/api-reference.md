@@ -300,7 +300,7 @@ program.pipe(
 
 #### SpiderEvent
 
-Discriminated union of all twelve event types. Switch on `_tag` for exhaustive handling.
+Discriminated union of all thirteen event types. Switch on `_tag` for exhaustive handling.
 
 All events are `Data.TaggedClass` instances (v0.6+) — construct with `new EventClass({…})`.
 
@@ -310,7 +310,7 @@ All events are `Data.TaggedClass` instances (v0.6+) — construct with `new Even
 | `SpiderCompleteEvent` | `'SpiderComplete'` | `details?` | 0.5 |
 | `SpiderErrorEvent` | `'SpiderError'` | `details?` | 0.5 |
 | `DomainStartEvent` | `'DomainStart'` | `domain`, `startUrl` | 0.5 |
-| `DomainCompleteEvent` | `'DomainComplete'` | `domain`, `startUrl`, `finalStartUrl`, `pagesScraped`, `pagesAttempted`, `pagesFailed`, `reason`, `durationMs` | 0.5 (enriched 0.7) |
+| `DomainCompleteEvent` | `'DomainComplete'` | `domain`, `startUrl`, `finalStartUrl`, `pagesScraped`, `pagesAttempted`, `pagesFailed`, `reason`, `durationMs`, `cycle` (additive, default `0`, v0.14) | 0.5 (enriched 0.7, 0.14) |
 | `PageScrapedEvent` | `'PageScraped'` | `url`, `domain`, `pageNumber` | 0.5 |
 | `RobotsBlockedEvent` | `'RobotsBlocked'` | `url`, `domain`, `disallowRule?` | 0.7 |
 | `StartUrlChosenEvent` | `'StartUrlChosen'` | `domain`, `attempted`, `chosen` | 0.9 |
@@ -318,8 +318,13 @@ All events are `Data.TaggedClass` instances (v0.6+) — construct with `new Even
 | `WorkerInterruptedEvent` | `'WorkerInterrupted'` | `workerId`, `domain`, `url`, `reason` | 0.10 |
 | `DomainStoppedEvent` | `'DomainStopped'` | `domain`, `reason`, `gracefulMs`, `forced` | 0.10 |
 | `SpiderStoppedEvent` | `'SpiderStopped'` | `reason`, `totalDomains`, `totalPages`, `wallclockMs` | 0.10 |
+| `DomainRetryScheduledEvent` | `'DomainRetryScheduled'` | `domain`, `startUrl`, `previousReason`, `attempt`, `nextPassAt` | 0.14 |
 
-`DomainCompleteEvent.reason` values: `'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded'`
+`DomainCompleteEvent.reason` values: `'queue_empty' | 'max_pages' | 'error' | 'robots_blocked' | 'all_fetches_failed' | 'interrupted' | 'interrupt_grace_exceeded'` (exported as `DomainCompleteReason` from v0.14).
+
+`DomainCompleteEvent.cycle` (v0.14+): `0` for the initial pass; `1`, `2`, … for retry passes driven by `domainRetry`. Default `0` keeps pre-v0.14 consumers behavioural-equivalent.
+
+`DomainRetryScheduledEvent` (v0.14+): emitted once per residual domain before each retry pass when `domainRetry.enabled` is `true`. `nextPassAt` is an advisory epoch-ms timestamp; the actual pass starts after the `backoffMs` sleep, subject to fiber-interruption.
 
 The three interrupt-mode events (`WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`) are only emitted when `stopMode: 'interrupt'` is configured. See the [configuration reference](./configuration.md#stopmode-v010) for details.
 

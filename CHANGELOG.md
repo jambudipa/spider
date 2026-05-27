@@ -1,5 +1,46 @@
 # @jambudipa/spider
 
+## 0.14.0
+
+### Minor Changes
+
+- Add `domainRetry` config for in-cycle re-attempt of domains that exhaust on
+  transient failures (cold TLS, DNS pressure, burst load).
+
+  When enabled, `Spider.crawl()` runs the start-URL list as a multi-pass loop:
+  pass 0 is the existing behaviour, residual domains matching `retryOn` are
+  re-run after `backoffMs`. All passes share the same undici connection pool
+  (process-global), robots cache, result channel, and event sink — sockets
+  warmed during pass 0 are reused on pass 1. The URL deduplicator is per-pass
+  by design, so pass 1 actually re-attempts the start URL that pass 0 failed.
+
+  Default behaviour is preserved: omitting `domainRetry` (or setting
+  `enabled: false`) keeps the pre-feature one-pass behaviour.
+
+  Public surface (all additive):
+  - `DomainRetryConfig`, `DomainRetryPredicate`, `DomainRetryPassOverrides`,
+    `DomainCompleteReason` config types and `defaultDomainRetry` constant.
+  - `SpiderConfigOptions.domainRetry?: DomainRetryConfig` field.
+  - `SpiderConfigService.getDomainRetry()` getter.
+  - Additive `cycle: number` field on `DomainCompleteEvent` — `0` for the
+    initial pass, incremented for each retry pass. Defaults to `0` so
+    existing consumers see no shape change.
+  - New `DomainRetryScheduledEvent` tagged class emitted once per residual
+    domain before each retry pass (lifecycle observability).
+
+  Fixed: `SpiderCompleteEvent.details.totalDomains` now reflects the number of
+  unique start URLs the consumer asked for, not the multi-pass result-row
+  count. Default-disabled `domainRetry` keeps the prior value bit-identical.
+
+  Validation: `makeSpiderConfig` now rejects, at construction:
+  - `domainRetry.maxPasses < 1` or non-integer `maxPasses`
+  - `domainRetry.enabled: true` paired with `maxPasses < 2` (silent no-op)
+  - negative or non-finite `domainRetry.backoffMs`
+  - empty `domainRetry.retryOn.reasons`
+  - NaN or negative `domainRetry.retryOn.maxPagesAttempted` (`Infinity` is permitted)
+  - `domainRetry.passOverrides.fetchRetry.maxAttempts < 1`
+  - negative or non-finite `domainRetry.passOverrides.fetchRetry.baseBackoffMs`
+
 ## 0.13.1
 
 ### Patch Changes

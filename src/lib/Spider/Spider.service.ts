@@ -24,6 +24,7 @@ import {
   resolveUserAgent,
   type UserAgentStrategy,
   type ResolvedStopMode,
+  type DomainCompleteReason,
 } from '../Config/SpiderConfig.service.js';
 import { UrlDeduplicatorService } from '../UrlDeduplicator/UrlDeduplicator.service.js';
 import { ScraperService } from '../Scraper/Scraper.service.js';
@@ -38,6 +39,7 @@ import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js'
 import { classifyFetchError, type PageFetchError, type PageFetchErrorKind } from './Spider.types.js';
 import {
   DomainCompleteEvent,
+  DomainRetryScheduledEvent,
   DomainStartEvent,
   DomainStoppedEvent,
   PageScrapedEvent,
@@ -634,8 +636,52 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               )
             );
 
-            const results = yield* Effect.all(
-              resolvedEntries.map(({ url, originalUrl, metadata }) =>
+            // Multi-pass domain retry. Default config (`enabled: false`,
+            // `maxPasses: 1`) collapses to a single `Effect.all` over every
+            // resolved entry — identical to the pre-feature behaviour. When
+            // enabled, residual domains matching `retryOn` are re-run after
+            // `backoffMs`, sharing the same undici connection pool, URL
+            // deduplicator, robots cache, result channel, and event sink
+            // because every pass lives inside this `crawl()` invocation.
+            const domainRetry = yield* config.getDomainRetry();
+            type ResolvedEntry = (typeof resolvedEntries)[number];
+            type CrawlPassResult = {
+              readonly completed: boolean;
+              readonly pagesScraped: number;
+              readonly domain: string;
+              readonly completionSummary: Option.Option<{
+                readonly reason: DomainCompleteEvent['reason'];
+                readonly pagesAttempted: number;
+              }>;
+            };
+
+            const isRetryEligible = (
+              summary: Option.Option<{
+                readonly reason: DomainCompleteEvent['reason'];
+                readonly pagesAttempted: number;
+              }>
+            ): boolean => {
+              if (Option.isNone(summary)) return false;
+              const { reason, pagesAttempted: pa } = summary.value;
+              return (
+                domainRetry.retryOn.reasons.includes(reason) &&
+                pa <= domainRetry.retryOn.maxPagesAttempted
+              );
+            };
+
+            const runPass = (
+              entries: ReadonlyArray<ResolvedEntry>,
+              cycleIndex: number
+            ) => {
+              // Apply pass overrides only for retry cycles (>= 1). Pass 0
+              // always uses the base config so behaviour is identical when
+              // domainRetry is disabled.
+              const passConcurrency: number | 'unbounded' | 'inherit' =
+                // eslint-disable-next-line effect/no-undefined-use-option -- `passOverrides.concurrency` is an optional config field where absence means "use the base value"; the comparison is to a sentinel-absence value, not a value-absence to encode in Option
+                cycleIndex > 0 && domainRetry.passOverrides?.concurrency !== undefined
+                  ? domainRetry.passOverrides.concurrency
+                  : concurrency;
+              const passEffects = entries.map(({ url, originalUrl, metadata }) =>
                 self.crawlSingle(
                   url,
                   resultChannel,
@@ -643,11 +689,135 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   metadata,
                   restrictToStartingDomain,
                   uaCache,
-                  originalUrl
+                  originalUrl,
+                  cycleIndex
                 )
-              ),
-              { concurrency }
-            );
+              );
+              return Effect.all(passEffects, { concurrency: passConcurrency });
+            };
+
+            // When `domainRetry.enabled` is false (default), force a single
+            // pass regardless of `maxPasses`.
+            const effectiveMaxPasses = domainRetry.enabled
+              ? domainRetry.maxPasses
+              : 1;
+
+            // For retry cycles, `passOverrides.fetchRetry` is applied by
+            // installing a SpiderConfig layer for the duration of the pass.
+            // This is the cleanest way to keep `crawlSingle` honest about
+            // reading the active `getFetchRetry()` without threading a new
+            // arg through its signature.
+            const baseConfigOptions = yield* config.getOptions();
+            const runPassWithOverrides = (
+              entries: ReadonlyArray<ResolvedEntry>,
+              cycleIndex: number
+            ) => {
+              if (
+                cycleIndex === 0 ||
+                // eslint-disable-next-line effect/no-undefined-use-option -- optional config field; sentinel-absence comparison rather than Option-wrapped value
+                domainRetry.passOverrides?.fetchRetry === undefined
+              ) {
+                return runPass(entries, cycleIndex);
+              }
+              const overrideOptions = {
+                ...baseConfigOptions,
+                fetchRetry: domainRetry.passOverrides.fetchRetry,
+              };
+              return Effect.provide(
+                runPass(entries, cycleIndex),
+                SpiderConfig.Live(overrideOptions)
+              );
+            };
+
+            // State shape note: `residuals` and `previousReasons` are paired
+            // by index. `Effect.all` preserves input order, so we use the
+            // same index-pairing trick to correlate `passResults[i]` back to
+            // its source entry — far simpler (and correct) than a hostname
+            // keyed Map, which silently collapses sibling start URLs that
+            // share a hostname.
+            const initialState: {
+              cycle: number;
+              residuals: ReadonlyArray<ResolvedEntry>;
+              previousReasons: ReadonlyArray<DomainCompleteReason>;
+              accumulated: ReadonlyArray<CrawlPassResult>;
+            } = {
+              cycle: 0,
+              residuals: resolvedEntries,
+              previousReasons: [],
+              accumulated: [],
+            };
+
+            // Hostname extraction mirrors the same defensive shape used in
+            // `crawlSingle` (where it produces the `domain` field on
+            // `DomainCompleteEvent`). Used only to populate the `domain`
+            // field of `DomainRetryScheduledEvent`.
+            const domainOf = (rawUrl: string): string => {
+              // eslint-disable-next-line effect/no-try-catch-use-effect -- sync helper, defensive guard
+              try {
+                return new URL(rawUrl).hostname;
+              } catch {
+                return 'invalid-url';
+              }
+            };
+
+            const finalState = yield* Effect.iterate(initialState, {
+              while: (s) =>
+                s.residuals.length > 0 && s.cycle < effectiveMaxPasses,
+              body: (s) =>
+                Effect.gen(function* () {
+                  if (s.cycle > 0) {
+                    // Emit a DomainRetryScheduledEvent for every residual
+                    // BEFORE the backoff sleep so consumers can observe
+                    // the intended schedule.
+                    const now = yield* DateTime.now;
+                    const nowMs = DateTime.toEpochMillis(now);
+                    const nextPassAt = nowMs + domainRetry.backoffMs;
+                    yield* Effect.forEach(
+                      s.residuals,
+                      (entry, idx) =>
+                        events.emit(
+                          new DomainRetryScheduledEvent({
+                            domain: domainOf(entry.url),
+                            startUrl: entry.url,
+                            previousReason: s.previousReasons[idx],
+                            attempt: s.cycle,
+                            nextPassAt,
+                          })
+                        ),
+                      { discard: true }
+                    );
+                    yield* Effect.sleep(Duration.millis(domainRetry.backoffMs));
+                  }
+                  const passResults = yield* runPassWithOverrides(s.residuals, s.cycle);
+                  // Domains in this pass that match retryOn become the next
+                  // residual set. Index-pair the result with its source entry
+                  // and propagate the just-observed completion reason so the
+                  // next cycle's `DomainRetryScheduledEvent.previousReason`
+                  // reflects the most recent pass, not the oldest.
+                  const nextResiduals: ResolvedEntry[] = [];
+                  const nextPreviousReasons: DomainCompleteReason[] = [];
+                  for (let i = 0; i < passResults.length; i++) {
+                    const r = passResults[i];
+                    if (isRetryEligible(r.completionSummary)) {
+                      // eslint-disable-next-line effect/no-array-mutation-use-chunk -- local accumulator for residual entries; short-lived loop-local array
+                      nextResiduals.push(s.residuals[i]);
+                      // eslint-disable-next-line effect/no-array-mutation-use-chunk -- paired by index with nextResiduals; same lifetime
+                      nextPreviousReasons.push(
+                        Option.isSome(r.completionSummary)
+                          ? r.completionSummary.value.reason
+                          : 'all_fetches_failed'
+                      );
+                    }
+                  }
+                  return {
+                    cycle: s.cycle + 1,
+                    residuals: nextResiduals,
+                    previousReasons: nextPreviousReasons,
+                    accumulated: [...s.accumulated, ...passResults],
+                  };
+                }),
+            });
+            const results = finalState.accumulated;
 
             // Trigger drain by shutting down the channel before joining.
             // The acquireRelease finaliser will be a no-op second shutdown
@@ -657,11 +827,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // Wait for every offered result to drain through the sink.
             yield* Fiber.join(serialiserFiber);
 
-            // Emit spider lifecycle complete
+            // Emit spider lifecycle complete. `totalDomains` reflects the
+            // unique start-URL set the consumer asked for, not the number
+            // of pass invocations (`accumulated` can hold multiple entries
+            // per start URL when `domainRetry` runs retries). `totalPages`
+            // sums scraped pages across all passes — when retries recover
+            // pages on later passes, those scrapes are real work and count.
             yield* events.emit(
               new SpiderCompleteEvent({
                 details: {
-                  totalDomains: results.length,
+                  totalDomains: resolvedEntries.length,
                   totalPages: results.reduce(
                     (sum, r) => sum + (r.pagesScraped || 0),
                     0
@@ -695,7 +870,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           // so observability reports the URL the consumer actually requested,
           // not the post-probe winner. Defaults to `urlString` for backwards
           // compatibility when called outside `crawl()`.
-          originalStartUrl?: string
+          originalStartUrl?: string,
+          // Pass index for `DomainCompleteEvent.cycle`. `0` for the initial
+          // pass; incremented by the multi-pass retry loop in `crawl()`.
+          // Defaults to `0` so the public single-domain entry point keeps
+          // existing behaviour.
+          cycle: number = 0
         ) =>
           Effect.gen(function* () {
             const config = yield* SpiderConfig;
@@ -745,6 +925,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // a separate one-shot CAS for "exactly one DomainCompleteEvent".
             const domainCompleted = MutableRef.make(false);
             const domainCompleteEmitted = MutableRef.make(false);
+            // Snapshot of the DomainCompleteEvent's `reason` and `pagesAttempted`
+            // for whichever emission site fires first. The multi-pass retry
+            // loop in `crawl()` reads this to decide whether the domain is
+            // eligible for another pass. `Option.none` means the event was
+            // never emitted (e.g. fiber interrupted before the post-join
+            // emission block ran).
+            const completionSummary = MutableRef.make(
+              Option.none<{
+                readonly reason: DomainCompleteEvent['reason'];
+                readonly pagesAttempted: number;
+              }>()
+            );
 
             // Stop-signal infrastructure (used only when stopMode === 'interrupt')
             const stopMode: ResolvedStopMode = yield* config.getStopMode();
@@ -1929,6 +2121,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const now = yield* DateTime.now;
                   const gracefulMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(stopTime);
                   const failedMap = MutableRef.get(pagesFailed);
+                  MutableRef.set(
+                    completionSummary,
+                    Option.some({
+                      reason: 'interrupt_grace_exceeded' as const,
+                      pagesAttempted: MutableRef.get(pagesAttempted),
+                    })
+                  );
                   yield* events.emit(new DomainCompleteEvent({
                     domain,
                     startUrl: urlString,
@@ -1938,6 +2137,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     pagesFailed: Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count })),
                     reason: 'interrupt_grace_exceeded',
                     durationMs: DateTime.toEpochMillis(now) - domainStartMs,
+                    cycle,
                   }));
                   yield* events.emit(new DomainStoppedEvent({
                     domain,
@@ -2023,6 +2223,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     const failedMap = MutableRef.get(pagesFailed);
                     const pagesFailedArray = Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count }));
                     const completeTime = yield* DateTime.now;
+                    MutableRef.set(
+                      completionSummary,
+                      Option.some({
+                        reason: 'error' as const,
+                        pagesAttempted: MutableRef.get(pagesAttempted),
+                      })
+                    );
                     yield* events.emit(
                       new DomainCompleteEvent({
                         domain,
@@ -2034,6 +2241,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         reason: 'error',
                         durationMs:
                           DateTime.toEpochMillis(completeTime) - domainStartMs,
+                        cycle,
                       })
                     );
                   }
@@ -2107,6 +2315,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
             if (wasFirstToEmit) {
               const completeTime = yield* DateTime.now;
+              MutableRef.set(
+                completionSummary,
+                Option.some({
+                  reason: completionReason,
+                  pagesAttempted: totalAttempts,
+                })
+              );
               yield* events.emit(
                 new DomainCompleteEvent({
                   domain,
@@ -2118,6 +2333,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   reason: completionReason,
                   durationMs:
                     DateTime.toEpochMillis(completeTime) - domainStartMs,
+                  cycle,
                 })
               );
               // Emit DomainStoppedEvent when domain was cleanly interrupted
@@ -2136,6 +2352,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               completed: true,
               pagesScraped: finalPageCount,
               domain,
+              // Snapshot of the DomainCompleteEvent that was actually emitted
+              // (Option.none when the fiber unwound before any emission site
+              // fired). Consumed by the multi-pass retry loop in `crawl()`.
+              completionSummary: MutableRef.get(completionSummary),
             };
           }),
 

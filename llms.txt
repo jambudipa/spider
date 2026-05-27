@@ -101,7 +101,7 @@ program.pipe(
 Lifecycle and progress signals are emitted as a typed discriminated union:
 
 ```typescript
-// All twelve events are Data.TaggedClass instances (v0.6+).
+// All thirteen events are Data.TaggedClass instances (v0.6+).
 // Construct with `new EventClass({...})`, not plain object literals.
 type SpiderEvent =
   | SpiderStartEvent    // { _tag: 'SpiderStart';    details?: Record<string, unknown> }
@@ -109,15 +109,18 @@ type SpiderEvent =
   | SpiderErrorEvent    // { _tag: 'SpiderError';    details?: Record<string, unknown> }
   | DomainStartEvent    // { _tag: 'DomainStart';  domain; startUrl }
   | DomainCompleteEvent // { _tag: 'DomainComplete'; domain; startUrl; finalStartUrl; pagesScraped;
-                        //   pagesAttempted; pagesFailed: {kind,count}[]; reason; durationMs }
-                        //   reason now includes 'interrupted' | 'interrupt_grace_exceeded' — v0.10+
+                        //   pagesAttempted; pagesFailed: {kind,count}[]; reason; durationMs; cycle }
+                        //   reason includes 'interrupted' | 'interrupt_grace_exceeded' (v0.10+)
+                        //   cycle is additive, default 0 — v0.14+
   | PageScrapedEvent    // { _tag: 'PageScraped';   url; domain; pageNumber }
   | RobotsBlockedEvent  // { _tag: 'RobotsBlocked'; url; domain; disallowRule? }       — v0.7+
   | StartUrlChosenEvent // { _tag: 'StartUrlChosen'; domain; attempted: string[]; chosen }  — v0.9+
   | StartUrlRedirectedEvent // { _tag: 'StartUrlRedirected'; domain; from; to; chain }  — v0.9+
   | WorkerInterruptedEvent  // { _tag: 'WorkerInterrupted'; workerId; domain; url; reason } — v0.10+
   | DomainStoppedEvent      // { _tag: 'DomainStopped'; domain; reason; gracefulMs; forced } — v0.10+
-  | SpiderStoppedEvent;     // { _tag: 'SpiderStopped'; reason; totalDomains; totalPages; wallclockMs } — v0.10+
+  | SpiderStoppedEvent      // { _tag: 'SpiderStopped'; reason; totalDomains; totalPages; wallclockMs } — v0.10+
+  | DomainRetryScheduledEvent; // { _tag: 'DomainRetryScheduled'; domain; startUrl; previousReason;
+                               //   attempt; nextPassAt } — v0.14+ (emitted between domainRetry passes)
 ```
 
 Subscribe with a layer:
@@ -144,9 +147,9 @@ Top-level exports from `@jambudipa/spider`:
 
 - **Spider**: `SpiderService`, `CrawlResult`, `CrawlResultOk`, `CrawlResultError`, `CrawlTask`, `StartUrlEntry`, `SpiderLinkExtractionOptions`, `DataExtractionConfig`, `FieldExtractionConfig`, `SPIDER_DEFAULTS`
 - **Error types (result-level)**: `PageFetchError`, `PageFetchErrorKind`
-- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `StopMode`, `ResolvedStopMode`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `resolveUserAgent`
+- **Config**: `SpiderConfig`, `makeSpiderConfig`, `SpiderConfigOptions`, `SpiderConfigService`, `DomainEquivalenceConfig`, `FetchRetryConfig`, `RetryableErrorKind`, `CrossDomainRedirectConfig`, `UserAgentStrategy`, `FileExtensionFilters`, `TechnicalFilters`, `StopMode`, `ResolvedStopMode`, `DomainRetryConfig`, `DomainRetryPredicate`, `DomainRetryPassOverrides`, `DomainCompleteReason`, `buildFetchRetrySchedule`, `defaultDomainEquivalence`, `defaultFetchRetry`, `defaultCrossDomainRedirects`, `defaultDomainRetry`, `resolveUserAgent`
 - **HTTP adapter (v0.11+)**: `HttpAdapter`, `HttpAdapterRequest`, `HttpAdapterResponse`, `HttpAdapterError`, `HttpAdapterSelector`, `defaultUndiciAdapter`
-- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`, `WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`
+- **Events / Logging**: `SpiderEventSink`, `SpiderEventSinkNoop`, `SpiderEvent`, `SpiderEventSinkService`, `SpiderStartEvent`, `SpiderCompleteEvent`, `SpiderErrorEvent`, `DomainStartEvent`, `DomainCompleteEvent`, `PageScrapedEvent`, `RobotsBlockedEvent`, `StartUrlChosenEvent`, `StartUrlRedirectedEvent`, `WorkerInterruptedEvent`, `DomainStoppedEvent`, `SpiderStoppedEvent`, `DomainRetryScheduledEvent`
 - **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
 - **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`

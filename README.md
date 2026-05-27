@@ -385,6 +385,7 @@ See `src/examples/10-custom-logging.ts` for a complete example.
 |--------|------|-------------|
 | `domainEquivalence` | `DomainEquivalenceConfig` | `www.` handling, protocol strictness, subdomain matching |
 | `fetchRetry` | `FetchRetryConfig` | Retry policy: `maxAttempts`, `baseBackoffMs`, `retryOn` |
+| `domainRetry` | `DomainRetryConfig` | In-cycle domain-level retry: re-run residual domains after a backoff (v0.14+) |
 | `crossDomainRedirects` | `CrossDomainRedirectConfig` | Follow cross-domain redirects from start URLs |
 | `userAgentStrategy` | `UserAgentStrategy` | `static`, `rotating`, or `custom` user-agent selection |
 | `httpAdapter` | `HttpAdapter \| HttpAdapterSelector` | Pluggable HTTP fetcher; defaults to the built-in undici path (v0.11+) |
@@ -430,6 +431,61 @@ Effect.runPromise(
 ```
 
 > **Note on log volume.** The spider emits a debug-level `event: 'worker_heartbeat'` log record for every `reportWorkerHealth` call. With `'per-attempt'` mode under heavy concurrency this can add tens to hundreds of records per second. Default-level loggers filter these out; raise your `minimumLogLevel` to `Debug` only when actively diagnosing heartbeat behaviour.
+
+## In-cycle domain retry (v0.14+)
+
+`fetchRetry` retries an individual page-fetch within `crawlSingle`. When the start URL itself exhausts all retries during a transient burst — cold TLS handshakes, DNS pressure, a noisy neighbour spike — the spider fires `DomainCompleteEvent { reason: 'all_fetches_failed', pagesAttempted: 1 }` and never revisits that domain. Consumers cannot recover within the public API: `domain_complete` is terminal per cycle.
+
+`domainRetry` adds an opt-in second loop layer above `fetchRetry`. When enabled, `Spider.crawl()` runs the start-URL list as a multi-pass loop: pass 0 is the existing behaviour, residual domains matching the `retryOn` predicate are collected, the spider sleeps `backoffMs`, optional `passOverrides` are applied, and the residual set is re-run. Each pass emits its own `DomainCompleteEvent` (now carrying an additive `cycle` field) and a `DomainRetryScheduledEvent` fires between passes so consumers see the lifecycle.
+
+```typescript
+makeSpiderConfig({
+  fetchRetry: {
+    maxAttempts: 3,
+    baseBackoffMs: 1000,
+    retryOn: ['timeout', 'connection_refused', 'http_5xx', 'http_429'],
+  },
+  domainRetry: {
+    enabled: true,
+    maxPasses: 2,                  // 1 = pre-feature behaviour; 2 = pass 0 + one retry
+    backoffMs: 60_000,             // sleep between passes
+    retryOn: {
+      reasons: ['all_fetches_failed'],
+      maxPagesAttempted: 1,        // only retry domains that died on the start URL
+    },
+    passOverrides: {               // optional: apply to retry passes only
+      fetchRetry: { maxAttempts: 5, baseBackoffMs: 2000, retryOn: ['timeout', 'connection_refused', 'http_5xx', 'http_429'] },
+      // concurrency: 'unbounded',
+    },
+  },
+})
+```
+
+**Connection-pool and cache continuity.** Retry passes share the same undici connection pool (process-global), robots cache, result channel, and event sink because every pass lives inside the same `spider.crawl()` invocation. Sockets warmed during pass 0 are available to pass 1; there is no fresh spider instance, no fresh DNS lookup, and no fresh robots fetch. The URL deduplicator is per-pass (each pass gets a fresh `localDeduplicator`) — that is by design, so pass 1 will actually re-attempt the start URL that pass 0 failed.
+
+**Predicate match is conjunctive.** A domain is retried when `event.reason ∈ retryOn.reasons` AND `event.pagesAttempted ≤ retryOn.maxPagesAttempted`. The `pagesAttempted` bound is the gate that distinguishes a transient start-URL failure (the intended case) from a domain that scraped partially before structural failure (NOT the intended case).
+
+**`maxPages` is per-pass; `stopMode` is preserved.** Each pass is a fresh `crawlSingle` invocation with its own URL deduplicator, so `maxPages` is enforced per-pass — a retry pass gets the full budget, not the remainder from pass 0. `SpiderCompleteEvent.totalDomains` counts unique start URLs (not pass invocations); `totalPages` sums scraped pages across all passes since each scrape is real work. Fiber interruption during a retry pass unwinds via Effect's standard interruption, with `stopMode` semantics preserved.
+
+**Validation.** `makeSpiderConfig` rejects, at construction: `maxPasses < 1`, non-integer `maxPasses`, `enabled: true` with `maxPasses < 2` (silent no-op footgun), negative `backoffMs`, empty `retryOn.reasons`, NaN/negative `retryOn.maxPagesAttempted` (`Infinity` permitted), and bad `passOverrides.fetchRetry` (`maxAttempts < 1` or negative `baseBackoffMs`). Default config (`enabled: false`, `maxPasses: 1`) preserves pre-feature behaviour.
+
+**Observability.** Consume both events by switching on `event._tag`:
+
+```typescript
+const sink = Layer.succeed(SpiderEventSink, {
+  emit: (event) =>
+    Effect.sync(() => {
+      switch (event._tag) {
+        case 'DomainComplete':
+          if (event.cycle > 0) console.log(`retry succeeded for ${event.domain} (cycle ${event.cycle})`);
+          break;
+        case 'DomainRetryScheduled':
+          console.log(`scheduling retry for ${event.domain} at ${new Date(event.nextPassAt).toISOString()}`);
+          break;
+      }
+    }),
+});
+```
 
 ## Interrupt Mode (v0.10+)
 

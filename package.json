@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Effect-native web crawler for TypeScript — typed results, domain events, resumable crawls, configurable retry and user-agent strategy",
   "type": "module",
   "main": "./dist/index.js",

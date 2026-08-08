@@ -1415,6 +1415,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         workerId,
                         url: task.url,
                         allowed: robotsCheck.allowed,
+                        reason: robotsCheck.reason,
+                        unavailableCause: robotsCheck.unavailableCause,
                         crawlDelay: robotsCheck.crawlDelay,
                       })
                     );
@@ -1425,6 +1427,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           url: task.url,
                           domain,
                           disallowRule: robotsCheck.disallowRule,
+                          reason: robotsCheck.reason,
+                          unavailableCause: robotsCheck.unavailableCause,
                         })
                       );
                       // Mark worker as idle before continuing

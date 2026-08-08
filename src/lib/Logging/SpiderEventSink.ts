@@ -1,5 +1,6 @@
 import { Context, Data, Effect, Layer } from 'effect';
 import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
+import type { RobotsCheckReason } from '../Robots/Robots.service.js';
 
 /**
  * Spider lifecycle started.
@@ -121,7 +122,12 @@ export class PageScrapedEvent extends Data.TaggedClass('PageScraped')<{
 }> {}
 
 /**
- * A URL was blocked by robots.txt before any fetch was attempted.
+ * A URL was refused before any fetch was attempted, either because a published
+ * rule forbade it or because the rules could not be established at all.
+ *
+ * Read {@link RobotsBlockedEvent.reason} before concluding the target
+ * disallowed you: `robots-unavailable` means the origin never answered, which
+ * is a transport problem wearing a compliance refusal's clothes.
  *
  * @group Observability
  * @public
@@ -130,6 +136,10 @@ export class RobotsBlockedEvent extends Data.TaggedClass('RobotsBlocked')<{
   readonly url: string;
   readonly domain: string;
   readonly disallowRule?: string;
+  /** Why the URL was refused. */
+  readonly reason?: RobotsCheckReason;
+  /** What went wrong, when `reason` is `robots-unavailable`. */
+  readonly unavailableCause?: string;
 }> {}
 
 /**

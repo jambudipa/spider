@@ -113,7 +113,11 @@ type SpiderEvent =
                         //   reason includes 'interrupted' | 'interrupt_grace_exceeded' (v0.10+)
                         //   cycle is additive, default 0 — v0.14+
   | PageScrapedEvent    // { _tag: 'PageScraped';   url; domain; pageNumber }
-  | RobotsBlockedEvent  // { _tag: 'RobotsBlocked'; url; domain; disallowRule? }       — v0.7+
+  | RobotsBlockedEvent  // { _tag: 'RobotsBlocked'; url; domain; disallowRule?;
+                        //   reason?; unavailableCause? }                             — v0.7+
+                        //   reason/unavailableCause additive — v0.15+. `reason` is
+                        //   'disallowed-by-rule' | 'robots-unavailable': the second means
+                        //   robots.txt could not be read, NOT that the target refused you.
   | StartUrlChosenEvent // { _tag: 'StartUrlChosen'; domain; attempted: string[]; chosen }  — v0.9+
   | StartUrlRedirectedEvent // { _tag: 'StartUrlRedirected'; domain; from; to; chain }  — v0.9+
   | WorkerInterruptedEvent  // { _tag: 'WorkerInterrupted'; workerId; domain; url; reason } — v0.10+
@@ -153,7 +157,9 @@ Top-level exports from `@jambudipa/spider`:
 - **Scheduler**: `SpiderSchedulerService`, `SpiderStateKey`, `PriorityRequest`, `SpiderState`, `StatePersistence`
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
 - **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`
-- **Robots / Scraper / PageData**: `RobotsService`, `ScraperService`, `PageData`
+- **Interaction discovery (v0.15+)**: `InteractionDiscoveryService`, `InteractionDiscoveryServiceLayer`, `InteractionControl`, `InteractionSweepOptions`, `InteractionSweepResult`, `InteractionSweepError`, `RevealedRequest`, `SkippedControl`, `NoOracleDeclaredError`, `NoControlsDrivenError`, `NothingRevealedError`, `SweepNavigatedAwayError`
+- **Robots / Scraper / PageData**: `RobotsService`, `ScraperService`, `PageData`, `RobotsCheck`, `RobotsCheckReason`, `RobotsRule`, `RobotsRules`
+- **Browser engine**: `BrowserEngineService`, `BrowserEngineLive`, `BrowserEngineWithConfig`, `makeBrowserEngine`, `DEFAULT_BROWSER_ENGINE_CONFIG`, `withBrowser`, `BrowserEngineConfig`, `BrowserEngineServiceInterface`
 - **HTTP client**: `EnhancedHttpClient`, `CookieManager`, `HttpRequestOptions`, `HttpResponse`, `Session`
 - **Resumability**: `ResumabilityService`, `ResumabilityConfigs`, `FullStatePersistence`, `DeltaPersistence`, `HybridPersistence`, `StateDelta`, `FileStorageBackend`, `PostgresStorageBackend`, plus types
 - **URL dedup**: `UrlDeduplicatorService`, `IUrlDeduplicator`
@@ -167,6 +173,55 @@ Top-level exports from `@jambudipa/spider`:
 - Each domain has its own URL deduplicator, request queue, and rate limit window
 - Robots.txt is checked per request unless `ignoreRobotsTxt` is set
 - The `sink` receives results as they arrive; the spider waits for the sink to finish processing all results before returning
+
+## Robots.txt: availability is not permission (v0.15+)
+
+`RobotsService.checkUrl(url)` returns `{ allowed, reason, crawlDelay?, disallowRule?, unavailableCause? }`.
+
+| `/robots.txt` response | Meaning | `reason` | `allowed` |
+|---|---|---|---|
+| 2xx | rules published | `allowed-by-rule` / `disallowed-by-rule` | per rules |
+| 404 / 410 | no rules published | `no-rules-published` | `true` |
+| 5xx, timeout, connection failure, body > 512 KiB | nothing is known | `robots-unavailable` | `false` |
+
+Before v0.15 any unreadable `robots.txt` was treated as permission. It now fails
+closed, and `RobotsBlockedEvent.reason` tells the two apart — do not report a
+`robots-unavailable` refusal as the target disallowing the crawl. Escape hatch:
+`ignoreRobotsTxt: true`.
+
+Parsing: `Allow` and `Disallow` resolve by longest-match precedence, `Allow` wins
+an equal-length tie, an empty `Disallow:` permits everything, `*` and `$`
+wildcards are supported, patterns match path **and** query, consecutive
+`User-agent` lines form one group, inline `#` comments are stripped. Fetched with
+`credentials: 'omit'`.
+
+## Interaction-driven discovery (v0.15+)
+
+`InteractionDiscoveryService.sweep(page, controls, options?)` is a second
+extraction source alongside `LinkExtractorService`, for client-rendered targets
+whose asset identities are not in the delivered markup. It takes a Playwright
+`Page`, drives each declared in-place control with a network ledger attached, and
+returns the requests that resulted.
+
+```typescript
+sweep(page, [{ id: 'tab-docs', label: 'Documents', selector: '#tab-docs', settleMs?: 1500 }], {
+  include?: (r: RevealedRequest) => boolean,  // default: everything but the document
+  settleMs?: 1500,                            // default per-control settle window
+  baselineMs?: 0,                             // observe before driving anything
+})
+// → Effect<{ requests: RevealedRequest[]; driven: {id,label}[]; skipped: {id,label,reason}[] },
+//           InteractionSweepError>
+```
+
+- `RevealedRequest` = `{ url, method, resourceType, revealedBy?: { id, label } }`.
+  `revealedBy` is **absent** for anything seen outside a control's window — markup
+  traffic is never credited to whichever control ran last.
+- Asset-agnostic: the service does not know or care what the bytes are. Filter
+  with `include`; choose a retrieval mechanism yourself from the identity's class.
+- Refuses rather than passing vacuously — `NoOracleDeclaredError` (nothing
+  declared), `NoControlsDrivenError` (nothing could be driven),
+  `NothingRevealedError` (drove controls, saw nothing), `SweepNavigatedAwayError`
+  (a control left the page being measured).
 
 ## Common configuration
 

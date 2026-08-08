@@ -263,6 +263,81 @@ const program = Effect.gen(function* () {
 );
 ```
 
+### Interaction-Driven Discovery (v0.15+)
+
+A client-rendered application does not put its asset identities in the delivered
+markup — they are fetched only once a control is driven. A crawler that reads
+the DOM finds nothing and reports success.
+
+`InteractionDiscoveryService` is the second extraction source alongside
+`LinkExtractorService`: rather than reading what is there, it operates the page
+and records what results. Give it a Playwright `Page` and the controls you want
+driven, and it returns the requests they revealed, each naming the control that
+revealed it.
+
+```typescript
+import { InteractionDiscoveryService } from '@jambudipa/spider';
+
+const program = Effect.gen(function* () {
+  const discovery = yield* InteractionDiscoveryService;
+
+  const result = yield* discovery.sweep(
+    page,
+    [
+      { id: 'tab-docs', label: 'Documents', selector: '#tab-docs' },
+      { id: 'gallery-1', label: 'Gallery, first image', selector: '.thumb:first-child' },
+    ],
+    {
+      // Asset-agnostic by design: narrowing to a class of interest is yours.
+      include: (r) => r.resourceType === 'xhr' || r.resourceType === 'media',
+      settleMs: 1500,
+    }
+  );
+
+  for (const request of result.requests) {
+    // `revealedBy.label` is what turns an opaque GUID into a nameable thing.
+    console.log(request.url, request.revealedBy?.label ?? '(in markup)');
+  }
+}).pipe(Effect.provide(InteractionDiscoveryService.Default));
+```
+
+Three rules it holds to:
+
+- **In-place controls only.** A control that navigates away loses the page being
+  measured, and the sweep fails with `SweepNavigatedAwayError` rather than
+  reporting identities that belong to a different document.
+- **Absent attribution stays absent.** A request seen outside any control's
+  window — an `<img>` or `<video src>` in the delivered markup — carries no
+  `revealedBy`, rather than being credited to whichever control ran last. Set
+  `baselineMs` and navigate with a `commit` wait state to capture those.
+- **No vacuous passes.** A sweep that reveals nothing is a failure, not an empty
+  success, and the three ways it can be empty are kept apart:
+  `NoOracleDeclaredError` (nothing was declared), `NoControlsDrivenError`
+  (nothing could be driven), `NothingRevealedError` (drove controls, saw
+  nothing).
+
+### Robots.txt: availability is not permission (v0.15+)
+
+`RobotsService` distinguishes what an origin *declared* from what it *failed to
+tell you*:
+
+| `/robots.txt` response | Meaning | Outcome |
+|---|---|---|
+| 2xx | rules published | parsed and obeyed |
+| 404 / 410 | no rules published | allowed |
+| 5xx, timeout, connection failure, body > 512 KiB | nothing is known | refused |
+
+Every verdict carries a `reason` — `no-rules-published`, `allowed-by-rule`,
+`disallowed-by-rule`, or `robots-unavailable` — and `RobotsBlockedEvent` carries
+it too, so a transport failure is never mistaken for the target disallowing you.
+Set `ignoreRobotsTxt: true` for an origin you control that cannot serve
+`/robots.txt` reliably.
+
+Rules resolve by longest-match precedence with `Allow` beating an equal-length
+`Disallow`; `*` and `$` wildcards are supported; patterns match path and query.
+`robots.txt` is always fetched without credentials, because it is a public
+declaration and asking as a signed-in user asks a different question.
+
 ## API Reference
 
 ### Core Services
@@ -270,6 +345,7 @@ const program = Effect.gen(function* () {
 - **SpiderService**: Main spider service for web crawling
 - **SpiderSchedulerService**: Manages crawling queue and prioritisation
 - **LinkExtractorService**: Extracts and filters links from HTML content
+- **InteractionDiscoveryService**: Discovers identities that only exist after an interaction
 - **ResumabilityService**: Handles state persistence and resumption
 - **ScraperService**: Low-level HTTP scraping functionality
 

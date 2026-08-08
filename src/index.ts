@@ -251,8 +251,31 @@ export {
   BrowserEngineService,
   BrowserEngineLive,
   BrowserEngineWithConfig,
+  DEFAULT_BROWSER_ENGINE_CONFIG,
+  makeBrowserEngine,
   withBrowser,
 } from './lib/BrowserEngine/BrowserEngine.service.js';
+
+// Export Interaction Discovery — the second extraction source alongside
+// LinkExtractorService. Where LinkExtractor reads identities out of delivered
+// markup, this one drives declared controls and records what they reveal.
+export type {
+  InteractionControl,
+  InteractionDiscoveryServiceInterface,
+  InteractionSweepError,
+  InteractionSweepOptions,
+  InteractionSweepResult,
+  RevealedRequest,
+  SkippedControl,
+} from './lib/InteractionDiscovery/InteractionDiscovery.service.js';
+export {
+  InteractionDiscoveryService,
+  InteractionDiscoveryServiceLayer,
+  NoControlsDrivenError,
+  NoOracleDeclaredError,
+  NothingRevealedError,
+  SweepNavigatedAwayError,
+} from './lib/InteractionDiscovery/InteractionDiscovery.service.js';
 
 // Export Web Scraping Engine
 export type {

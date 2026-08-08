@@ -3,7 +3,7 @@
  * Provides browser automation capabilities using Playwright with Effect patterns
  */
 
-import { Effect, Ref, Option } from 'effect';
+import { Effect, Layer, Ref, Option } from 'effect';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { BrowserError, PageError } from '../errors/effect-errors.js';
 
@@ -87,50 +87,64 @@ export interface BrowserEngineServiceInterface {
 }
 
 /**
- * Browser Engine Service implementation using Effect patterns
+ * Configuration applied when the caller supplies none.
+ *
+ * @group Configuration
+ * @public
  */
-export class BrowserEngineService extends Effect.Service<BrowserEngineService>()(
-  '@jambudipa.io/BrowserEngine',
-  {
-    effect: Effect.gen(function* () {
+export const DEFAULT_BROWSER_ENGINE_CONFIG: Required<BrowserEngineConfig> = {
+  headless: true,
+  timeout: 30000,
+  viewport: { width: 1920, height: 1080 },
+  userAgent: 'Mozilla/5.0 (compatible; Spider/1.0)',
+  locale: 'en-GB'
+};
+
+/**
+ * Builds a browser engine bound to `config`.
+ *
+ * Exported so a caller can construct an engine with settings that actually
+ * take effect; {@link BrowserEngineWithConfig} wraps this in a Layer.
+ *
+ * @group Services
+ * @public
+ */
+export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
+  Effect.gen(function* () {
+      const resolved: Required<BrowserEngineConfig> = {
+        ...DEFAULT_BROWSER_ENGINE_CONFIG,
+        ...config
+      };
+
       // Browser state management
       const browserRef = yield* Ref.make<Option.Option<Browser>>(Option.none());
       const contextRef = yield* Ref.make<Option.Option<BrowserContext>>(Option.none());
       const pageRef = yield* Ref.make<Option.Option<Page>>(Option.none());
-      const configRef = yield* Ref.make<BrowserEngineConfig>({
-        headless: true,
-        timeout: 30000,
-        viewport: { width: 1920, height: 1080 },
-        userAgent: 'Mozilla/5.0 (compatible; Spider/1.0)',
-        locale: 'en-GB'
-      });
 
       /**
        * Get or create browser instance
        */
       const ensureBrowser = () => Effect.gen(function* () {
         const browserOpt = yield* Ref.get(browserRef);
-        
+
         if (Option.isSome(browserOpt)) {
           return browserOpt.value;
         }
-        
+
         // Lazy import playwright to avoid issues if not installed
         const { chromium } = yield* Effect.tryPromise({
           try: () => import('playwright'),
           catch: () => BrowserError.launchFailed('Playwright not installed')
         });
-        
-        const config = yield* Ref.get(configRef);
-        
+
         const browser = yield* Effect.tryPromise({
           try: () => chromium.launch({
-            headless: config.headless,
-            timeout: config.timeout
+            headless: resolved.headless,
+            timeout: resolved.timeout
           }),
           catch: (error) => BrowserError.launchFailed(error)
         });
-        
+
         yield* Ref.set(browserRef, Option.some(browser));
         return browser;
       });
@@ -140,19 +154,18 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
        */
       const ensureContext = () => Effect.gen(function* () {
         const contextOpt = yield* Ref.get(contextRef);
-        
+
         if (Option.isSome(contextOpt)) {
           return contextOpt.value;
         }
-        
+
         const browser = yield* ensureBrowser();
-        const config = yield* Ref.get(configRef);
-        
+
         const context = yield* Effect.tryPromise({
           try: () => browser.newContext({
-            viewport: config.viewport,
-            userAgent: config.userAgent,
-            locale: config.locale
+            viewport: resolved.viewport,
+            userAgent: resolved.userAgent,
+            locale: resolved.locale
           }),
           catch: (error) => new BrowserError({
             operation: 'newContext',
@@ -218,14 +231,13 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
           yield* Effect.logDebug(`Navigated to ${url}`);
         }),
 
-        waitForSelector: (selector: string, timeout?: number) => 
+        waitForSelector: (selector: string, timeout?: number) =>
           Effect.gen(function* () {
             const page = yield* getCurrentPage();
-            const config = yield* Ref.get(configRef);
-            
+
             yield* Effect.tryPromise({
               try: () => page.waitForSelector(selector, {
-                timeout: timeout ?? config.timeout
+                timeout: timeout ?? resolved.timeout
               }),
               catch: (error) => new PageError({
                 url: page.url(),
@@ -383,7 +395,15 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
           yield* Effect.log('Browser engine closed');
         })
       };
-    })
+  });
+
+/**
+ * Browser Engine Service implementation using Effect patterns
+ */
+export class BrowserEngineService extends Effect.Service<BrowserEngineService>()(
+  '@jambudipa.io/BrowserEngine',
+  {
+    effect: makeBrowserEngine()
   }
 ) {}
 
@@ -393,10 +413,18 @@ export class BrowserEngineService extends Effect.Service<BrowserEngineService>()
 export const BrowserEngineLive = BrowserEngineService.Default;
 
 /**
- * Create BrowserEngine with custom configuration
+ * Create BrowserEngine with custom configuration.
+ *
+ * The supplied config is applied to the launched browser and its context —
+ * pass `{ headless: false }` and you get a headed browser.
  */
-export const BrowserEngineWithConfig = (_config: BrowserEngineConfig) =>
-  BrowserEngineService.Default;
+export const BrowserEngineWithConfig = (config: BrowserEngineConfig) =>
+  Layer.effect(
+    BrowserEngineService,
+    Effect.map(makeBrowserEngine(config), (engine) =>
+      BrowserEngineService.make(engine)
+    )
+  );
 
 /**
  * Helper to run browser operations with automatic cleanup

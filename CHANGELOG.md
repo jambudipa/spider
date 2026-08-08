@@ -1,5 +1,45 @@
 # @jambudipa/spider
 
+## 0.15.0
+
+### Minor Changes
+
+- Robots oracle distinguishes "no rules published" from "rules unknown", and adds interaction-driven discovery.
+
+  **Robots (behaviour change).** `RobotsService.checkUrl` previously allowed a URL
+  whenever `/robots.txt` could not be read, for any reason. It now separates the
+  two facts:
+  - HTTP 404/410 — the origin published no rules — **allowed**
+  - 5xx, timeout, connection failure, or a body over 512 KiB — nothing is known —
+    **refused**
+
+  Every verdict now carries a `reason` (`no-rules-published`, `allowed-by-rule`,
+  `disallowed-by-rule`, `robots-unavailable`) and `RobotsBlockedEvent` carries it
+  too, so a transport failure no longer reads like the target disallowed you. Set
+  `ignoreRobotsTxt: true` if an origin you control cannot serve `/robots.txt`
+  reliably.
+
+  Parsing is also corrected: `Allow` is honoured (it was previously ignored
+  entirely), rules resolve by longest-match precedence with `Allow` winning an
+  equal-length tie, the end-anchor wildcard is supported, patterns match against
+  path _and_ query, consecutive `User-agent` lines form one group, inline
+  comments are stripped, and robots is fetched with `credentials: 'omit'`.
+
+  **New: `InteractionDiscoveryService`.** A second extraction source alongside
+  `LinkExtractorService`. Where the link extractor reads identities out of
+  delivered markup, this one drives declared in-place controls — tabs,
+  disclosures, lightboxes, players — with a network ledger attached, and returns
+  the requests that resulted, each naming the control that revealed it by stable
+  id and human-readable label. Requests seen outside a control's window stay
+  unattributed. It refuses rather than passing vacuously, with distinct errors for
+  "no controls declared", "no control could be driven", "drove controls and
+  revealed nothing", and "a control navigated away".
+
+  **Fixed: `BrowserEngineWithConfig` ignored its argument** and always returned the
+  default layer, so `{ headless: false }` silently gave you a headless browser. It
+  now builds an engine bound to the supplied config. `makeBrowserEngine` and
+  `DEFAULT_BROWSER_ENGINE_CONFIG` are exported for direct use.
+
 ## 0.14.0
 
 ### Minor Changes

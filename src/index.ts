@@ -93,7 +93,10 @@ export type {
   StartUrlEntry,
 } from './lib/Spider/Spider.service.js';
 export { CrawlResult } from './lib/Spider/Spider.service.js';
-export type { PageFetchErrorKind, PageFetchError } from './lib/Spider/Spider.types.js';
+export type {
+  PageFetchErrorKind,
+  PageFetchError,
+} from './lib/Spider/Spider.types.js';
 
 // Export Resumability types and services
 export type {
@@ -153,7 +156,10 @@ export {
   isNetworkError,
   isBrowserError,
 } from './lib/errors/effect-errors.js';
-export type { SpiderError, AllSpiderErrors } from './lib/errors/effect-errors.js';
+export type {
+  SpiderError,
+  AllSpiderErrors,
+} from './lib/errors/effect-errors.js';
 
 // Export observability types and service
 //
@@ -275,7 +281,25 @@ export {
   NoOracleDeclaredError,
   NothingRevealedError,
   SweepNavigatedAwayError,
+  SweepNavigationFailedError,
 } from './lib/InteractionDiscovery/InteractionDiscovery.service.js';
+
+// Export Session Validation — proves a session by declared evidence rather
+// than by redirect, which reads every route of a client-rendered application
+// as public.
+export type {
+  ContextEvidence,
+  SessionValidationReason,
+  SessionValidationRequest,
+  SessionValidationResult,
+  SessionValidationServiceInterface,
+  SignedInMarker,
+} from './lib/SessionValidation/SessionValidation.service.js';
+export {
+  SessionValidationService,
+  SessionValidationServiceLayer,
+  ValidationRouteUnreachableError,
+} from './lib/SessionValidation/SessionValidation.service.js';
 
 // Export Web Scraping Engine
 export type {

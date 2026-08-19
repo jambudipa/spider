@@ -105,11 +105,11 @@ const DOCS: InteractionControl = {
 
 describe('InteractionDiscoveryService', () => {
   it('attributes a revealed identity to the control that revealed it', async () => {
-    // `commit` so the ledger is attached before the page's own subresources
-    // load, putting them in the baseline window.
-    await page.goto(origin, { waitUntil: 'commit' });
-
-    const result = await Effect.runPromise(sweep([DOCS], { baselineMs: 600 }));
+    // The sweep does its own navigation, so the ledger is attached before the
+    // page's subresources load and they land in the baseline window.
+    const result = await Effect.runPromise(
+      sweep([DOCS], { navigateTo: origin, baselineMs: 600 })
+    );
 
     const revealed = result.requests.find((r) =>
       r.url.includes('/api/documents')
@@ -123,9 +123,9 @@ describe('InteractionDiscoveryService', () => {
   });
 
   it('leaves markup traffic unattributed', async () => {
-    await page.goto(origin, { waitUntil: 'commit' });
-
-    const result = await Effect.runPromise(sweep([DOCS], { baselineMs: 600 }));
+    const result = await Effect.runPromise(
+      sweep([DOCS], { navigateTo: origin, baselineMs: 600 })
+    );
 
     const pixel = result.requests.find((r) => r.url.includes('/pixel.gif'));
     expect(pixel).toBeDefined();

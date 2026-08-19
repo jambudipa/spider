@@ -1,5 +1,47 @@
 # @jambudipa/spider
 
+## 0.15.1
+
+### Patch Changes
+
+- New: `SessionValidationService` — prove a session by declared evidence, not by redirect.
+
+  The redirect rule asks _"did an anonymous visit get redirected away?"_. A
+  client-rendered application answers 200 at the same URL for everyone and draws
+  its sign-in prompt in JavaScript, so that test reads every route — including
+  `/my-account` and `/orders` — as public. That is the majority behaviour for
+  single-page applications, not an edge case.
+
+  `validate(sessionPage, anonymousPage, request)` decides by comparison instead.
+  The caller **declares** what signed-in looks like — a `text` or `selector`
+  marker on a validation route — and the verdict rests on evidence from both
+  contexts: the session must see the marker, and an anonymous context must not.
+  - The marker is never inferred. A guessed marker silently validates the wrong
+    thing, so a marker both contexts can see is refused as
+    `marker-not-discriminating` rather than passing.
+  - The marker is read after a settle window (default 1500 ms). A client-rendered
+    page has an empty body at navigation time, and reading immediately reports
+    every marker absent and calls every valid session rejected.
+  - Text matches the rendered body, not the markup, so a string inside a `<script>`
+    does not count.
+  - With no marker declared, the redirect rule remains as the fallback — it is
+    right for a server-rendered target — with `anonymous-redirected-away`,
+    `session-redirected-away`, and `no-protection-observed` kept apart.
+  - Every result carries the evidence behind it: `finalUrl` and `markerSeen` for
+    each context.
+  - `ValidationRouteUnreachableError` names the context, the route, and the
+    underlying cause, so a local failure never reads as a target problem.
+
+  **Fixed: `InteractionDiscoveryService` could not observe in-markup identities.**
+  The ledger was attached only after the caller had navigated, so a subresource
+  requested while the document parsed — an ordinary `<img src>` or `<video src>` —
+  was gone before the sweep could see it. Navigating with a `commit` wait state,
+  as the documentation advised, does not close that window. `sweep` now accepts
+  `navigateTo`, and navigates as its first act with the ledger already attached,
+  so those identities are recorded and stay unattributed. A navigation that fails
+  reports `SweepNavigationFailedError` with its own cause, rather than surfacing
+  as "revealed nothing".
+
 ## 0.15.0
 
 ### Minor Changes

@@ -115,12 +115,27 @@ export interface InteractionSweepOptions {
    * How long to observe before driving anything, in milliseconds.
    *
    * Traffic seen in this window belongs to the delivered page rather than to
-   * any control, and is recorded with no `revealedBy`. Navigate with a
-   * `commit` wait state if you want in-markup identities to land here.
+   * any control, and is recorded with no `revealedBy`. Pair it with
+   * {@link navigateTo}: an identity requested while the delivered markup is
+   * parsed is gone before a ledger attached after navigation can see it.
    *
    * @default 0
    */
   readonly baselineMs?: number;
+
+  /**
+   * Navigate here as the first act of the sweep, with the ledger already
+   * attached.
+   *
+   * A caller that navigates first and sweeps second cannot observe the
+   * identities in the delivered markup at all: the browser requests them while
+   * the document parses, which is before the ledger exists. Navigating from
+   * inside the sweep closes that window, so an ordinary `<img src>` or
+   * `<video src>` is recorded — unattributed, as it should be.
+   *
+   * When absent, the sweep measures whatever page it was handed.
+   */
+  readonly navigateTo?: string;
 }
 
 /**
@@ -229,6 +244,32 @@ export class SweepNavigatedAwayError extends Data.TaggedError(
 }
 
 /**
+ * The sweep's own navigation failed, so there was never a page to measure.
+ *
+ * Carries its own cause rather than the generic refusal: a local failure that
+ * reports as "revealed nothing" reads like a target problem when it is not.
+ *
+ * @group Errors
+ * @public
+ */
+export class SweepNavigationFailedError extends Data.TaggedError(
+  'SweepNavigationFailedError'
+)<{
+  readonly message: string;
+  readonly url: string;
+  readonly cause: string;
+}> {
+  static create(url: string, cause: unknown): SweepNavigationFailedError {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return new SweepNavigationFailedError({
+      message: `The sweep could not navigate to ${url}: ${detail}`,
+      url,
+      cause: detail,
+    });
+  }
+}
+
+/**
  * Every way a sweep can refuse.
  *
  * @group Errors
@@ -238,7 +279,8 @@ export type InteractionSweepError =
   | NoOracleDeclaredError
   | NoControlsDrivenError
   | NothingRevealedError
-  | SweepNavigatedAwayError;
+  | SweepNavigatedAwayError
+  | SweepNavigationFailedError;
 
 /**
  * Service interface for interaction-driven discovery.
@@ -307,10 +349,14 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
             return yield* Effect.fail(NoOracleDeclaredError.create());
           }
 
-          const startUrl = page.url();
+          // Reassigned when the sweep does its own navigation, so the
+          // request listener and the navigated-away check both read the page
+          // actually under measurement.
+          let startUrl = page.url();
           const defaultSettleMs = options?.settleMs ?? DEFAULT_SETTLE_MS;
           const include =
-            options?.include ?? ((r: RevealedRequest) => r.resourceType !== 'document');
+            options?.include ??
+            ((r: RevealedRequest) => r.resourceType !== 'document');
 
           const seen = MutableHashSet.empty<string>();
           const observed: RevealedRequest[] = [];
@@ -348,6 +394,26 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
             }),
             () =>
               Effect.gen(function* () {
+                // Navigate with the ledger already attached, so identities
+                // requested while the markup parses are observed.
+                yield* Option.fromNullable(options?.navigateTo).pipe(
+                  Option.match({
+                    onNone: () => Effect.void,
+                    onSome: (url) =>
+                      Effect.tryPromise({
+                        try: () => page.goto(url, { waitUntil: 'commit' }),
+                        catch: (error) =>
+                          SweepNavigationFailedError.create(url, error),
+                      }).pipe(
+                        Effect.andThen(
+                          Effect.sync(() => {
+                            startUrl = page.url();
+                          })
+                        )
+                      ),
+                  })
+                );
+
                 // Anything arriving before the first control is the page's
                 // own traffic, and is recorded with no attribution.
                 const baselineMs = options?.baselineMs ?? 0;
@@ -413,7 +479,9 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
                 }
 
                 if (observed.length === 0) {
-                  return yield* Effect.fail(NothingRevealedError.create(driven));
+                  return yield* Effect.fail(
+                    NothingRevealedError.create(driven)
+                  );
                 }
 
                 return { requests: observed, driven, skipped };

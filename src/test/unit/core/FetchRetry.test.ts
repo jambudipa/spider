@@ -117,11 +117,10 @@ describe('Fetch retry filter', () => {
     expect(getCalls()).toBe(1);
   });
 
-  it('fires the onAttempt hook once per failure that the schedule receives', async () => {
-    // Schedule.tapInput fires whenever the schedule receives an input —
-    // i.e. once per failed attempt during Effect.retry. With maxAttempts: 3
-    // and a permanently failing effect, all 3 attempts feed input into
-    // the schedule, so the hook fires 3 times.
+  it('fires the onAttempt hook once per retry that the schedule permits', async () => {
+    // In Effect v4, Schedule.tap runs after the schedule permits another
+    // retry. With maxAttempts: 3 and a permanently failing effect, only the
+    // first two failures start retries. The terminal failure does not tap.
     const { eff } = failingEffect(Number.POSITIVE_INFINITY);
     const taps = MutableRef.make(0);
     const onAttempt = Effect.sync(() => {
@@ -133,7 +132,7 @@ describe('Fetch retry filter', () => {
     );
     await Effect.runPromiseExit(eff.pipe(Effect.retry(schedule)));
 
-    expect(MutableRef.get(taps)).toBe(3);
+    expect(MutableRef.get(taps)).toBe(2);
   });
 
   it('fires the onAttempt hook only on failures (success short-circuits the schedule)', async () => {
@@ -154,9 +153,9 @@ describe('Fetch retry filter', () => {
     expect(MutableRef.get(taps)).toBe(2);
   });
 
-  it('fires the onAttempt hook once when maxAttempts === 1 and the single attempt fails', async () => {
-    // Even with no retries permitted, the schedule still receives the
-    // single failure input before deciding "no more retries".
+  it('does not fire the onAttempt hook when maxAttempts === 1', async () => {
+    // The single failed attempt has no permitted retry, so Schedule.tap
+    // does not run the hook.
     const { eff } = failingEffect(Number.POSITIVE_INFINITY);
     const taps = MutableRef.make(0);
     const onAttempt = Effect.sync(() => {
@@ -168,6 +167,6 @@ describe('Fetch retry filter', () => {
     );
     await Effect.runPromiseExit(eff.pipe(Effect.retry(schedule)));
 
-    expect(MutableRef.get(taps)).toBe(1);
+    expect(MutableRef.get(taps)).toBe(0);
   });
 });

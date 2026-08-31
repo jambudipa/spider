@@ -70,7 +70,7 @@ export const SchemaUtils = {
    * );
    * ```
    */
-  encode: <A, I>(schema: Schema.Schema<A, I>, value: A) =>
+  encode: <A, I>(schema: Schema.Codec<A, I>, value: A) =>
     Effect.try({
       try: () => Schema.encodeSync(schema)(value),
       catch: (cause: unknown) => new SchemaEncodeError({
@@ -91,7 +91,7 @@ export const SchemaUtils = {
    * );
    * ```
    */
-  decode: <A, I>(schema: Schema.Schema<A, I>, input: I) =>
+  decode: <A, I>(schema: Schema.Codec<A, I>, input: I) =>
     Effect.try({
       try: () => Schema.decodeSync(schema)(input),
       catch: (cause: unknown) => new SchemaDecodeError({
@@ -112,7 +112,7 @@ export const SchemaUtils = {
    * );
    * ```
    */
-  decodeUnknown: <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+  decodeUnknown: <A, I>(schema: Schema.Codec<A, I>, input: unknown) =>
     Effect.try({
       try: () => Schema.decodeUnknownSync(schema)(input),
       catch: (cause: unknown) => {
@@ -137,7 +137,7 @@ export const SchemaUtils = {
    * // json: '{"name":"Alice","age":30}'
    * ```
    */
-  encodeToJson: <A, I>(schema: Schema.Schema<A, I>, value: A, space?: number) =>
+  encodeToJson: <A, I>(schema: Schema.Codec<A, I>, value: A, space?: number) =>
     Effect.gen(function* () {
       const encoded = yield* SchemaUtils.encode(schema, value);
       return yield* JsonUtils.stringify(encoded, space);
@@ -154,7 +154,7 @@ export const SchemaUtils = {
    * );
    * ```
    */
-  decodeFromJson: <A, I>(schema: Schema.Schema<A, I>, json: string) =>
+  decodeFromJson: <A, I>(schema: Schema.Codec<A, I>, json: string) =>
     Effect.gen(function* () {
       const parsed = yield* JsonUtils.parseUnknown(json);
       return yield* SchemaUtils.decodeUnknown(schema, parsed);
@@ -172,10 +172,10 @@ export const SchemaUtils = {
    * // isValid: true
    * ```
    */
-  validate: <A, I>(schema: Schema.Schema<A, I>, value: unknown) =>
+  validate: <A, I>(schema: Schema.Codec<A, I>, value: unknown) =>
     SchemaUtils.decodeUnknown(schema, value).pipe(
       Effect.map(() => true),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**
@@ -194,14 +194,14 @@ export const SchemaUtils = {
    * }
    * ```
    */
-  validateWithErrors: <A, I>(schema: Schema.Schema<A, I>, value: unknown) =>
+  validateWithErrors: <A, I>(schema: Schema.Codec<A, I>, value: unknown) =>
     SchemaUtils.decodeUnknown(schema, value).pipe(
       Effect.map(data => ({
         success: true as const,
         data: Option.some(data),
         errors: Option.none<ReadonlyArray<unknown>>()
       })),
-      Effect.catchAll((error) => {
+      Effect.catch((error) => {
         return Effect.succeed({
           success: false as const,
           data: Option.none<A>(),
@@ -227,12 +227,12 @@ export const SchemaUtils = {
    * ```
    */
   parseOrDefault: <A, I>(
-    schema: Schema.Schema<A, I>,
+    schema: Schema.Codec<A, I>,
     input: unknown,
     defaultValue: A
   ) =>
     SchemaUtils.decodeUnknown(schema, input).pipe(
-      Effect.catchAll(() => Effect.succeed(defaultValue))
+      Effect.catch(() => Effect.succeed(defaultValue))
     ),
 
   /**
@@ -249,10 +249,10 @@ export const SchemaUtils = {
    * }
    * ```
    */
-  tryParse: <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+  tryParse: <A, I>(schema: Schema.Codec<A, I>, input: unknown) =>
     SchemaUtils.decodeUnknown(schema, input).pipe(
       Effect.map(Option.some),
-      Effect.catchAll(() => Effect.succeed(Option.none()))
+      Effect.catch(() => Effect.succeed(Option.none()))
     ),
 
   /**
@@ -269,8 +269,8 @@ export const SchemaUtils = {
    * ```
    */
   transform: <A, I, B, J>(
-    fromSchema: Schema.Schema<A, I>,
-    toSchema: Schema.Schema<B, J>,
+    fromSchema: Schema.Codec<A, I>,
+    toSchema: Schema.Codec<B, J>,
     value: A
   ) =>
     Effect.gen(function* () {
@@ -311,7 +311,7 @@ export const SchemaUtils = {
    * // user: User | undefined
    * ```
    */
-  optional: <A, I>(schema: Schema.Schema<A, I>) =>
+  optional: <A, I>(schema: Schema.Codec<A, I>) =>
     Schema.optional(schema),
 
   /**
@@ -324,7 +324,7 @@ export const SchemaUtils = {
    * // user: User | null
    * ```
    */
-  nullable: <A, I>(schema: Schema.Schema<A, I>) =>
+  nullable: <A, I>(schema: Schema.Codec<A, I>) =>
     Schema.NullOr(schema),
 
   /**
@@ -336,7 +336,7 @@ export const SchemaUtils = {
    * const users = yield* SchemaUtils.decode(UsersSchema, [userData1, userData2]);
    * ```
    */
-  array: <A, I>(schema: Schema.Schema<A, I>) =>
+  array: <A, I>(schema: Schema.Codec<A, I>) =>
     Schema.Array(schema),
 
   /**
@@ -351,16 +351,11 @@ export const SchemaUtils = {
    * });
    * ```
    */
-  record: <
-    KA extends string | symbol,
-    KI,
-    VA,
-    VI
-  >(
-    key: Schema.Schema<KA, KI>,
-    value: Schema.Schema<VA, VI>
+  record: <K extends Schema.Record.Key, V extends Schema.Constraint>(
+    key: K,
+    value: V
   ) =>
-    Schema.Record({ key, value })
+    Schema.Record(key, value)
 };
 
 // ============================================================================
@@ -409,7 +404,7 @@ function getAnnotationString(annotations: unknown, symbolKey: symbol): Option.Op
 /**
  * Get schema name for error messages
  */
-function getSchemaName<A, I>(schema: Schema.Schema<A, I>): string {
+function getSchemaName<A, I>(schema: Schema.Codec<A, I>): string {
   // Try to get the name from the AST (schema.ast is always present)
   const ast: unknown = schema.ast;
 

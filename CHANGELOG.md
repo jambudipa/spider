@@ -1,5 +1,20 @@
 # @jambudipa/spider
 
+## 0.16.0
+
+### Minor Changes
+
+- Migrate to Effect v4 (`4.0.0-rc.112`).
+
+  **Breaking**
+  - The `effect` peer dependency is now `4.0.0-rc.112`. Upgrade `effect` in your project.
+  - Every service is now a `Context.Service`. Layer fields are renamed: `SpiderService.Default` → `SpiderService.layer`, `SpiderConfig.Live(config)` → `SpiderConfig.layer`, and the same for every other service.
+
+  **Other**
+  - Strict Effect lint gate (`npm run lint:effect`) via `@effect/language-service`.
+  - Crawler resource lifecycles, retry schedules, stream collectors, and schema codecs use the v4 APIs.
+  - TypeScript 6.0.3; Vite build targets Node 20.
+
 ## 0.15.1
 
 ### Patch Changes

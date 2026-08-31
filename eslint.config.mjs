@@ -6,10 +6,12 @@ import * as jsoncPlugin from 'eslint-plugin-jsonc';
 import jsoncParser from 'jsonc-eslint-parser';
 import vitestPlugin from '@vitest/eslint-plugin';
 
-// Import custom rules from code-style/eslint-rules
-import { effectRulesPlugin } from './code-style/eslint-rules/index.mjs';
-import { customRulesPlugin } from './code-style/eslint-rules/index.mjs';
-import { jsonRulesPlugin } from './code-style/eslint-rules/index.mjs';
+import {
+  effectLintConfig,
+  enableAllEffectRules,
+} from './code-style/eslint-rules/effect-eslint-config.mjs';
+import { customRulesPlugin } from './code-style/eslint-rules/custom-rules.mjs';
+import { jsonRulesPlugin } from './code-style/eslint-rules/json-rules.mjs';
 
 // ============================================
 // SHARED CONSTANTS - Reduce duplication
@@ -51,34 +53,9 @@ const EFFECT_PACKAGES_PATTERN = {
  * Full Effect rule exemptions for non-production code (tests, scripts, etc.).
  * Spread this object in override blocks that need all Effect rules disabled.
  */
-const EFFECT_RULE_EXEMPTIONS = {
-  'effect/no-async-await-use-effect': 'off',
-  'effect/no-promise-constructor': 'off',
-  'effect/no-promise-resolve-reject': 'off',
-  'effect/no-promise-then-catch': 'off',
-  'effect/no-try-catch-use-effect': 'off',
-  'effect/no-throw-use-effect': 'off',
-  'effect/no-error-constructor': 'off',
-  'effect/no-null-use-option': 'off',
-  'effect/no-undefined-use-option': 'off',
-  'effect/no-json-parse-use-schema': 'off',
-  'effect/no-json-stringify-use-schema': 'off',
-  'effect/no-array-mutation-use-chunk': 'off',
-  'effect/no-set-use-hashset': 'off',
-  'effect/no-map-use-hashmap': 'off',
-  'effect/no-math-random-use-random': 'off',
-  'effect/no-process-env-use-config': 'off',
-  'effect/no-console-use-effect': 'off',
-  'effect/no-new-date-use-datetime': 'off',
-  'effect/no-date-static-use-datetime': 'off',
-  'effect/no-set-timeout-use-schedule': 'off',
-  'effect/no-manual-tag': 'off',
-  // New rules - Schema libraries and Effect boundaries
-  'effect/no-zod-use-schema': 'off',
-  'effect/no-yup-use-schema': 'off',
-  'effect/no-effect-runsync-unguarded': 'off',
-  'effect/prefer-layer-construction': 'off',
-};
+const EFFECT_RULE_EXEMPTIONS = Object.fromEntries(
+  Object.keys(enableAllEffectRules()).map((rule) => [rule, 'off'])
+);
 
 /**
  * Type-aware rule exemptions for files where typed linting should be relaxed.
@@ -113,6 +90,8 @@ export default [
       '**/test-output',
       '**/spider-logs',
       '**/docs',
+      // Git ignores local tool sidecars. A clean checkout cannot lint them.
+      'tools/**',
       '**/*.d.ts',
       'eslint.config.mjs',
       'eslint.config.js',
@@ -139,12 +118,7 @@ export default [
   // SECTION: TypeScript + Effect Idiomatic Rules
   // ============================================
   {
-    files: [
-      '**/*.ts',
-      '**/*.tsx',
-      '**/*.cts',
-      '**/*.mts',
-    ],
+    files: ['**/*.ts', '**/*.tsx', '**/*.cts', '**/*.mts'],
     languageOptions: {
       parser: tsParser,
       ecmaVersion: 2022,
@@ -186,7 +160,6 @@ export default [
     plugins: {
       import: importPlugin,
       jsonc: jsoncPlugin,
-      effect: effectRulesPlugin,
       'custom-rules': customRulesPlugin,
       '@typescript-eslint': tseslint.plugin,
     },
@@ -199,66 +172,6 @@ export default [
       'custom-rules/no-unnecessary-schema-alias': 'error',
       // Forbid "as" type assertions - use type-safe alternatives
       'custom-rules/no-type-assertion': 'error',
-
-      // ----------------------------------------
-      // Effect Idiomatic Patterns
-      // See: docs/technical/effect-idiomatic.md
-      // ----------------------------------------
-
-      // Pattern #1: Asynchronous Computations (async/await -> Effect.gen)
-      'effect/no-async-await-use-effect': 'error',
-      'effect/no-promise-constructor': 'error',
-      'effect/no-promise-resolve-reject': 'error',
-      'effect/no-promise-then-catch': 'error',
-
-      // Pattern #2: Optional Values (null/undefined -> Option)
-      'effect/no-null-use-option': 'warn',
-      'effect/no-undefined-use-option': 'warn',
-
-      // Pattern #4: Typed Error Handling (throw -> Effect.fail)
-      'effect/no-throw-use-effect': 'error',
-      'effect/no-try-catch-use-effect': 'error',
-      'effect/no-error-constructor': 'error',
-
-      // Pattern #8: Date and Time (Date -> DateTime)
-      'effect/no-new-date-use-datetime': 'error',
-      'effect/no-date-static-use-datetime': 'error',
-
-      // Pattern #10: Immutable Collections (Array mutations -> Chunk)
-      'effect/no-array-mutation-use-chunk': 'warn',
-
-      // Pattern #11: Sets and Maps (Set/Map -> HashSet/HashMap)
-      'effect/no-set-use-hashset': 'warn',
-      'effect/no-map-use-hashmap': 'warn',
-
-      // Pattern #12: Schema-driven parsing (JSON.parse -> Schema)
-      'effect/no-json-parse-use-schema': 'error',
-      'effect/no-json-stringify-use-schema': 'warn',
-
-      // Pattern #12: Data Module (_tag -> Data.TaggedError)
-      'effect/no-manual-tag': 'error',
-
-      // Pattern #15: Testability (Math.random -> Random service)
-      'effect/no-math-random-use-random': 'error',
-
-      // Pattern #17: Logging (console -> Effect.log)
-      'effect/no-console-use-effect': 'error',
-
-      // Pattern #18: Configuration (process.env -> Config)
-      'effect/no-process-env-use-config': 'error',
-
-      // Pattern #19: Scheduling (setTimeout -> Effect.sleep/Schedule)
-      'effect/no-set-timeout-use-schedule': 'error',
-
-      // Pattern #20: Schema Libraries (Zod/Yup -> Effect Schema)
-      'effect/no-zod-use-schema': 'warn',
-      'effect/no-yup-use-schema': 'error',
-
-      // Pattern #21: Effect Boundary Control (runSync at boundaries only)
-      'effect/no-effect-runsync-unguarded': 'warn',
-
-      // Pattern #22: Layer Construction (prefer Layers over manual wiring)
-      'effect/prefer-layer-construction': 'error',
 
       // ----------------------------------------
       // TypeScript Rules (Non-Type-Aware)
@@ -404,11 +317,21 @@ export default [
     },
   },
 
+  // Canonical Effect v4 idioms. Keep this after the TypeScript baseline so
+  // test overrides can disable it as a complete, versioned bundle.
+  effectLintConfig(['src/**/*.ts']),
+
   // ============================================
   // SECTION: Vitest (Unit Tests)
   // ============================================
   {
-    files: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts', '**/*.spec.tsx', 'tests/**/*.ts'],
+    files: [
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/*.spec.ts',
+      '**/*.spec.tsx',
+      'tests/**/*.ts',
+    ],
     plugins: {
       vitest: vitestPlugin,
     },
@@ -465,14 +388,108 @@ export default [
   // SECTION: Effect Rule Exemptions
   // ============================================
 
-  // Exempt test files from Effect idiom rules (testing infrastructure requires native JS patterns)
+  // Exempt test and example files from Effect idiom rules. These files exercise
+  // public boundaries and browser APIs that do not use production service wiring.
   {
-    files: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts', '**/*.spec.tsx', 'tests/**/*.ts'],
+    files: [
+      'src/test/**/*.ts',
+      'src/examples/**/*.ts',
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/*.spec.ts',
+      '**/*.spec.tsx',
+      'tests/**/*.ts',
+    ],
     rules: {
       ...EFFECT_RULE_EXEMPTIONS,
       ...TYPE_AWARE_EXEMPTIONS,
       // Type assertions often needed in test mocks and fixtures
       'custom-rules/no-type-assertion': 'off',
+    },
+  },
+
+  // These adapters retain Node I/O, dynamic payloads, or public optional-field
+  // contracts. The canonical rules remain active in other production modules.
+  {
+    files: [
+      'src/lib/Config/SpiderConfig.service.ts',
+      'src/lib/HttpAdapter/HttpAdapter.types.ts',
+      'src/lib/PageData/PageData.ts',
+      'src/lib/Scraper/Scraper.service.ts',
+      'src/lib/Spider/Spider.service.ts',
+    ],
+    rules: {
+      'effect/no-undefined-use-option': 'off',
+    },
+  },
+  // The configuration factory preserves its synchronous public contract.
+  // These native boundary checks reject invalid startup input before any
+  // Effect runtime exists.
+  {
+    files: ['src/lib/Config/SpiderConfig.service.ts'],
+    rules: {
+      'effect/no-math-random-use-random': 'off',
+      'effect/no-throw-use-effect': 'off',
+      'effect/no-try-catch-use-effect': 'off',
+    },
+  },
+  // Adapter selection is a synchronous public extension point. Its guard
+  // turns a selector throw into the documented typed adapter failure.
+  {
+    files: ['src/lib/HttpAdapter/HttpAdapter.types.ts'],
+    rules: {
+      'effect/no-try-catch-use-effect': 'off',
+    },
+  },
+  // This listener runs outside Effect in Node's fatal exception path. It
+  // writes the required JSON line and restores Node's original termination.
+  {
+    files: ['src/lib/Spider/undiciTerminatedGuard.ts'],
+    rules: {
+      'effect/no-json-stringify-use-schema': 'off',
+      'effect/no-throw-use-effect': 'off',
+    },
+  },
+  // This public API exports a TypeScript type and its runtime narrowing
+  // companion under one name, so consumers can import one stable symbol.
+  {
+    files: ['src/lib/Spider/Spider.service.ts'],
+    rules: {
+      'no-redeclare': 'off',
+    },
+  },
+  {
+    files: [
+      'src/lib/Resumability/backends/FileStorageBackend.ts',
+      'src/lib/utils/FileUtils.ts',
+    ],
+    rules: {
+      'effect/no-fs-use-effect-fs': 'off',
+    },
+  },
+  {
+    files: [
+      'src/lib/Config/SpiderConfig.service.ts',
+      'src/lib/Resumability/backends/FileStorageBackend.ts',
+      'src/lib/Spider/Spider.service.ts',
+    ],
+    rules: {
+      'effect/no-string-error-in-catchall': 'off',
+    },
+  },
+  {
+    files: [
+      'src/lib/HttpClient/CookieManager.ts',
+      'src/lib/HttpClient/SessionStore.ts',
+      'src/lib/PageData/PageData.ts',
+      'src/lib/Resumability/backends/FileStorageBackend.ts',
+      'src/lib/Resumability/backends/RedisStorageBackend.ts',
+      'src/lib/Scheduler/SpiderScheduler.service.ts',
+    ],
+    rules: {
+      'effect/no-schema-any-unknown': 'off',
+      'effect/prefer-schema-annotations': 'off',
+      'effect/prefer-schema-brand': 'off',
     },
   },
 

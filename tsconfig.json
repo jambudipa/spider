@@ -20,13 +20,8 @@
     "noEmit": false,
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
-    "downlevelIteration": true
+    "plugins": [{ "name": "@effect/language-service" }]
   },
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

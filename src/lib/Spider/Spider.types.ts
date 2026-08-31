@@ -30,7 +30,7 @@ export const classifyFetchError = (
     return { kind: 'timeout', durationMs, attemptsMade, message: String(error) };
   }
   if (error instanceof NetworkError) {
-    const statusOpt = Option.fromNullable(error.statusCode);
+    const statusOpt = Option.fromNullishOr(error.statusCode);
     if (Option.isSome(statusOpt)) {
       const status = statusOpt.value;
       if (status >= 500)

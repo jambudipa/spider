@@ -32,7 +32,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();
@@ -70,7 +70,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();
@@ -104,7 +104,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();
@@ -141,7 +141,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();
@@ -176,7 +176,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();
@@ -212,7 +212,7 @@ describe('LinkExtractor Service', () => {
       });
 
       const result = await Effect.runPromise(
-        program.pipe(Effect.provide(LinkExtractorService.Default))
+        program.pipe(Effect.provide(LinkExtractorService.layer))
       );
 
       expect(result.links).toBeDefined();

@@ -20,12 +20,12 @@ const classifyFetchPromiseRejection = (
   if (cause instanceof Error && cause.name === 'AbortError') {
     return { kind: 'timeout', message: `Request to ${url} aborted`, cause };
   }
-  const hasCauseField = (v: unknown): v is { cause: unknown } =>
-    // eslint-disable-next-line effect/no-null-use-option -- standard type-guard idiom; `v !== null` is required because typeof null === 'object'
-    typeof v === 'object' && v !== null && 'cause' in v;
-  // eslint-disable-next-line effect/no-undefined-use-option -- local intermediate value used only for `??` chain; Option would add ceremony with no safety benefit
-  const innerCause = hasCauseField(cause) ? cause.cause : undefined;
-  const causeStr = String(innerCause ?? cause ?? '');
+  const hasCauseField = (value: unknown): value is { cause: unknown } =>
+    value instanceof Object && 'cause' in value;
+  const innerCause = hasCauseField(cause)
+    ? Option.some(cause.cause)
+    : Option.none<unknown>();
+  const causeStr = String(Option.getOrElse(innerCause, () => cause));
   if (
     causeStr.includes('ENOTFOUND') ||
     causeStr.includes('ENONAME') ||
@@ -122,6 +122,20 @@ export const defaultUndiciAdapter: HttpAdapter = {
       const response = yield* fetchWithTimeout;
 
       const textTimeoutMs = 10000;
+      const cancelResponseBody = () => {
+        const body = response.body;
+        if (!body) return Effect.void;
+        return Effect.tryPromise({
+          try: () => body.cancel(),
+          catch: (cause) =>
+            ({
+              kind: 'other',
+              message: `Failed to cancel the response body for ${url}: ${String(cause)}`,
+              cause,
+            }) satisfies HttpAdapterError,
+        }).pipe(Effect.ignore);
+      };
+
       const bodyEffect = Effect.tryPromise({
         try: () => response.text(),
         catch: (cause) =>
@@ -138,16 +152,7 @@ export const defaultUndiciAdapter: HttpAdapter = {
         // cancel the stream. Effect.tryPromise's auto-signal SHOULD
         // already cascade to the stream on undici, but cancelling the
         // body directly is robust across runtimes/polyfills.
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            // eslint-disable-next-line effect/no-try-catch-use-effect -- sync cleanup; cancel may throw on already-locked or already-cancelled streams
-            try {
-              response.body?.cancel().catch(() => {});
-            } catch {
-              // best-effort
-            }
-          })
-        )
+        Effect.onInterrupt(cancelResponseBody)
       );
 
       const body = yield* bodyEffect.pipe(
@@ -175,12 +180,7 @@ export const defaultUndiciAdapter: HttpAdapter = {
                 );
                 // Cancel the body stream so the socket releases promptly
                 // rather than draining in the background until GC.
-                // eslint-disable-next-line effect/no-try-catch-use-effect -- sync cleanup; cancel may reject on locked streams
-                try {
-                  response.body?.cancel().catch(() => {});
-                } catch {
-                  // best-effort
-                }
+                yield* cancelResponseBody();
                 return yield* Effect.fail<HttpAdapterError>({
                   kind: 'timeout',
                   message: `Response body read for ${url} timed out after ${textTimeoutMs}ms (total ${durationMs}ms)`,

@@ -3,10 +3,8 @@
   "compilerOptions": {
     "noEmit": true,
     "skipLibCheck": true,
-    "downlevelIteration": true,
     "types": ["node"],
     "rootDir": ".",
-    "baseUrl": ".",
     "paths": {
       "@jambudipa/spider": ["./src/index.ts"]
     }

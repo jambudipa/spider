@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { Effect } from 'effect';
-import { AuthScenarioBase } from '../../helpers/BaseScenarioTest';
+import { AuthScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 
 class CookieAuthTest extends AuthScenarioBase {
   validateScenario() {
@@ -135,7 +135,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(isLoginPage).toBe(true);
       
     } catch (error) {
-      await test.handleFailure('detect-login-form', error as Error);
+      await runEffect(test.handleFailure('detect-login-form', error as Error));
     }
   });
 
@@ -256,7 +256,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('handle-login-submission', error as Error);
+      await runEffect(test.handleFailure('handle-login-submission', error as Error));
     }
   });
 
@@ -360,7 +360,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(pageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
-      await test.handleFailure('store-auth-cookies', error as Error);
+      await runEffect(test.handleFailure('store-auth-cookies', error as Error));
     }
   });
 
@@ -432,7 +432,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('access-protected-resources', error as Error);
+      await runEffect(test.handleFailure('access-protected-resources', error as Error));
     }
   });
 
@@ -488,7 +488,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(pageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
-      await test.handleFailure('handle-cookie-expiration', error as Error);
+      await runEffect(test.handleFailure('handle-cookie-expiration', error as Error));
     }
   });
 
@@ -574,7 +574,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(hasOldSessionCookies).toBe(false);
       
     } catch (error) {
-      await test.handleFailure('handle-logout', error as Error);
+      await runEffect(test.handleFailure('handle-logout', error as Error));
     }
   });
 
@@ -637,7 +637,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(pageTitle).toBeTruthy();
       
     } catch (error) {
-      await test.handleFailure('validate-form-mechanics', error as Error);
+      await runEffect(test.handleFailure('validate-form-mechanics', error as Error));
     }
   });
 
@@ -689,7 +689,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
                               content.includes('failed'),
               hasErrorClass: !!document.querySelector('.error, .alert, .warning, [class*="error"]'),
               staysOnLoginPage: window.location.href.includes('login'),
-              pageResponsive: document.body.textContent!.length > 100
+              pageResponsive: document.body.textContent.length > 100
             };
           });
           
@@ -713,7 +713,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(finalContent.length).toBeGreaterThan(500);
       
     } catch (error) {
-      await test.handleFailure('handle-auth-errors', error as Error);
+      await runEffect(test.handleFailure('handle-auth-errors', error as Error));
     }
   });
 
@@ -782,7 +782,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       expect(finalPageContent.length).toBeGreaterThan(500);
       
     } catch (error) {
-      await test.handleFailure('cookie-session-persistence', error as Error);
+      await runEffect(test.handleFailure('cookie-session-persistence', error as Error));
     }
   });
 
@@ -880,7 +880,7 @@ describe('CookiesBasedLogin Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('cross-page-auth-state', error as Error);
+      await runEffect(test.handleFailure('cross-page-auth-state', error as Error));
     }
   });
 });

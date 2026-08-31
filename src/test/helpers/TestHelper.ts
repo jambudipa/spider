@@ -5,7 +5,7 @@
 
 import { Page, ElementHandle } from 'playwright';
 import * as cheerio from 'cheerio';
-import { Effect, Config, DateTime, Option, Schedule, Data, Schema } from 'effect';
+import { Effect, Config, DateTime, Duration, Option, Schedule, Data, Schema } from 'effect';
 import { BrowserManager } from '../../browser/BrowserManager';
 import { PlaywrightAdapter } from '../../browser/PlaywrightAdapter';
 
@@ -49,7 +49,7 @@ export class OperationError extends Data.TaggedError('OperationError')<{
 }> {}
 
 // Schema for parsing JSON-LD content
-const JsonLdContentSchema = Schema.parseJson(Schema.Unknown);
+const JsonLdContentSchema = Schema.fromJsonString(Schema.Unknown);
 
 export class TestHelper {
   private static BASE_URL = 'https://web-scraping.dev';
@@ -61,7 +61,7 @@ export class TestHelper {
     return Effect.gen(function* () {
       const headlessConfig = yield* Config.string('HEADLESS').pipe(
         Config.withDefault('true'),
-        Effect.catchAll(() => Effect.succeed('true'))
+        Effect.catch(() => Effect.succeed('true'))
       );
 
       const headless = headlessConfig !== 'false';
@@ -102,13 +102,11 @@ export class TestHelper {
    */
   static cleanupTestContext(context: TestContext): Effect.Effect<void> {
     const closeAdapter = context.adapter.close().pipe(
-      Effect.tapError((error) => Effect.logWarning('Error closing adapter:', error)),
-      Effect.catchAll(() => Effect.void)
+      Effect.tapError((error) => Effect.logWarning('Error closing adapter:', error))
     );
 
     const closeBrowserManager = context.browserManager.close().pipe(
-      Effect.tapError((error) => Effect.logWarning('Error closing browser manager:', error)),
-      Effect.catchAll(() => Effect.void)
+      Effect.tapError((error) => Effect.logWarning('Error closing browser manager:', error))
     );
 
     return Effect.all([closeAdapter, closeBrowserManager]).pipe(
@@ -167,13 +165,10 @@ export class TestHelper {
     }).pipe(Effect.as(true));
 
     const policy = Schedule.recurs(retries - 1).pipe(
-      Schedule.addDelay(() => `${delay} millis`)
+      Schedule.addDelay(() => Effect.succeed(Duration.millis(delay)))
     );
 
-    return attempt.pipe(
-      Effect.retry(policy),
-      Effect.catchAll((error) => Effect.fail(error))
-    );
+    return attempt.pipe(Effect.retry(policy));
   }
 
   /**
@@ -185,7 +180,7 @@ export class TestHelper {
       catch: () => Option.none<string>()
     }).pipe(
       Effect.map((text) => text ?? ''),
-      Effect.catchAll(() => Effect.succeed(''))
+      Effect.catch(() => Effect.succeed(''))
     );
   }
 
@@ -200,7 +195,7 @@ export class TestHelper {
       ),
       catch: () => emptyStringArray
     }).pipe(
-      Effect.catchAll(() => Effect.succeed(emptyStringArray))
+      Effect.catch(() => Effect.succeed(emptyStringArray))
     );
   }
 
@@ -221,7 +216,7 @@ export class TestHelper {
       ),
       catch: () => emptyStringArray
     }).pipe(
-      Effect.catchAll(() => Effect.succeed(emptyStringArray))
+      Effect.catch(() => Effect.succeed(emptyStringArray))
     );
   }
 
@@ -242,16 +237,16 @@ export class TestHelper {
       // First, get the raw text content from all JSON-LD scripts
       const rawContents = yield* Effect.tryPromise({
         try: () => page.$$eval('script[type="application/ld+json"]', scripts =>
-          scripts.map(script => script.textContent).filter((content): content is string => Option.isSome(Option.fromNullable(content)))
+          scripts.map(script => script.textContent).filter((content): content is string => Option.isSome(Option.fromNullishOr(content)))
         ),
         catch: () => emptyStringArray
       }).pipe(
-        Effect.catchAll(() => Effect.succeed(emptyStringArray))
+        Effect.catch(() => Effect.succeed(emptyStringArray))
       );
 
       // Parse each JSON-LD content using Schema
       const parseResults = yield* Effect.forEach(rawContents, (content) =>
-        Schema.decodeUnknown(JsonLdContentSchema)(content).pipe(
+        Schema.decodeUnknownEffect(JsonLdContentSchema)(content).pipe(
           Effect.option
         )
       );
@@ -283,7 +278,7 @@ export class TestHelper {
       ),
       catch: () => emptyRecordArray
     }).pipe(
-      Effect.catchAll(() => Effect.succeed(emptyRecordArray))
+      Effect.catch(() => Effect.succeed(emptyRecordArray))
     );
   }
 
@@ -298,7 +293,7 @@ export class TestHelper {
 
     for (const field of requiredFields) {
       const value = data[field];
-      if (Option.isNone(Option.fromNullable(value))) {
+      if (Option.isNone(Option.fromNullishOr(value))) {
         missing.push(field);
       }
     }
@@ -318,8 +313,8 @@ export class TestHelper {
     initialDelay: number = 1000
   ): Effect.Effect<T, E | OperationError> {
     const policy = Schedule.exponential(`${initialDelay} millis`).pipe(
-      Schedule.compose(Schedule.recurs(maxRetries - 1)),
-      Schedule.tapOutput((duration) =>
+      Schedule.upTo({ times: maxRetries - 1 }),
+      Schedule.tap(({ duration }) =>
         Effect.logWarning(`Retrying after ${duration}`)
       )
     );
@@ -327,7 +322,7 @@ export class TestHelper {
     return operation.pipe(
       Effect.retry(policy),
       Effect.mapError((error) => {
-        if (error instanceof OperationError) return error;
+        if (typeof error === 'object' && error instanceof OperationError) return error;
         return new OperationError({
           message: 'Operation failed after retries',
           retries: maxRetries,
@@ -347,8 +342,8 @@ export class TestHelper {
         try: () => page.$(selector),
         catch: (cause) => new ContentNotFoundError({ selector, retries: 0, cause })
       }).pipe(
-        Effect.map((el) => Option.fromNullable(el)),
-        Effect.catchAll(() => Effect.succeed(Option.none<PlaywrightElement>()))
+        Effect.map((el) => Option.fromNullishOr(el)),
+        Effect.catch(() => Effect.succeed(Option.none<PlaywrightElement>()))
       );
 
       return yield* Option.match(elementOption, {
@@ -356,7 +351,7 @@ export class TestHelper {
         onSome: (element) => Effect.tryPromise({
           try: () => element.isVisible(),
           catch: (cause) => new OperationError({ message: 'Failed to check visibility', retries: 0, cause })
-        }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+        }).pipe(Effect.catch(() => Effect.succeed(false)))
       });
     });
   }
@@ -375,7 +370,7 @@ export class TestHelper {
       catch: (cause) => new ContentNotFoundError({ selector, retries: 0, cause })
     }).pipe(
       Effect.asVoid,
-      Effect.catchAll(() => Effect.void)
+      Effect.catch(() => Effect.void)
     );
   }
 
@@ -395,7 +390,7 @@ export class TestHelper {
       }, { sel: selector, prop: property }),
       catch: () => ''
     }).pipe(
-      Effect.catchAll(() => Effect.succeed(''))
+      Effect.catch(() => Effect.succeed(''))
     );
   }
 }

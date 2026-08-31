@@ -39,12 +39,12 @@ export class RateLimiterService {
 
       // Token bucket for rate limiting
       const tokens = yield* Ref.make(burstSize);
-      const lastRefill = yield* Ref.make(DateTime.unsafeNow().epochMillis);
+      const lastRefill = yield* Ref.make(DateTime.nowUnsafe().epochMilliseconds);
 
       // Refill tokens periodically
       const refillTokens = () =>
         Effect.gen(function* () {
-          const now = DateTime.unsafeNow().epochMillis;
+          const now = DateTime.nowUnsafe().epochMilliseconds;
           const last = yield* Ref.get(lastRefill);
           const elapsed = now - last;
           const tokensToAdd = Math.floor(elapsed / intervalMs);
@@ -91,9 +91,10 @@ export class RateLimiterService {
       ): Effect.Effect<A, E, R> =>
         Effect.retry(
           effect,
-          Schedule.exponential(Duration.seconds(1), 2).pipe(
-            Schedule.intersect(Schedule.recurs(3))
-          )
+          Schedule.max([
+            Schedule.exponential(Duration.seconds(1), 2),
+            Schedule.recurs(3),
+          ])
         );
 
       return {
@@ -148,10 +149,10 @@ export const NetworkResilience = {
 
     return Effect.retry(
       effect,
-      Schedule.exponential(initialDelay, 2).pipe(
-        Schedule.intersect(Schedule.recurs(maxRetries)),
-        Schedule.upTo(maxDelay)
-      )
+      Schedule.max([
+        Schedule.exponential(initialDelay, 2),
+        Schedule.recurs(maxRetries),
+      ]).pipe(Schedule.upTo({ duration: maxDelay }))
     );
   },
 
@@ -174,7 +175,7 @@ export const NetworkResilience = {
 
       const isOpen = yield* Ref.get(circuitOpen);
       if (isOpen) {
-        return yield* Effect.fail(new CircuitBreakerOpenError({ message: 'Circuit breaker is open' }));
+        return yield* new CircuitBreakerOpenError({ message: 'Circuit breaker is open' });
       }
 
       return yield* pipe(

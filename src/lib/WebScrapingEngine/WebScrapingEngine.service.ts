@@ -122,10 +122,10 @@ export interface WebScrapingEngineService {
   clearAll: () => Effect.Effect<void>;
 }
 
-export class WebScrapingEngine extends Context.Tag('WebScrapingEngine')<
+export class WebScrapingEngine extends Context.Service<
   WebScrapingEngine,
   WebScrapingEngineService
->() {}
+>()('WebScrapingEngine') {}
 
 /**
  * Create a WebScrapingEngine service implementation
@@ -203,12 +203,10 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
           hasLocation;
 
         if (!isAuthenticated) {
-          return yield* Effect.fail(
-            new LoginError({
-              status: loginResponse.status,
-              message: `Login failed with status ${loginResponse.status}`,
-            })
-          );
+          return yield* new LoginError({
+            status: loginResponse.status,
+            message: `Login failed with status ${loginResponse.status}`,
+          });
         }
 
         // Extract any new tokens from the response
@@ -228,7 +226,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         for (const type of [TokenType.CSRF, TokenType.API, TokenType.AUTH]) {
           const tokenOption = yield* stateManager
             .getToken(type)
-            .pipe(Effect.map(Option.some), Effect.catchAll(() => Effect.succeed(Option.none())));
+            .pipe(Effect.map(Option.some), Effect.catch(() => Effect.succeed(Option.none())));
           if (Option.isSome(tokenOption)) {
             tokens = HashMap.set(tokens, type, tokenOption.value);
           }
@@ -257,11 +255,9 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         const isValid = yield* sessionStore.isSessionValid();
 
         if (!isValid) {
-          return yield* Effect.fail(
-            new SessionNotValidError({
-              message: 'No valid session. Please login first.',
-            })
-          );
+          return yield* new SessionNotValidError({
+            message: 'No valid session. Please login first.',
+          });
         }
 
         // Make authenticated request with cookies
@@ -289,7 +285,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         } else if (isValid) {
           csrfToken = yield* stateManager
             .getToken(TokenType.CSRF)
-            .pipe(Effect.map(Option.some), Effect.catchAll(() => Effect.succeed(Option.none())));
+            .pipe(Effect.map(Option.some), Effect.catch(() => Effect.succeed(Option.none())));
         }
 
         if (Option.isNone(csrfToken) && !csrfUrl) {
@@ -348,7 +344,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
             },
           })
           .pipe(
-            Effect.catchAll((_error) => {
+            Effect.catch((_error) => {
               // If API token is not available, try without it
               if (method === 'GET') {
                 return httpClient.get(url);
@@ -370,7 +366,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         for (const type of [TokenType.CSRF, TokenType.API, TokenType.AUTH]) {
           const tokenOption = yield* stateManager
             .getToken(type)
-            .pipe(Effect.map(Option.some), Effect.catchAll(() => Effect.succeed(Option.none())));
+            .pipe(Effect.map(Option.some), Effect.catch(() => Effect.succeed(Option.none())));
           if (Option.isSome(tokenOption)) {
             tokens = HashMap.set(tokens, type, tokenOption.value);
           }
@@ -390,11 +386,9 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         const session = yield* sessionStore.getCurrentSession();
 
         if (Option.isNone(session)) {
-          return yield* Effect.fail(
-            new SessionLoadError({
-              message: 'Failed to load session',
-            })
-          );
+          return yield* new SessionLoadError({
+            message: 'Failed to load session',
+          });
         }
 
         // Get all stored tokens
@@ -402,7 +396,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
         for (const type of [TokenType.CSRF, TokenType.API, TokenType.AUTH]) {
           const tokenOption = yield* stateManager
             .getToken(type)
-            .pipe(Effect.map(Option.some), Effect.catchAll(() => Effect.succeed(Option.none())));
+            .pipe(Effect.map(Option.some), Effect.catch(() => Effect.succeed(Option.none())));
           if (Option.isSome(tokenOption)) {
             tokens = HashMap.set(tokens, type, tokenOption.value);
           }

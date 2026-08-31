@@ -18,7 +18,7 @@ export class SpiderError extends Data.TaggedError('SpiderError')<{
   readonly cause?: unknown;
 }> {
   get message(): string {
-    const detailsStr = Option.fromNullable(this.details).pipe(
+    const detailsStr = Option.fromNullishOr(this.details).pipe(
       Option.map((d) => `: ${String(d)}`),
       Option.getOrElse(() => '')
     );
@@ -552,7 +552,7 @@ export class QueueError extends Data.TaggedError('QueueError')<{
   readonly cause?: unknown;
 }> {
   get message(): string {
-    const sizeStr = Option.fromNullable(this.queueSize).pipe(
+    const sizeStr = Option.fromNullishOr(this.queueSize).pipe(
       Option.map((size) => ` (queue size: ${size})`),
       Option.getOrElse(() => '')
     );

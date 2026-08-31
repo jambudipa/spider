@@ -9,7 +9,7 @@ import { RobotsService } from '../../../lib/Robots/Robots.service.js';
 
 const runWithRobots = <A, E>(
   effect: Effect.Effect<A, E, RobotsService>
-) => Effect.runPromise(Effect.provide(effect, RobotsService.Default));
+) => Effect.runPromise(Effect.provide(effect, RobotsService.layer));
 
 const check = (url: string) =>
   runWithRobots(

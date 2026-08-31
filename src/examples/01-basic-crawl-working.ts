@@ -10,8 +10,14 @@
  * Tests against: web-scraping.dev (static content)
  */
 
-import { Chunk, DateTime, Effect, Sink } from 'effect';
-import { CrawlResult, makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '../index.js';
+import { Chunk, DateTime, Effect, Layer, Sink } from 'effect';
+import {
+  CrawlResult,
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+} from '../index.js';
 
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 01: Basic Web Crawling');
@@ -19,19 +25,26 @@ const program = Effect.gen(function* () {
 
   // Create a collector sink for results using immutable Chunk
   let results: Chunk.Chunk<CrawlResult> = Chunk.empty();
-  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
-    Effect.gen(function* () {
-      results = Chunk.append(results, result);
-      if (CrawlResult.isOk(result)) {
-        yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
-        yield* Effect.logInfo(`  Title: ${result.pageData.title || '(no title)'}`);
-        yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
-        yield* Effect.logInfo(`  Depth: ${result.depth}`);
-        yield* Effect.logInfo(`  Duration: ${result.pageData.scrapeDurationMs}ms\n`);
-      } else {
-        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
-      }
-    })
+  const collectSink = Sink.forEach<CrawlResult, void, never, never>(
+    (result: CrawlResult) =>
+      Effect.gen(function* () {
+        results = Chunk.append(results, result);
+        if (CrawlResult.isOk(result)) {
+          yield* Effect.logInfo(`✓ Crawled: ${result.pageData.url}`);
+          yield* Effect.logInfo(
+            `  Title: ${result.pageData.title || '(no title)'}`
+          );
+          yield* Effect.logInfo(`  Status: ${result.pageData.statusCode}`);
+          yield* Effect.logInfo(`  Depth: ${result.depth}`);
+          yield* Effect.logInfo(
+            `  Duration: ${result.pageData.scrapeDurationMs}ms\n`
+          );
+        } else {
+          yield* Effect.logWarning(
+            `✗ Failed: ${result.url} (${result.error.kind})`
+          );
+        }
+      })
   );
 
   // Start the crawl
@@ -41,7 +54,8 @@ const program = Effect.gen(function* () {
   yield* spider.crawl(['https://web-scraping.dev/'], collectSink);
 
   const endTime = yield* DateTime.now;
-  const duration = DateTime.toEpochMillis(endTime) - DateTime.toEpochMillis(startTime);
+  const duration =
+    DateTime.toEpochMillis(endTime) - DateTime.toEpochMillis(startTime);
   const durationSeconds = duration / 1000;
 
   // Convert to array for processing
@@ -52,10 +66,16 @@ const program = Effect.gen(function* () {
   yield* Effect.logInfo('📊 Crawl Summary:');
   yield* Effect.logInfo(`- Total pages crawled: ${okResults.length}`);
   yield* Effect.logInfo(`- Total duration: ${durationSeconds.toFixed(2)}s`);
-  const avgLoadTime = okResults.length > 0
-    ? okResults.reduce<number>((sum, r) => sum + r.pageData.scrapeDurationMs, 0) / okResults.length
-    : 0;
-  yield* Effect.logInfo(`- Average page load time: ${avgLoadTime.toFixed(0)}ms`);
+  const avgLoadTime =
+    okResults.length > 0
+      ? okResults.reduce<number>(
+          (sum, r) => sum + r.pageData.scrapeDurationMs,
+          0
+        ) / okResults.length
+      : 0;
+  yield* Effect.logInfo(
+    `- Average page load time: ${avgLoadTime.toFixed(0)}ms`
+  );
 
   // Analyze results
   const statusCodes = okResults.reduce<Record<number, number>>((acc, r) => {
@@ -85,17 +105,28 @@ const customConfig = makeSpiderConfig({
   requestDelayMs: 500,
   ignoreRobotsTxt: false,
   userAgent: 'SpiderExample/1.0',
-  maxConcurrentWorkers: 2
+  maxConcurrentWorkers: 2,
 });
 
 const runnable = program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(customConfig)),
-  Effect.provide(SpiderEventSinkNoop),
-  Effect.tapBoth({
-    onSuccess: (results) => Effect.logInfo(`\n✅ Example completed successfully! Crawled ${results.length} pages.`),
-    onFailure: (error) => Effect.logError(`\n❌ Example failed: ${String(error)}`)
-  })
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(customConfig),
+          SpiderEventSinkNoop
+        )
+      )
+    )
+  ),
+  Effect.tapError((error) =>
+    Effect.logError(`\n❌ Example failed: ${String(error)}`)
+  ),
+  Effect.tap((results) =>
+    Effect.logInfo(
+      `\n✅ Example completed successfully! Crawled ${results.length} pages.`
+    )
+  )
 );
 
 void Effect.runPromiseExit(runnable).then((exit) => {

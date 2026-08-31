@@ -12,7 +12,7 @@ export const safeJsonParse = <E>(
   data: string,
   onError: (error: unknown) => E
 ) =>
-  Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(data).pipe(
+  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(data).pipe(
     Effect.mapError(onError)
   );
 
@@ -24,7 +24,7 @@ export const toOption = <T>(
   value: T | null | undefined,
   logContext?: string
 ): Effect.Effect<Option.Option<T>> => {
-  const result = Option.fromNullable(value);
+  const result = Option.fromNullishOr(value);
 
   if (logContext && Option.isNone(result)) {
     return Effect.logDebug(`[Migration] Null value encountered: ${logContext}`).pipe(
@@ -64,7 +64,7 @@ export const cleanupResources = <E>(
         catch: (error) => onError(id, error)
       })
     ),
-    { mode: 'either' }
+    { mode: 'result' }
   );
 
 /**

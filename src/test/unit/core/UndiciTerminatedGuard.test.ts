@@ -133,13 +133,13 @@ describe('undiciTerminatedGuard — refcounted lifecycle', () => {
     const innerScope = await Effect.runPromise(Scope.make());
 
     await Effect.runPromise(
-      Scope.extend(acquireUndiciTerminatedGuard, outerScope)
+      Scope.provide(acquireUndiciTerminatedGuard, outerScope)
     );
     expect(_undiciGuardInternals.refCount()).toBe(1);
     expect(process.listeners('uncaughtException')).toHaveLength(1);
 
     await Effect.runPromise(
-      Scope.extend(acquireUndiciTerminatedGuard, innerScope)
+      Scope.provide(acquireUndiciTerminatedGuard, innerScope)
     );
     expect(_undiciGuardInternals.refCount()).toBe(2);
     // Still exactly one process-level listener.

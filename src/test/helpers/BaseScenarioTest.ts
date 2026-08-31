@@ -14,7 +14,7 @@ import { AdapterNotInitialisedError } from '../../lib/errors/effect-errors.js';
  * Run an Effect and return a Promise for use in vitest async tests
  */
 export const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-  Effect.runPromise(effect.pipe(Effect.catchAll((e) => Effect.die(e))));
+  Effect.runPromise(effect.pipe(Effect.catch((e) => Effect.die(e))));
 
 /**
  * Error for page initialisation failures
@@ -100,7 +100,7 @@ export abstract class BaseScenarioTest {
       self.context = yield* TestHelper.createTestContext(self.scenarioName);
       const pageOption = self.context.adapter.getPage();
       if (Option.isNone(pageOption)) {
-        return yield* Effect.fail(PageInitError.create('Failed to get page from adapter'));
+        return yield* PageInitError.create('Failed to get page from adapter');
       }
       self.page = pageOption.value;
     });
@@ -157,11 +157,11 @@ export abstract class BaseScenarioTest {
       );
 
       if (Option.isNone(responseOption)) {
-        return yield* Effect.fail(NavigationError.create(url, Option.none()));
+        return yield* NavigationError.create(url, Option.none());
       }
       const response = responseOption.value;
       if (response.status() >= 400) {
-        return yield* Effect.fail(NavigationError.create(url, Option.some(response.status())));
+        return yield* NavigationError.create(url, Option.some(response.status()));
       }
     });
   }
@@ -260,7 +260,7 @@ export class DynamicScenarioBase extends BaseScenarioTest {
         Effect.mapError(() => ElementNotFoundError.create(buttonSelector))
       );
       if (!hasButton) {
-        return yield* Effect.fail(ElementNotFoundError.create(buttonSelector));
+        return yield* ElementNotFoundError.create(buttonSelector);
       }
 
       yield* self.context.adapter.clickAndWait(buttonSelector).pipe(

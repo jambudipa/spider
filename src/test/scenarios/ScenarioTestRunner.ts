@@ -244,10 +244,10 @@ export class ScenarioTestRunner {
     return Effect.gen(function* () {
       const scenarioOption = HashMap.get(self.scenarios, id);
       if (scenarioOption._tag === 'None') {
-        return yield* Effect.fail(new ScenarioNotFoundError({
+        return yield* new ScenarioNotFoundError({
           scenarioId: id,
           message: `Scenario ${id} not found`,
-        }));
+        });
       }
       const scenario = scenarioOption.value;
 
@@ -280,14 +280,14 @@ export class ScenarioTestRunner {
       let results = HashMap.empty<string, ScenarioResult>();
 
       for (const [id, scenario] of HashMap.toEntries(self.scenarios)) {
-        const result = yield* Effect.either(self.runScenario(id));
-        if (result._tag === 'Right') {
-          results = HashMap.set(results, id, result.right);
+        const result = yield* Effect.result(self.runScenario(id));
+        if (result._tag === 'Success') {
+          results = HashMap.set(results, id, result.success);
         } else {
           results = HashMap.set(results, id, {
             scenario: scenario.name,
             success: false,
-            errors: [result.left],
+            errors: [result.failure],
             duration: 0,
             assertions: [],
           });

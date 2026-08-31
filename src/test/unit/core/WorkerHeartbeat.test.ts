@@ -23,7 +23,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Deferred, Effect, Fiber, Layer, Logger, LogLevel, Ref, Sink } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Logger, References, Ref, Sink } from 'effect';
 import { SpiderService } from '../../../lib/Spider/Spider.service.js';
 import {
   SpiderConfig,
@@ -48,19 +48,19 @@ interface CapturedLog {
 const captureLogsLayer = (records: CapturedLog[]): Layer.Layer<never> => {
   const logger = Logger.make((opts) => {
     const annotations: Record<string, unknown> = {};
-    // `opts.annotations` is a HashMap<string, unknown> in modern Effect; the
-    // iterable form yields `[key, value]` tuples.
-    for (const [k, v] of opts.annotations as Iterable<[string, unknown]>) {
+    for (const [k, v] of Object.entries(
+      opts.fiber.getRef(References.CurrentLogAnnotations)
+    )) {
       annotations[k] = v;
     }
     const message = Array.isArray(opts.message)
       ? opts.message.map((m) => String(m)).join(' ')
       : String(opts.message);
-    records.push({ level: opts.logLevel.label, message, annotations });
+    records.push({ level: opts.logLevel, message, annotations });
   });
   return Layer.merge(
-    Logger.replace(Logger.defaultLogger, logger),
-    Logger.minimumLogLevel(LogLevel.Debug)
+    Logger.layer([logger]),
+    Layer.succeed(References.MinimumLogLevel, 'Debug')
   );
 };
 
@@ -126,10 +126,13 @@ const runCrawl = async (
   });
   await Effect.runPromise(
     program.pipe(
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(config)),
-      Effect.provide(captureEventsLayer(eventsRef)),
-      Effect.provide(captureLogsLayer(records))
+      Effect.provide(SpiderService.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          captureEventsLayer(eventsRef),
+          captureLogsLayer(records)
+        ))
+      ))
     )
   );
 };
@@ -174,7 +177,7 @@ describe('worker heartbeat — per-iteration (default) vs per-attempt', () => {
     expect(perAttemptCount - perIterCount).toBe(2);
   }, 10_000);
 
-  it('per-attempt mode with maxAttempts: 1 fires exactly 1 extra heartbeat — Schedule.tapInput receives the single failure input even with no retries permitted', async () => {
+  it('per-attempt mode with maxAttempts: 1 fires no extra heartbeat', async () => {
     const baseConfig = {
       ignoreRobotsTxt: true,
       requestDelayMs: 0,
@@ -203,7 +206,9 @@ describe('worker heartbeat — per-iteration (default) vs per-attempt', () => {
     );
     const perAttemptCount = heartbeatRecords(perAttemptRecords).length;
 
-    expect(perAttemptCount - perIterCount).toBe(1);
+    // Effect v4 runs the Schedule.tap hook only when it permits a retry.
+    // maxAttempts: 1 permits none, so no extra heartbeat is emitted.
+    expect(perAttemptCount - perIterCount).toBe(0);
   }, 10_000);
 
   it('captures worker_heartbeat records annotated with the per-worker workerId', async () => {
@@ -345,7 +350,7 @@ describe('worker heartbeat — per-iteration (default) vs per-attempt', () => {
       const stopSignal = yield* Deferred.make<void>();
       const spider = yield* SpiderService;
       const sink = Sink.forEach((_r: CrawlResult) => Effect.void);
-      const crawlFiber = yield* Effect.fork(
+      const crawlFiber = yield* Effect.forkChild(
         spider.crawl('https://heartbeat-death-test.local/', sink, {
           externalStopSignal: stopSignal,
         })
@@ -358,10 +363,13 @@ describe('worker heartbeat — per-iteration (default) vs per-attempt', () => {
 
     await Effect.runPromise(
       program.pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(captureEventsLayer(eventsRef)),
-        Effect.provide(captureLogsLayer(records))
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            captureEventsLayer(eventsRef),
+            captureLogsLayer(records)
+          ))
+        ))
       )
     );
 

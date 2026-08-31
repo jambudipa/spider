@@ -11,7 +11,7 @@
  * Tests against: web-scraping.dev with resumable sessions
  */
 
-import { DateTime, Effect, Sink } from 'effect';
+import { DateTime, Effect, Layer, Sink } from 'effect';
 import {
   CrawlResult,
   FileStorageBackend,
@@ -21,7 +21,7 @@ import {
   SpiderEventSinkNoop,
   SpiderSchedulerService,
   SpiderService,
-  SpiderStateKey
+  SpiderStateKey,
 } from '../index.js';
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -61,28 +61,39 @@ const program = Effect.gen(function* () {
     totalPages: 0,
     sessionsCreated: 0,
     statesSaved: 0,
-    sessionRestored: false
+    sessionRestored: false,
   };
 
-  const collectSink = Sink.forEach<CrawlResult, void, never, never>((result: CrawlResult) =>
-    Effect.gen(function* () {
-      crawlProgress.pagesProcessed++;
+  const collectSink = Sink.forEach<CrawlResult, void, never, never>(
+    (result: CrawlResult) =>
+      Effect.gen(function* () {
+        crawlProgress.pagesProcessed++;
 
-      if (CrawlResult.isOk(result)) {
-        yield* Effect.log(`✓ [${crawlProgress.pagesProcessed}] ${result.pageData.url}`);
-        yield* Effect.log(`  Title: ${result.pageData.title ?? '(no title)'}`);
-        yield* Effect.log(`  Status: ${result.pageData.statusCode}, Depth: ${result.depth}`);
-      } else {
-        yield* Effect.logWarning(`✗ Failed: ${result.url} (${result.error.kind})`);
-      }
+        if (CrawlResult.isOk(result)) {
+          yield* Effect.log(
+            `✓ [${crawlProgress.pagesProcessed}] ${result.pageData.url}`
+          );
+          yield* Effect.log(
+            `  Title: ${result.pageData.title ?? '(no title)'}`
+          );
+          yield* Effect.log(
+            `  Status: ${result.pageData.statusCode}, Depth: ${result.depth}`
+          );
+        } else {
+          yield* Effect.logWarning(
+            `✗ Failed: ${result.url} (${result.error.kind})`
+          );
+        }
 
-      // Simulate saving state periodically (every 2 pages)
-      if (crawlProgress.pagesProcessed % 2 === 0) {
-        yield* Effect.log(`  💾 State checkpoint saved (${crawlProgress.pagesProcessed} pages processed)`);
-        crawlProgress.statesSaved++;
-      }
-      yield* Effect.log('');
-    })
+        // Simulate saving state periodically (every 2 pages)
+        if (crawlProgress.pagesProcessed % 2 === 0) {
+          yield* Effect.log(
+            `  💾 State checkpoint saved (${crawlProgress.pagesProcessed} pages processed)`
+          );
+          crawlProgress.statesSaved++;
+        }
+        yield* Effect.log('');
+      })
   );
 
   yield* Effect.log('🎯 Phase 1: Initial Crawl with State Persistence');
@@ -94,11 +105,13 @@ const program = Effect.gen(function* () {
   // Configure the resumability service
   yield* resumabilityService.configure({
     strategy: 'full-state',
-    backend: storageBackend
+    backend: storageBackend,
   });
 
   crawlProgress.sessionsCreated++;
-  yield* Effect.log('✅ Resumability service configured with full-state strategy');
+  yield* Effect.log(
+    '✅ Resumability service configured with full-state strategy'
+  );
 
   // Start first crawl (limited pages to simulate interruption)
   const spider = yield* SpiderService;
@@ -110,13 +123,16 @@ const program = Effect.gen(function* () {
   const phase1StartTime = yield* DateTime.now;
 
   // First crawl with limited pages to simulate interruption
-  yield* spider.crawl([
-    'https://web-scraping.dev/',
-    'https://web-scraping.dev/products'
-  ], collectSink);
+  yield* spider.crawl(
+    ['https://web-scraping.dev/', 'https://web-scraping.dev/products'],
+    collectSink
+  );
 
   const phase1EndTime = yield* DateTime.now;
-  const phase1Duration = (DateTime.toEpochMillis(phase1EndTime) - DateTime.toEpochMillis(phase1StartTime)) / 1000;
+  const phase1Duration =
+    (DateTime.toEpochMillis(phase1EndTime) -
+      DateTime.toEpochMillis(phase1StartTime)) /
+    1000;
 
   yield* Effect.log(`📊 Phase 1 Complete - Simulating Interruption:`);
   yield* Effect.log(`- Pages processed: ${crawlProgress.pagesProcessed}`);
@@ -129,7 +145,9 @@ const program = Effect.gen(function* () {
   const sessions = yield* resumabilityService.listSessions();
   yield* Effect.log(`- Active sessions: ${sessions.length}`);
   for (const session of sessions) {
-    const timestampStr = DateTime.formatIso(DateTime.unsafeFromDate(session.timestamp));
+    const timestampStr = DateTime.formatIso(
+      DateTime.fromDateUnsafe(session.timestamp)
+    );
     yield* Effect.log(`  * ${session.id} (created: ${timestampStr})`);
   }
   yield* Effect.log('');
@@ -140,8 +158,12 @@ const program = Effect.gen(function* () {
 
   // Demonstrate resumability info
   yield* Effect.log('ℹ️  Resumability service is configured and ready');
-  yield* Effect.log('ℹ️  Note: Full session restoration requires Spider integration with ResumabilityService');
-  yield* Effect.log('ℹ️  State checkpoints shown above demonstrate persistence capability\n');
+  yield* Effect.log(
+    'ℹ️  Note: Full session restoration requires Spider integration with ResumabilityService'
+  );
+  yield* Effect.log(
+    'ℹ️  State checkpoints shown above demonstrate persistence capability\n'
+  );
 
   crawlProgress.sessionRestored = false;
 
@@ -151,11 +173,13 @@ const program = Effect.gen(function* () {
   const stateKey = new SpiderStateKey({
     id: SESSION_ID,
     timestamp: DateTime.toDateUtc(currentTime),
-    name: 'Demo Session'
+    name: 'Demo Session',
   });
   yield* resumabilityService.cleanup(stateKey).pipe(
     Effect.tap(() => Effect.log(`✅ Session cleanup successful`)),
-    Effect.catchAll(() => Effect.log('ℹ️  Session cleanup failed or no session to clean'))
+    Effect.catch(() =>
+      Effect.log('ℹ️  Session cleanup failed or no session to clean')
+    )
   );
 
   yield* Effect.log('  - Session state files cleaned');
@@ -178,7 +202,7 @@ const program = Effect.gen(function* () {
 const config = makeSpiderConfig({
   maxPages: 12,
   maxDepth: 1,
-  requestDelayMs: 800,  // Slower for clear state saving demonstration
+  requestDelayMs: 800, // Slower for clear state saving demonstration
   ignoreRobotsTxt: false,
   userAgent: 'SpiderExample-Resumable/1.0',
 
@@ -189,21 +213,34 @@ const config = makeSpiderConfig({
 
   // Conservative crawling for stable demonstration
   maxConcurrentWorkers: 1,
-  maxRequestsPerSecondPerDomain: 1
+  maxRequestsPerSecondPerDomain: 1,
 });
 
 const mainEffect = program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(ResumabilityService.Default),
-  Effect.provide(SpiderSchedulerService.Default),
-  Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderEventSinkNoop),
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ResumabilityService.layer,
+          SpiderSchedulerService.layer,
+          SpiderConfig.layerWith(config),
+          SpiderEventSinkNoop
+        )
+      )
+    )
+  ),
   Effect.tap((progress) =>
     Effect.gen(function* () {
       yield* Effect.log(`\n✅ Resumability example completed!`);
-      yield* Effect.log(`💾 Demonstrated: State persistence, session management, graceful recovery`);
-      yield* Effect.log(`📈 Total: ${progress.pagesProcessed} pages, ${progress.sessionsCreated} session, ${progress.statesSaved} checkpoints`);
-      yield* Effect.log(`🔄 Resumption: ${progress.sessionRestored ? 'Success' : 'Not needed'}`);
+      yield* Effect.log(
+        `💾 Demonstrated: State persistence, session management, graceful recovery`
+      );
+      yield* Effect.log(
+        `📈 Total: ${progress.pagesProcessed} pages, ${progress.sessionsCreated} session, ${progress.statesSaved} checkpoints`
+      );
+      yield* Effect.log(
+        `🔄 Resumption: ${progress.sessionRestored ? 'Success' : 'Not needed'}`
+      );
     })
   ),
   Effect.ensuring(
@@ -214,7 +251,7 @@ const mainEffect = program.pipe(
       }
     })
   ),
-  Effect.catchAll((error) =>
+  Effect.catch((error) =>
     Effect.gen(function* () {
       yield* Effect.logError(`\n❌ Example failed: ${String(error)}`);
       return yield* Effect.fail(error);

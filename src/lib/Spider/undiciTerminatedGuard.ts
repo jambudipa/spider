@@ -52,7 +52,6 @@ const handler: UncaughtExceptionListener = (err, origin) => {
     // Process-level listener fires outside any Fiber context, so an
     // Effect logger is unreachable here. Write a structured JSON line
     // to stderr — consumers parsing JSON-line logs will pick it up.
-    // eslint-disable-next-line effect/no-json-stringify-use-schema -- structured log line; Schema would couple a process-level log to a runtime that this listener cannot access
     const payload = JSON.stringify({
       event: 'undici_terminated_swallowed',
       level: 'warn',
@@ -87,7 +86,6 @@ const handler: UncaughtExceptionListener = (err, origin) => {
       // removed, this becomes an uncaught exception with zero
       // listeners, which is exactly the path Node would have taken if
       // the guard had never been installed (print + exit code 1).
-      // eslint-disable-next-line effect/no-throw-use-effect -- bridging back to Node's uncaughtException default behaviour from outside any Fiber context
       throw err;
     });
   }

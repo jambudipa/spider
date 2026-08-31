@@ -78,8 +78,7 @@ describe('SpiderConfig Service', () => {
             makeSpiderConfig({
               // Force-cast to exercise the runtime guard against untyped
               // callers (JSON config, dynamic options).
-              resultChannelCapacity:
-                badValue as unknown as number | 'unbounded',
+              resultChannelCapacity: badValue as number | 'unbounded',
             })
           ).toThrow(/resultChannelCapacity/);
         }
@@ -112,7 +111,7 @@ describe('SpiderConfig Service', () => {
     });
   });
 
-  describe('SpiderConfig.Default layer', () => {
+  describe('SpiderConfig.layer layer', () => {
     it('should provide default configuration', async () => {
       const program = Effect.gen(function* () {
         const config = yield* SpiderConfig;
@@ -121,7 +120,7 @@ describe('SpiderConfig Service', () => {
       });
 
       const result = await runTest(
-        program.pipe(Effect.provide(SpiderConfig.Default))
+        program.pipe(Effect.provide(SpiderConfig.layer))
       );
 
       expect(result).toBeDefined();

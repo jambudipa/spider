@@ -64,9 +64,12 @@ const runCrawl = (
     return yield* spider.crawl(startingUrls, sink);
   });
   const provided = program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide(captureEventsLayer(events))
+    Effect.provide(SpiderService.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(
+        SpiderConfig.layerWith(config),
+        captureEventsLayer(events)
+      ))
+    ))
   );
   return Effect.runPromise(provided);
 };

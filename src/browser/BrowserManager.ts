@@ -3,7 +3,7 @@
  * Handles browser lifecycle, pooling, and resource management
  */
 
-import { Effect, Either, MutableHashMap, Option } from 'effect';
+import { Effect, MutableHashMap, Option, Result } from 'effect';
 import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
 import { BrowserCleanupError, BrowserError } from '../lib/errors/effect-errors.js';
 
@@ -175,14 +175,14 @@ export class BrowserManager {
         })
       );
 
-      const contextResults = yield* Effect.all(contextEffects, { mode: 'either' });
+      const contextResults = yield* Effect.all(contextEffects, { mode: 'result' });
 
       // Log any context cleanup errors
       for (let index = 0; index < contextResults.length; index++) {
         const result = contextResults[index];
-        if (Either.isLeft(result)) {
+        if (Result.isFailure(result)) {
           const [id] = contextEntries[index];
-          yield* Effect.logWarning(`Error closing context ${id}:`, result.left);
+          yield* Effect.logWarning(`Error closing context ${id}:`, result.failure);
         }
       }
 
@@ -196,13 +196,13 @@ export class BrowserManager {
         })
       );
 
-      const browserResults = yield* Effect.all(browserEffects, { mode: 'either' });
+      const browserResults = yield* Effect.all(browserEffects, { mode: 'result' });
 
       // Log any browser cleanup errors
       for (let index = 0; index < browserResults.length; index++) {
         const result = browserResults[index];
-        if (Either.isLeft(result)) {
-          yield* Effect.logWarning(`Error closing browser ${index}:`, result.left);
+        if (Result.isFailure(result)) {
+          yield* Effect.logWarning(`Error closing browser ${index}:`, result.failure);
         }
       }
 

@@ -40,7 +40,6 @@ spider-logs/
 *.swo
 *~
 
-.changeset
 .claude
 
 # OS generated files

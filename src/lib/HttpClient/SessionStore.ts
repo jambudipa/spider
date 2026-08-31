@@ -71,16 +71,16 @@ export class SessionError extends Data.TaggedError('SessionError')<{
 // Schema Definitions
 // ============================================================================
 
-const TokenEntrySchema = Schema.Tuple(Schema.String, Schema.String);
+const TokenEntrySchema = Schema.Tuple([Schema.String, Schema.String]);
 
 const SerializedSessionSchema = Schema.Struct({
   id: Schema.String,
   cookies: Schema.String,
   tokens: Schema.Array(TokenEntrySchema),
-  userData: Schema.optionalWith(Schema.Record({ key: Schema.String, value: Schema.Unknown }), { as: 'Option' }),
+  userData: Schema.OptionFromOptional(Schema.Record(Schema.String, Schema.Unknown)),
   createdAt: Schema.String,
   lastUsedAt: Schema.String,
-  expiresAt: Schema.optionalWith(Schema.String, { as: 'Option' })
+  expiresAt: Schema.OptionFromOptional(Schema.String)
 });
 
 type SerializedSession = typeof SerializedSessionSchema.Type;
@@ -173,10 +173,10 @@ export interface SessionStoreService {
   importSession: (_data: string) => Effect.Effect<void, SessionError>;
 }
 
-export class SessionStore extends Context.Tag('SessionStore')<
+export class SessionStore extends Context.Service<
   SessionStore,
   SessionStoreService
->() {}
+>()('SessionStore') {}
 
 /**
  * Create a SessionStore service implementation
@@ -252,7 +252,7 @@ export const makeSessionStore = Effect.gen(function* () {
         const sessionOpt = HashMap.get(sessionsMap, id);
 
         if (Option.isNone(sessionOpt)) {
-          return yield* Effect.fail(SessionError.notFound(id));
+          return yield* SessionError.notFound(id);
         }
 
         const session = sessionOpt.value;
@@ -260,8 +260,8 @@ export const makeSessionStore = Effect.gen(function* () {
         // Check if expired
         if (Option.isSome(session.expiresAt)) {
           const now = yield* DateTime.now;
-          if (DateTime.lessThan(session.expiresAt.value, now)) {
-            return yield* Effect.fail(SessionError.expired(id));
+          if (DateTime.isLessThan(session.expiresAt.value, now)) {
+            return yield* SessionError.expired(id);
           }
         }
 
@@ -318,7 +318,7 @@ export const makeSessionStore = Effect.gen(function* () {
         const sessionOpt = HashMap.get(sessionsMap, sessionIdOpt.value);
 
         if (Option.isNone(sessionOpt)) {
-          return yield* Effect.fail(SessionError.noActive());
+          return yield* SessionError.noActive();
         }
 
         // Update cookies in session
@@ -370,7 +370,7 @@ export const makeSessionStore = Effect.gen(function* () {
         // Check expiration
         if (Option.isSome(session.expiresAt)) {
           const now = yield* DateTime.now;
-          if (DateTime.lessThan(session.expiresAt.value, now)) {
+          if (DateTime.isLessThan(session.expiresAt.value, now)) {
             return false;
           }
         }
@@ -383,14 +383,14 @@ export const makeSessionStore = Effect.gen(function* () {
         const sessionIdOpt = yield* Ref.get(currentSessionId);
 
         if (Option.isNone(sessionIdOpt)) {
-          return yield* Effect.fail(SessionError.noActive());
+          return yield* SessionError.noActive();
         }
 
         const sessionsMap = yield* Ref.get(sessions);
         const sessionOpt = HashMap.get(sessionsMap, sessionIdOpt.value);
 
         if (Option.isNone(sessionOpt)) {
-          return yield* Effect.fail(SessionError.notFound(sessionIdOpt.value));
+          return yield* SessionError.notFound(sessionIdOpt.value);
         }
 
         const session = sessionOpt.value;
@@ -411,14 +411,14 @@ export const makeSessionStore = Effect.gen(function* () {
         const sessionIdOpt = yield* Ref.get(currentSessionId);
 
         if (Option.isNone(sessionIdOpt)) {
-          return yield* Effect.fail(SessionError.exportError());
+          return yield* SessionError.exportError();
         }
 
         const sessionsMap = yield* Ref.get(sessions);
         const sessionOpt = HashMap.get(sessionsMap, sessionIdOpt.value);
 
         if (Option.isNone(sessionOpt)) {
-          return yield* Effect.fail(SessionError.notFound(sessionIdOpt.value));
+          return yield* SessionError.notFound(sessionIdOpt.value);
         }
 
         const session = sessionOpt.value;
@@ -440,7 +440,7 @@ export const makeSessionStore = Effect.gen(function* () {
         };
 
         return yield* Effect.try({
-          try: () => Schema.encodeSync(Schema.parseJson(SerializedSessionSchema))(serialized),
+          try: () => Schema.encodeSync(Schema.fromJsonString(SerializedSessionSchema))(serialized),
           catch: (error) => SessionError.parseError(error)
         });
       }),
@@ -449,7 +449,7 @@ export const makeSessionStore = Effect.gen(function* () {
       Effect.gen(function* () {
         // Parse and validate JSON data using Schema
         const parsed = yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(Schema.parseJson(SerializedSessionSchema))(data),
+          try: () => Schema.decodeUnknownSync(Schema.fromJsonString(SerializedSessionSchema))(data),
           catch: (error) => SessionError.parseError(error)
         });
 
@@ -460,7 +460,7 @@ export const makeSessionStore = Effect.gen(function* () {
           const lastUsedAtOpt = DateTime.make(parsed.lastUsedAt);
 
           if (Option.isNone(createdAtOpt) || Option.isNone(lastUsedAtOpt)) {
-            return yield* Effect.fail(SessionError.reconstructError('Invalid date format'));
+            return yield* SessionError.reconstructError('Invalid date format');
           }
 
           const createdAt = createdAtOpt.value;

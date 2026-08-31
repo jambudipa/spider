@@ -101,10 +101,10 @@ export interface StateManagerService {
   clearState: () => Effect.Effect<void>;
 }
 
-export class StateManager extends Context.Tag('StateManager')<
+export class StateManager extends Context.Service<
   StateManager,
   StateManagerService
->() {}
+>()('StateManager') {}
 
 /**
  * Create a StateManager service implementation
@@ -168,7 +168,9 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
             }
           }
 
-          return yield* Effect.fail(new CSRFTokenNotFoundError({ message: 'CSRF token not found in HTML' }));
+          return yield* new CSRFTokenNotFoundError({
+            message: 'CSRF token not found in HTML',
+          });
         }),
 
       extractAPIToken: (scripts: string[]) =>
@@ -202,9 +204,9 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
             }
           }
 
-          return yield* Effect.fail(
-            new APITokenNotFoundError({ message: 'API token not found in scripts' })
-          );
+          return yield* new APITokenNotFoundError({
+            message: 'API token not found in scripts',
+          });
         }),
 
       storeToken: (type: TokenType, value: string, expiry?: Date) =>
@@ -224,21 +226,23 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
           const tokenOption = HashMap.get(tokensMap, type);
 
           if (Option.isNone(tokenOption)) {
-            return yield* Effect.fail(
-              new TokenNotFoundError({ message: `Token of type ${type} not found`, tokenType: type })
-            );
+            return yield* new TokenNotFoundError({
+              message: `Token of type ${type} not found`,
+              tokenType: type,
+            });
           }
 
           const token = tokenOption.value;
 
           // Check if expired using DateTime
           if (token.expiry) {
-            const now = DateTime.unsafeNow();
-            const expiryDateTime = DateTime.unsafeMake(token.expiry);
-            if (DateTime.lessThan(expiryDateTime, now)) {
-              return yield* Effect.fail(
-                new TokenExpiredError({ message: `Token of type ${type} has expired`, tokenType: type })
-              );
+            const now = DateTime.nowUnsafe();
+            const expiryDateTime = DateTime.fromDateUnsafe(token.expiry);
+            if (DateTime.isLessThan(expiryDateTime, now)) {
+              return yield* new TokenExpiredError({
+                message: `Token of type ${type} has expired`,
+                tokenType: type,
+              });
             }
           }
 
@@ -257,9 +261,9 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
           const token = tokenOption.value;
 
           if (token.expiry) {
-            const now = DateTime.unsafeNow();
-            const expiryDateTime = DateTime.unsafeMake(token.expiry);
-            if (DateTime.lessThan(expiryDateTime, now)) {
+            const now = DateTime.nowUnsafe();
+            const expiryDateTime = DateTime.fromDateUnsafe(token.expiry);
+            if (DateTime.isLessThan(expiryDateTime, now)) {
               return false;
             }
           }
@@ -268,9 +272,7 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
         }),
 
       setLocalStorage: (key: string, value: string) =>
-        Effect.gen(function* () {
-          yield* Ref.update(localStorage, (storage) => HashMap.set(storage, key, value));
-        }),
+        Ref.update(localStorage, (storage) => HashMap.set(storage, key, value)),
 
       getLocalStorage: (key: string) =>
         Effect.gen(function* () {
@@ -278,23 +280,20 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
           const valueOption = HashMap.get(storage, key);
 
           if (Option.isNone(valueOption)) {
-            return yield* Effect.fail(
-              new StorageKeyNotFoundError({ message: `Local storage key '${key}' not found`, key, storageType: 'local' })
-            );
+            return yield* new StorageKeyNotFoundError({
+              message: `Local storage key '${key}' not found`,
+              key,
+              storageType: 'local',
+            });
           }
 
           return valueOption.value;
         }),
 
-      clearLocalStorage: () =>
-        Effect.gen(function* () {
-          yield* Ref.set(localStorage, HashMap.empty());
-        }),
+      clearLocalStorage: () => Ref.set(localStorage, HashMap.empty()),
 
       setSessionStorage: (key: string, value: string) =>
-        Effect.gen(function* () {
-          yield* Ref.update(sessionStorage, (storage) => HashMap.set(storage, key, value));
-        }),
+        Ref.update(sessionStorage, (storage) => HashMap.set(storage, key, value)),
 
       getSessionStorage: (key: string) =>
         Effect.gen(function* () {
@@ -302,18 +301,17 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
           const valueOption = HashMap.get(storage, key);
 
           if (Option.isNone(valueOption)) {
-            return yield* Effect.fail(
-              new StorageKeyNotFoundError({ message: `Session storage key '${key}' not found`, key, storageType: 'session' })
-            );
+            return yield* new StorageKeyNotFoundError({
+              message: `Session storage key '${key}' not found`,
+              key,
+              storageType: 'session',
+            });
           }
 
           return valueOption.value;
         }),
 
-      clearSessionStorage: () =>
-        Effect.gen(function* () {
-          yield* Ref.set(sessionStorage, HashMap.empty());
-        }),
+      clearSessionStorage: () => Ref.set(sessionStorage, HashMap.empty()),
 
       clearState: () =>
         Effect.gen(function* () {

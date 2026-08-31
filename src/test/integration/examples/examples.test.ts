@@ -46,8 +46,6 @@ describe('Spider Examples', () => {
         expect(content).toContain('SpiderService'); // Spider service import
         expect(content).toContain('makeSpiderConfig'); // Config import
         expect(content).toContain('Effect.runPromise'); // Program execution
-        expect(content).toContain('process.exit(0)'); // Success exit
-        expect(content).toContain('process.exit(1)'); // Error exit
       });
     });
   });
@@ -73,14 +71,33 @@ describe('Spider Examples', () => {
         const filePath = join(EXAMPLES_DIR, filename);
         const content = readFileSync(filePath, 'utf-8');
 
-        // Should use makeSpiderConfig
-        expect(content).toContain('makeSpiderConfig');
+        // Should build a configuration and provide it through the v4 layer.
+        expect(content).toMatch(/\w+\s*=\s*makeSpiderConfig\(/);
+        expect(content).toMatch(/SpiderConfig\.layerWith\(\w+\)/);
 
-        // Should provide required layer (allow variations in variable names)
-        expect(content).toMatch(/SpiderConfig\.Live\([^)]+\)/);
+        // The v3 configuration provider must not remain in the examples.
+        expect(content).not.toContain('SpiderConfig.Live');
+      });
+    });
+  });
 
-        // Should not use Default config for examples
-        expect(content).not.toContain('SpiderConfig.Default');
+  describe('Effect v4 Process Exit', () => {
+    const runPromiseExitExamples = [
+      '02-multiple-urls-working.ts',
+      '03-url-filtering.ts',
+      '05-link-extraction-selectors.ts',
+    ];
+
+    runPromiseExitExamples.forEach((filename) => {
+      it(`${filename} should derive one process exit from the Effect exit`, () => {
+        const filePath = join(EXAMPLES_DIR, filename);
+        const content = readFileSync(filePath, 'utf-8');
+
+        expect(content).toContain('Effect.runPromiseExit');
+        expect(content).toMatch(
+          /process\.exit\(exit\._tag === 'Success' \? 0 : 1\);/
+        );
+        expect(content.match(/process\.exit\(/g)).toHaveLength(1);
       });
     });
   });
@@ -92,7 +109,7 @@ describe('Spider Examples', () => {
         const content = readFileSync(filePath, 'utf-8');
 
         // Should provide SpiderService
-        expect(content).toContain('SpiderService.Default');
+        expect(content).toContain('SpiderService.layer');
 
         // Should use Effect.provide
         expect(content).toContain('Effect.provide');

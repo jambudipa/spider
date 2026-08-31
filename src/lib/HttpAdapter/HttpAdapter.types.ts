@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import type { PageFetchErrorKind } from '../Spider/Spider.types.js';
 
 /**
@@ -141,15 +141,9 @@ const failingAdapter = (reason: string): HttpAdapter => ({
  * @internal
  */
 const isAdapter = (value: unknown): value is HttpAdapter => {
-  if (typeof value !== 'object') return false;
-  // eslint-disable-next-line effect/no-null-use-option -- structural type guard; explicit null check required because typeof null === 'object'
-  if (value === null) return false;
+  if (!(value instanceof Object)) return false;
   if (!('fetch' in value)) return false;
-  // After the `'fetch' in value` guard above the property exists. We need
-  // an indexed access to inspect its callability; the cast narrows the
-  // unknown object to a record with that single key.
-  // eslint-disable-next-line custom-rules/no-type-assertion -- post-guard structural narrowing; the `'fetch' in value` check above proves the field exists, and the result type is intentionally `unknown` so the subsequent `typeof === 'function'` check is what actually narrows
-  const fetchField: unknown = (value as Record<'fetch', unknown>).fetch;
+  const { fetch: fetchField } = value;
   return typeof fetchField === 'function';
 };
 
@@ -176,10 +170,11 @@ export const resolveAdapter = (
   request: HttpAdapterRequest,
   defaultAdapter: HttpAdapter
 ): HttpAdapter => {
-  // eslint-disable-next-line effect/no-undefined-use-option, effect/no-null-use-option -- public API: bare `undefined`/`null` match the SpiderConfigOptions.httpAdapter field shape so JS callers don't need to lift values into Option
-  if (config === undefined || config === null) return defaultAdapter;
-  if (isAdapter(config)) return config;
-  if (typeof config !== 'function') {
+  const configuredAdapter = Option.fromNullishOr(config);
+  if (Option.isNone(configuredAdapter)) return defaultAdapter;
+  const candidate = configuredAdapter.value;
+  if (isAdapter(candidate)) return candidate;
+  if (typeof candidate !== 'function') {
     return failingAdapter(
       'HttpAdapter config is neither undefined, a function selector, nor an object with a callable fetch method'
     );
@@ -187,9 +182,8 @@ export const resolveAdapter = (
   // Selector form is invoked sync; guard against throws so a bad selector
   // cannot crash the worker. The stub adapter surfaces the failure as a
   // normal HttpAdapterError that flows through the retry pipeline.
-  // eslint-disable-next-line effect/no-try-catch-use-effect -- sync selector invocation, defensive guard
   try {
-    const resolved = config(request);
+    const resolved = candidate(request);
     if (!isAdapter(resolved)) {
       return failingAdapter(
         'HttpAdapter selector returned a value that is not a valid adapter (must be an object with a callable fetch method)'

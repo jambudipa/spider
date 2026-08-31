@@ -1,4 +1,4 @@
-import { Effect, Option } from 'effect';
+import { Context, Effect, Layer, Option } from 'effect';
 import {
   SpiderState,
   SpiderStateKey,
@@ -83,10 +83,10 @@ export interface ResumabilityConfig {
  * @group Services
  * @public
  */
-export class ResumabilityService extends Effect.Service<ResumabilityService>()(
+export class ResumabilityService extends Context.Service<ResumabilityService>()(
   '@jambudipa.io/ResumabilityService',
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       // Yield unit to satisfy the generator requirement
       yield* Effect.void;
 
@@ -124,13 +124,11 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         persistOperation: (operation: StateOperation) =>
           Effect.gen(function* () {
             if (Option.isNone(strategy)) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message:
-                    'ResumabilityService not configured. Call configure() first.',
-                  operation: 'persistOperation',
-                })
-              );
+              return yield* new PersistenceError({
+                message:
+                  'ResumabilityService not configured. Call configure() first.',
+                operation: 'persistOperation',
+              });
             }
 
             yield* strategy.value.persist(operation);
@@ -145,13 +143,11 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         restore: (key: SpiderStateKey) =>
           Effect.gen(function* () {
             if (Option.isNone(strategy)) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message:
-                    'ResumabilityService not configured. Call configure() first.',
-                  operation: 'restore',
-                })
-              );
+              return yield* new PersistenceError({
+                message:
+                  'ResumabilityService not configured. Call configure() first.',
+                operation: 'restore',
+              });
             }
 
             return yield* strategy.value.restore(key);
@@ -166,13 +162,11 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         cleanup: (key: SpiderStateKey) =>
           Effect.gen(function* () {
             if (Option.isNone(strategy)) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message:
-                    'ResumabilityService not configured. Call configure() first.',
-                  operation: 'cleanup',
-                })
-              );
+              return yield* new PersistenceError({
+                message:
+                  'ResumabilityService not configured. Call configure() first.',
+                operation: 'cleanup',
+              });
             }
 
             yield* strategy.value.cleanup(key);
@@ -186,23 +180,19 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         listSessions: () =>
           Effect.gen(function* () {
             if (Option.isNone(backend)) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message:
-                    'ResumabilityService not configured. Call configure() first.',
-                  operation: 'listSessions',
-                })
-              );
+              return yield* new PersistenceError({
+                message:
+                  'ResumabilityService not configured. Call configure() first.',
+                operation: 'listSessions',
+              });
             }
 
             const backendValue = backend.value;
             if (!backendValue.listSessions) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message: `Backend ${backendValue.name} does not support listing sessions`,
-                  operation: 'listSessions',
-                })
-              );
+              return yield* new PersistenceError({
+                message: `Backend ${backendValue.name} does not support listing sessions`,
+                operation: 'listSessions',
+              });
             }
 
             return yield* backendValue.listSessions();
@@ -216,13 +206,11 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
         getInfo: () =>
           Effect.gen(function* () {
             if (Option.isNone(strategy) || Option.isNone(backend)) {
-              return yield* Effect.fail(
-                new PersistenceError({
-                  message:
-                    'ResumabilityService not configured. Call configure() first.',
-                  operation: 'getInfo',
-                })
-              );
+              return yield* new PersistenceError({
+                message:
+                  'ResumabilityService not configured. Call configure() first.',
+                operation: 'getInfo',
+              });
             }
 
             const strategyValue = strategy.value;
@@ -260,6 +248,11 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
     }),
   }
 ) {
+  static readonly layer = Layer.effect(
+    ResumabilityService,
+    ResumabilityService.make
+  );
+
   /**
    * Create a ResumabilityService layer from configuration.
    *
@@ -273,7 +266,7 @@ export class ResumabilityService extends Effect.Service<ResumabilityService>()(
       const service = yield* ResumabilityService;
       yield* service.configure(config);
       return service;
-    }).pipe(Effect.provide(ResumabilityService.Default));
+    }).pipe(Effect.provide(ResumabilityService.layer));
 }
 
 /**
@@ -321,12 +314,10 @@ const createStrategy = (
       }
 
       default:
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Unknown strategy type: ${strategyType}`,
-            operation: 'createStrategy',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Unknown strategy type: ${strategyType}`,
+          operation: 'createStrategy',
+        });
     }
   });
 

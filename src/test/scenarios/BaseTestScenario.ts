@@ -76,7 +76,7 @@ export abstract class BaseTestScenario<TResult = unknown> {
       const context = yield* TestContext;
 
       // Apply rate limiting if specified
-      const rateLimit = Option.fromNullable(self.config.rateLimit);
+      const rateLimit = Option.fromNullishOr(self.config.rateLimit);
       if (Option.isSome(rateLimit)) {
         yield* context.rateLimiter.setRate(rateLimit.value);
       }
@@ -147,7 +147,7 @@ export abstract class BaseTestScenario<TResult = unknown> {
 
       return scenarioResult;
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;
           const currentMs = DateTime.toEpochMillis(now);

@@ -126,9 +126,9 @@ export const RegexUtils = {
       const regex = yield* RegexUtils.compile(pattern, flags);
       const matchResult = input.match(regex);
 
-      return Option.fromNullable(matchResult).pipe(
+      return Option.fromNullishOr(matchResult).pipe(
         Option.flatMap((m) =>
-          Option.fromNullable(m.index).pipe(
+          Option.fromNullishOr(m.index).pipe(
             Option.map((index) => ({
               match: m[0],
               index,
@@ -247,7 +247,7 @@ export const RegexUtils = {
       const regex = yield* RegexUtils.compile(pattern, flags);
       const match = input.match(regex);
 
-      return Option.fromNullable(match?.groups);
+      return Option.fromNullishOr(match?.groups);
     }),
 
   /**
@@ -265,7 +265,7 @@ export const RegexUtils = {
   isValid: (pattern: string, flags?: string) =>
     RegexUtils.compile(pattern, flags).pipe(
       Effect.map(() => true),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**

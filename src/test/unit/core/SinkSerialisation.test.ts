@@ -79,9 +79,12 @@ describe('Sink serialisation invariant', () => {
 
     await Effect.runPromise(
       program.pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 
@@ -128,9 +131,12 @@ describe('Sink serialisation invariant', () => {
         const spider = yield* SpiderService;
         return yield* spider.crawl(startUrls, sink);
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 

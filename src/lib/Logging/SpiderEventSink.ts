@@ -273,7 +273,7 @@ export interface SpiderEventSinkService {
  * });
  *
  * program.pipe(
- *   Effect.provide(SpiderService.Default),
+ *   Effect.provide(SpiderService.layer),
  *   Effect.provide(MySink),
  * );
  * ```
@@ -281,9 +281,7 @@ export interface SpiderEventSinkService {
  * @group Observability
  * @public
  */
-export class SpiderEventSink extends Context.Tag(
-  '@jambudipa/spider/SpiderEventSink'
-)<SpiderEventSink, SpiderEventSinkService>() {}
+export class SpiderEventSink extends Context.Service<SpiderEventSink, SpiderEventSinkService>()('@jambudipa/spider/SpiderEventSink') {}
 
 /**
  * Default no-op sink. Discards every event.

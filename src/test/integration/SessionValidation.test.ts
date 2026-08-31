@@ -112,7 +112,7 @@ const validate = (request: SessionValidationRequest) =>
     Effect.gen(function* () {
       const validation = yield* SessionValidationService;
       return yield* validation.validate(sessionPage, anonymousPage, request);
-    }).pipe(Effect.provide(SessionValidationService.Default))
+    }).pipe(Effect.provide(SessionValidationService.layer))
   );
 
 describe('SessionValidationService', () => {
@@ -209,7 +209,7 @@ describe('SessionValidationService', () => {
           url: 'http://127.0.0.1:1/unreachable',
           settleMs: 0,
         });
-      }).pipe(Effect.provide(SessionValidationService.Default))
+      }).pipe(Effect.provide(SessionValidationService.layer))
     );
 
     expect(exit._tag).toBe('Failure');

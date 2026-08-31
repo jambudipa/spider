@@ -1,4 +1,13 @@
-import { DateTime, Effect, MutableHashMap, Option, Queue, Schema } from 'effect';
+import {
+  Context,
+  DateTime,
+  Effect,
+  Layer,
+  MutableHashMap,
+  Option,
+  Queue,
+  Schema,
+} from 'effect';
 import { CrawlTask } from '../Spider/Spider.service.js';
 import { ConfigurationError } from '../errors/effect-errors.js';
 import { SpiderConfig } from '../Config/SpiderConfig.service.js';
@@ -100,7 +109,9 @@ export interface StatePersistence {
     _state: SpiderState
   ) => Effect.Effect<void, Error>;
   /** Loads spider state from persistent storage, returns Option.none if not found */
-  loadState: (_key: SpiderStateKey) => Effect.Effect<Option.Option<SpiderState>, Error>;
+  loadState: (
+    _key: SpiderStateKey
+  ) => Effect.Effect<Option.Option<SpiderState>, Error>;
   /** Deletes spider state from persistent storage */
   deleteState: (_key: SpiderStateKey) => Effect.Effect<void, Error>;
 }
@@ -143,10 +154,10 @@ export interface StatePersistence {
  * @group Services
  * @public
  */
-export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerService>()(
+export class SpiderSchedulerService extends Context.Service<SpiderSchedulerService>()(
   '@jambudipa/spiderSchedulerService',
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const config = yield* SpiderConfig;
       const shouldNormalizeUrls =
         yield* config.shouldNormalizeUrlsForDeduplication();
@@ -170,53 +181,52 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
           return url;
         }
 
-        return Option.match(
-          Option.liftThrowable(() => new URL(url))(),
-          {
-            onNone: () => url,
-            onSome: (parsed) => {
-              // Normalize pathname: remove multiple consecutive slashes and trailing slashes
-              let normalizedPath = parsed.pathname
-                .replace(/\/+/g, '/') // Replace multiple slashes with single slash
-                .replace(/\/$/, ''); // Remove trailing slash
+        return Option.match(Option.liftThrowable(() => new URL(url))(), {
+          onNone: () => url,
+          onSome: (parsed) => {
+            // Normalize pathname: remove multiple consecutive slashes and trailing slashes
+            let normalizedPath = parsed.pathname
+              .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+              .replace(/\/$/, ''); // Remove trailing slash
 
-              // Keep root path as '/'
-              if (normalizedPath === '') {
-                normalizedPath = '/';
-              }
-
-              // Remove default ports
-              let port = parsed.port;
-              if (
-                (parsed.protocol === 'http:' && parsed.port === '80') ||
-                (parsed.protocol === 'https:' && parsed.port === '443')
-              ) {
-                port = '';
-              }
-
-              // Sort query parameters alphabetically
-              let search = parsed.search;
-              if (parsed.search) {
-                const params = new URLSearchParams(parsed.search);
-                const sortedParams = new URLSearchParams();
-                Array.from(params.keys())
-                  .sort()
-                  .forEach((key) => {
-                    params.getAll(key).forEach((value) => {
-                      sortedParams.append(key, value);
-                    });
-                  });
-                const sortedStr = sortedParams.toString();
-                search = sortedStr ? `?${sortedStr}` : '';
-              }
-
-              // Build normalized URL from parts (no mutation of URL object)
-              const auth = parsed.username ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@` : '';
-              const portStr = port ? `:${port}` : '';
-              return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}`;
+            // Keep root path as '/'
+            if (normalizedPath === '') {
+              normalizedPath = '/';
             }
-          }
-        );
+
+            // Remove default ports
+            let port = parsed.port;
+            if (
+              (parsed.protocol === 'http:' && parsed.port === '80') ||
+              (parsed.protocol === 'https:' && parsed.port === '443')
+            ) {
+              port = '';
+            }
+
+            // Sort query parameters alphabetically
+            let search = parsed.search;
+            if (parsed.search) {
+              const params = new URLSearchParams(parsed.search);
+              const sortedParams = new URLSearchParams();
+              Array.from(params.keys())
+                .sort()
+                .forEach((key) => {
+                  params.getAll(key).forEach((value) => {
+                    sortedParams.append(key, value);
+                  });
+                });
+              const sortedStr = sortedParams.toString();
+              search = sortedStr ? `?${sortedStr}` : '';
+            }
+
+            // Build normalized URL from parts (no mutation of URL object)
+            const auth = parsed.username
+              ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@`
+              : '';
+            const portStr = port ? `:${port}` : '';
+            return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}`;
+          },
+        });
       };
 
       /**
@@ -239,13 +249,16 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
         new PriorityRequest({
           request,
           priority,
-          timestamp: DateTime.toDate(DateTime.unsafeNow()),
+          timestamp: DateTime.toDate(DateTime.nowUnsafe()),
           fingerprint: generateFingerprint(request),
         });
 
       const persistState = (): Effect.Effect<void, Error> =>
         Effect.gen(function* () {
-          if (Option.isNone(persistenceLayer) || Option.isNone(currentStateKey)) {
+          if (
+            Option.isNone(persistenceLayer) ||
+            Option.isNone(currentStateKey)
+          ) {
             return;
           }
 
@@ -328,7 +341,10 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             pendingRequestsForPersistence.push(priorityRequest); // Track for persistence
 
             // Persist if persistence layer is configured
-            if (Option.isSome(persistenceLayer) && Option.isSome(currentStateKey)) {
+            if (
+              Option.isSome(persistenceLayer) &&
+              Option.isSome(currentStateKey)
+            ) {
               yield* persistState();
             }
 
@@ -350,7 +366,10 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
             }
 
             // Persist state after processing if persistence layer is configured
-            if (Option.isSome(persistenceLayer) && Option.isSome(currentStateKey)) {
+            if (
+              Option.isSome(persistenceLayer) &&
+              Option.isSome(currentStateKey)
+            ) {
               yield* persistState();
             }
 
@@ -368,12 +387,10 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
         getState: () =>
           Effect.gen(function* () {
             if (Option.isNone(currentStateKey)) {
-              return yield* Effect.fail(
-                new ConfigurationError({
-                  message: 'No state key configured',
-                  details: 'State key is required for persistence operations',
-                })
-              );
+              return yield* new ConfigurationError({
+                message: 'No state key configured',
+                details: 'State key is required for persistence operations',
+              });
             }
 
             return new SpiderState({
@@ -402,6 +419,10 @@ export class SpiderSchedulerService extends Effect.Service<SpiderSchedulerServic
           }),
       };
     }),
-    dependencies: [SpiderConfig.Default],
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    SpiderSchedulerService,
+    SpiderSchedulerService.make
+  ).pipe(Layer.provide(SpiderConfig.layer));
+}

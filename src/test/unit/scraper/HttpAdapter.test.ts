@@ -41,14 +41,14 @@ afterEach(() => {
 
 const runWithScraper = <A, E>(
   effect: Effect.Effect<A, E, ScraperService>
-) => Effect.runPromise(Effect.provide(effect, ScraperService.Default));
+) => Effect.runPromise(Effect.provide(effect, ScraperService.layer));
 
 const runWithScraperExit = <A, E>(
   effect: Effect.Effect<A, E, ScraperService>
-) => Effect.runPromise(Effect.provide(effect, ScraperService.Default).pipe(Effect.exit));
+) => Effect.runPromise(Effect.provide(effect, ScraperService.layer).pipe(Effect.exit));
 
 const extractFailure = <E>(cause: Cause.Cause<E>): E | undefined => {
-  const opt = Cause.failureOption(cause);
+  const opt = Cause.findErrorOption(cause);
   return Option.isSome(opt) ? opt.value : undefined;
 };
 
@@ -146,7 +146,7 @@ describe('defaultUndiciAdapter regression — no behavioural drift from v0.10', 
           const scraper = yield* ScraperService;
           return yield* scraper.fetchAndParse('https://example.com/x.png', 0);
         }),
-        ScraperService.Default
+        ScraperService.layer
       )
     );
     expect(failure).toBeInstanceOf(ContentTypeError);
@@ -544,15 +544,7 @@ describe('Adapter interrupt propagation (Acceptance #4)', () => {
       fetch: () =>
         Effect.gen(function* () {
           adapterStarted = true;
-          yield* Effect.never;
-          // Unreachable; included so the Effect type carries the
-          // expected HttpAdapterResponse success branch.
-          return {
-            url: '',
-            statusCode: 0,
-            headers: {},
-            body: '',
-          };
+          return yield* Effect.never;
         }).pipe(
           Effect.onInterrupt(() =>
             Effect.sync(() => {
@@ -572,7 +564,7 @@ describe('Adapter interrupt propagation (Acceptance #4)', () => {
         scraper.fetchAndParse('https://example.com', 0, 'ua', adapter),
         Deferred.await(stopSignal).pipe(Effect.flatMap(() => Effect.interrupt))
       );
-    }).pipe(Effect.provide(ScraperService.Default));
+    }).pipe(Effect.provide(ScraperService.layer));
 
     const fiber = Effect.runFork(program);
     // Give the adapter a tick to start.
@@ -591,7 +583,7 @@ describe('Adapter interrupt propagation (Acceptance #4)', () => {
     // Exit reflects interruption.
     expect(exit._tag).toBe('Failure');
     if (exit._tag === 'Failure') {
-      expect(Cause.isInterruptedOnly(exit.cause)).toBe(true);
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
   });
 });

@@ -1,4 +1,4 @@
-import { Data, Effect, MutableHashSet, Option } from 'effect';
+import { Context, Data, Effect, Layer, MutableHashSet, Option } from 'effect';
 import type { Page, Request as PlaywrightRequest } from 'playwright';
 
 /**
@@ -339,14 +339,14 @@ const DEFAULT_SETTLE_MS = 1500;
  * @group Services
  * @public
  */
-export class InteractionDiscoveryService extends Effect.Service<InteractionDiscoveryService>()(
+export class InteractionDiscoveryService extends Context.Service<InteractionDiscoveryService>()(
   '@jambudipa.io/InteractionDiscoveryService',
   {
-    effect: Effect.succeed<InteractionDiscoveryServiceInterface>({
+    make: Effect.succeed<InteractionDiscoveryServiceInterface>({
       sweep: (page, controls, options) =>
         Effect.gen(function* () {
           if (controls.length === 0) {
-            return yield* Effect.fail(NoOracleDeclaredError.create());
+            return yield* NoOracleDeclaredError.create();
           }
 
           // Reassigned when the sweep does its own navigation, so the
@@ -396,7 +396,7 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
               Effect.gen(function* () {
                 // Navigate with the ledger already attached, so identities
                 // requested while the markup parses are observed.
-                yield* Option.fromNullable(options?.navigateTo).pipe(
+                yield* Option.fromNullishOr(options?.navigateTo).pipe(
                   Option.match({
                     onNone: () => Effect.void,
                     onSome: (url) =>
@@ -441,7 +441,7 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
                     );
                   }).pipe(
                     Effect.as(true),
-                    Effect.catchAll((reason) =>
+                    Effect.catch((reason) =>
                       Effect.sync(() => {
                         skipped.push({ ...identity, reason });
                         return false;
@@ -460,12 +460,10 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
 
                   const nowUrl = page.url();
                   if (nowUrl !== startUrl) {
-                    return yield* Effect.fail(
-                      SweepNavigatedAwayError.create(
-                        control.id,
-                        startUrl,
-                        nowUrl
-                      )
+                    return yield* SweepNavigatedAwayError.create(
+                      control.id,
+                      startUrl,
+                      nowUrl
                     );
                   }
 
@@ -473,15 +471,11 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
                 }
 
                 if (driven.length === 0) {
-                  return yield* Effect.fail(
-                    NoControlsDrivenError.create(skipped)
-                  );
+                  return yield* NoControlsDrivenError.create(skipped);
                 }
 
                 if (observed.length === 0) {
-                  return yield* Effect.fail(
-                    NothingRevealedError.create(driven)
-                  );
+                  return yield* NothingRevealedError.create(driven);
                 }
 
                 return { requests: observed, driven, skipped };
@@ -491,7 +485,12 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
         }),
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    InteractionDiscoveryService,
+    InteractionDiscoveryService.make
+  );
+}
 
 /**
  * Default layer for {@link InteractionDiscoveryService}.
@@ -500,4 +499,4 @@ export class InteractionDiscoveryService extends Effect.Service<InteractionDisco
  * @public
  */
 export const InteractionDiscoveryServiceLayer =
-  InteractionDiscoveryService.Default;
+  InteractionDiscoveryService.layer;

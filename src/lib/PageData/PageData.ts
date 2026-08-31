@@ -2,14 +2,12 @@ import { Schema } from 'effect';
 
 export const PageDataSchema = Schema.Struct({
   url: Schema.String.pipe(
-    Schema.filter((s) => URL.canParse(s), {
-      message: () => 'Invalid URL format',
-    })
+    Schema.check(Schema.makeFilter((s) => URL.canParse(s) ? undefined : 'Invalid URL format'))
   ),
   html: Schema.String,
   title: Schema.optional(Schema.String),
   /** All available metadata from meta tags */
-  metadata: Schema.Record({ key: Schema.String, value: Schema.String }),
+  metadata: Schema.Record(Schema.String, Schema.String),
   /** Commonly used metadata fields for convenience */
   commonMetadata: Schema.optional(
     Schema.Struct({
@@ -19,18 +17,18 @@ export const PageDataSchema = Schema.Struct({
       robots: Schema.optional(Schema.String),
     })
   ),
-  statusCode: Schema.Number.pipe(Schema.int(), Schema.between(100, 599)),
+  statusCode: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 100, maximum: 599 })),
   /** All response headers */
-  headers: Schema.Record({ key: Schema.String, value: Schema.String }),
+  headers: Schema.Record(Schema.String, Schema.String),
   /** When the fetch operation started */
-  fetchedAt: Schema.DateFromSelf,
+  fetchedAt: Schema.Date,
   /** How long the entire fetch and parse operation took in milliseconds */
   scrapeDurationMs: Schema.Number,
   /** The crawl depth (number of hops from the starting URL) */
-  depth: Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(0)),
+  depth: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   /** Optional extracted data from the page */
   extractedData: Schema.optional(
-    Schema.Record({ key: Schema.String, value: Schema.Unknown })
+    Schema.Record(Schema.String, Schema.Unknown)
   ),
 });
 

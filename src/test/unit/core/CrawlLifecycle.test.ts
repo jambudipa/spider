@@ -63,9 +63,12 @@ describe('DomainCompleteEvent emission', () => {
 
     await Effect.runPromise(
       program.pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(captureEventsLayer(eventsRef))
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            captureEventsLayer(eventsRef)
+          ))
+        ))
       )
     );
 
@@ -103,9 +106,12 @@ describe('DomainCompleteEvent emission', () => {
         const sink = Sink.forEach((_r: CrawlResult) => Effect.void);
         return yield* spider.crawl(startUrls, sink);
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(captureEventsLayer(eventsRef))
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            captureEventsLayer(eventsRef)
+          ))
+        ))
       )
     );
 
@@ -171,7 +177,7 @@ describe('Parent-interrupt drain', () => {
     const program = Effect.gen(function* () {
       const spider = yield* SpiderService;
       // Fork the crawl so we can interrupt it externally.
-      const fiber = yield* Effect.fork(spider.crawl(startUrls, sink));
+      const fiber = yield* Effect.forkChild(spider.crawl(startUrls, sink));
       // Wait long enough for at least one fetch to complete and offer.
       yield* Effect.sleep('150 millis');
       // Interrupt while in-flight.
@@ -182,9 +188,12 @@ describe('Parent-interrupt drain', () => {
 
     await Effect.runPromise(
       program.pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(captureEventsLayer(eventsRef))
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            captureEventsLayer(eventsRef)
+          ))
+        ))
       )
     );
 

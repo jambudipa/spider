@@ -94,7 +94,7 @@ const sweep = (
   Effect.gen(function* () {
     const discovery = yield* InteractionDiscoveryService;
     return yield* discovery.sweep(page, controls, options);
-  }).pipe(Effect.provide(InteractionDiscoveryService.Default));
+  }).pipe(Effect.provide(InteractionDiscoveryService.layer));
 
 const DOCS: InteractionControl = {
   id: 'tab-docs',

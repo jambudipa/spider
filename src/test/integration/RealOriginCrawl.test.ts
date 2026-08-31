@@ -106,9 +106,12 @@ const crawl = async (options: { maxPages: number }) => {
       const spider = yield* SpiderService;
       yield* spider.crawl([origin], sink);
     }).pipe(
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(config)),
-      Effect.provide(captureEvents)
+      Effect.provide(SpiderService.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          captureEvents
+        ))
+      ))
     )
   );
 

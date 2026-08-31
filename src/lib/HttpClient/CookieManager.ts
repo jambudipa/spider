@@ -103,10 +103,10 @@ export interface CookieManagerService {
   deserialize: (data: string) => Effect.Effect<void, CookieError | JsonParseError>;
 }
 
-export class CookieManager extends Context.Tag('CookieManager')<
+export class CookieManager extends Context.Service<
   CookieManager,
   CookieManagerService
->() {}
+>()('CookieManager') {}
 
 /**
  * Create a CookieManager service implementation

@@ -222,7 +222,7 @@ export const createTestSummary = (
   const averageRequestTime =
     totalRequests > 0 ? Duration.toMillis(totalDuration) / totalRequests : 0;
 
-  const scenarios = HashSet.toValues(
+  const scenarios = Array.from(
     HashSet.fromIterable(results.map((r) => r.scenario))
   );
   const coverage = (passedScenarios / totalScenarios) * 100;

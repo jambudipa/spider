@@ -35,7 +35,7 @@ function isNodeError(error: unknown): error is NodeError {
 
 function getErrorCode(error: unknown): Option.Option<string> {
   if (isNodeError(error)) {
-    return Option.fromNullable(error.code);
+    return Option.fromNullishOr(error.code);
   }
   return Option.none();
 }
@@ -180,7 +180,7 @@ export const FileUtils = {
    * const config = yield* FileUtils.readJson('/path/to/config.json', ConfigSchema);
    * ```
    */
-  readJson: <A, I = A, R = never>(filePath: string, schema: Schema.Schema<A, I, R>) =>
+  readJson: <A, I = A, R = never>(filePath: string, schema: Schema.Codec<A, I, R>) =>
     Effect.gen(function* () {
       const content = yield* FileUtils.readText(filePath);
       return yield* JsonUtils.parse(content, schema);
@@ -217,7 +217,7 @@ export const FileUtils = {
       catch: () => new FileReadError({ path: filePath, code: Option.none(), cause: 'Access check failed' })
     }).pipe(
       Effect.map(() => true),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**
@@ -395,7 +395,7 @@ export const FileUtils = {
    */
   readTextOrDefault: (filePath: string, defaultContent: string) =>
     FileUtils.readText(filePath).pipe(
-      Effect.catchAll(() => Effect.succeed(defaultContent))
+      Effect.catch(() => Effect.succeed(defaultContent))
     ),
 
   /**
@@ -411,9 +411,9 @@ export const FileUtils = {
    * );
    * ```
    */
-  readJsonOrDefault: <A, I = A, R = never>(filePath: string, schema: Schema.Schema<A, I, R>, defaultValue: A) =>
+  readJsonOrDefault: <A, I = A, R = never>(filePath: string, schema: Schema.Codec<A, I, R>, defaultValue: A) =>
     FileUtils.readJson(filePath, schema).pipe(
-      Effect.catchAll(() => Effect.succeed(defaultValue))
+      Effect.catch(() => Effect.succeed(defaultValue))
     ),
 
   /**
@@ -430,7 +430,7 @@ export const FileUtils = {
   tryReadText: (filePath: string) =>
     FileUtils.readText(filePath).pipe(
       Effect.map(Option.some),
-      Effect.catchAll(() => Effect.succeed(Option.none()))
+      Effect.catch(() => Effect.succeed(Option.none()))
     ),
 
   /**
@@ -503,7 +503,7 @@ export const FileUtils = {
   isFile: (filePath: string) =>
     FileUtils.stat(filePath).pipe(
       Effect.map(stats => stats.isFile()),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**
@@ -517,7 +517,7 @@ export const FileUtils = {
   isDirectory: (dirPath: string) =>
     FileUtils.stat(dirPath).pipe(
       Effect.map(stats => stats.isDirectory()),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**

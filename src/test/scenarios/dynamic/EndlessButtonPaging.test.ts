@@ -39,7 +39,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
   it('should detect load more buttons', async () => {
     try {
       // Wait for page to load
-      await test.waitForContent('body');
+      await runEffect(test.waitForContent('body'));
       
       // Look for load more button patterns
       const loadMoreButtons = await test.getPage().$$eval(
@@ -82,7 +82,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
         expect(visibleButtons.length).toBeGreaterThan(0);
       }
     } catch (error) {
-      await test.handleFailure('detect-load-more-buttons', error as Error);
+      await runEffect(test.handleFailure('detect-load-more-buttons', error as Error));
     }
   });
 
@@ -156,7 +156,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('load-content-on-click', error as Error);
+      await runEffect(test.handleFailure('load-content-on-click', error as Error));
     }
   });
 
@@ -219,7 +219,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       expect(maxCount).toBeGreaterThanOrEqual(reviewCounts[0]);
       
     } catch (error) {
-      await test.handleFailure('handle-multiple-clicks', error as Error);
+      await runEffect(test.handleFailure('handle-multiple-clicks', error as Error));
     }
   });
 
@@ -297,7 +297,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       expect(finalReviews.length).toBeGreaterThan(0);
       
     } catch (error) {
-      await test.handleFailure('detect-all-content-loaded', error as Error);
+      await runEffect(test.handleFailure('detect-all-content-loaded', error as Error));
     }
   });
 
@@ -373,7 +373,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       expect(duplicateRatio).toBeLessThan(0.5); // Less than 50% duplicates
       
     } catch (error) {
-      await test.handleFailure('extract-dynamically-loaded-items', error as Error);
+      await runEffect(test.handleFailure('extract-dynamically-loaded-items', error as Error));
     }
   });
 
@@ -482,7 +482,7 @@ describe('EndlessButtonPaging Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('handle-button-state-changes', error as Error);
+      await runEffect(test.handleFailure('handle-button-state-changes', error as Error));
     }
   });
 });

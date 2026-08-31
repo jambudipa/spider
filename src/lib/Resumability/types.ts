@@ -25,7 +25,7 @@ export class StateDelta extends Schema.Class<StateDelta>('StateDelta')({
   /** When this delta was created */
   timestamp: Schema.Date,
   /** The operation that created this delta */
-  operation: Schema.Union(
+  operation: Schema.Union([
     Schema.Struct({
       type: Schema.Literal('enqueue'),
       request: PriorityRequest,
@@ -38,7 +38,7 @@ export class StateDelta extends Schema.Class<StateDelta>('StateDelta')({
       type: Schema.Literal('mark_visited'),
       fingerprint: Schema.String,
     })
-  ),
+  ]),
 }) {}
 
 /**

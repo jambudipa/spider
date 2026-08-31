@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import * as cheerio from 'cheerio';
 import { PageDataSchema } from '../PageData/PageData.js';
 import {
@@ -41,7 +41,6 @@ export const ADAPTER_DNS_SENTINEL = '[adapter-kind:dns:ENOTFOUND]';
 export const ADAPTER_CONN_REFUSED_SENTINEL =
   '[adapter-kind:connection_refused:ECONNREFUSED]';
 
-/* eslint-disable effect/no-undefined-use-option -- interop helper: `statusCode?` field on both HttpAdapterError and NetworkError is bare optional by existing convention; lifting through Option here would change the public field shape */
 const inferStatusCode = (
   kind: HttpAdapterError['kind'],
   provided: number | undefined
@@ -52,7 +51,6 @@ const inferStatusCode = (
   if (kind === 'http_5xx') return 500;
   return undefined;
 };
-/* eslint-enable effect/no-undefined-use-option */
 
 const adapterErrorToTypedError = (
   url: string,
@@ -127,10 +125,10 @@ const adapterErrorToTypedError = (
  * @group Services
  * @public
  */
-export class ScraperService extends Effect.Service<ScraperService>()(
+export class ScraperService extends Context.Service<ScraperService>()(
   '@jambudipa.io/ScraperService',
   {
-    effect: Effect.sync(() => ({
+    make: Effect.sync(() => ({
       /**
        * Fetches a URL and parses the HTML to extract basic page information.
        *
@@ -165,8 +163,8 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           const domain = new URL(url).hostname;
 
           const timeoutMs = 30000; // 30 seconds — kept inside ScraperService
-                                   // (and passed to the adapter) for parity
-                                   // with the previous behaviour.
+          // (and passed to the adapter) for parity
+          // with the previous behaviour.
 
           // Build a per-request id from crypto.randomUUID() — node 20+
           // exposes this globally and we declare node>=20 in engines.
@@ -189,15 +187,12 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           const adapterResponse: HttpAdapterResponse = yield* adapter
             .fetch(request)
             .pipe(
-              Effect.catchAll((err) =>
+              Effect.catch((err) =>
                 Effect.gen(function* () {
                   const failTime = yield* DateTime.now;
-                  const durationMs =
-                    DateTime.toEpochMillis(failTime) - startMs;
+                  const durationMs = DateTime.toEpochMillis(failTime) - startMs;
                   if (err.kind === 'timeout') {
-                    yield* Effect.logWarning(
-                      'fetch abort (timeout)'
-                    ).pipe(
+                    yield* Effect.logWarning('fetch abort (timeout)').pipe(
                       Effect.annotateLogs({
                         event: 'fetch_abort_triggered',
                         domain,
@@ -208,29 +203,24 @@ export class ScraperService extends Effect.Service<ScraperService>()(
                       })
                     );
                   }
-                  return yield* Effect.fail(
-                    adapterErrorToTypedError(url, durationMs, err)
-                  );
+                  return yield* adapterErrorToTypedError(url, durationMs, err);
                 })
               )
             );
 
           // Check content type - skip binary files
-          const contentType =
-            adapterResponse.headers['content-type'] ?? '';
+          const contentType = adapterResponse.headers['content-type'] ?? '';
           if (
             !contentType.includes('text/html') &&
             !contentType.includes('application/xhtml') &&
             !contentType.includes('text/') &&
             contentType !== ''
           ) {
-            return yield* Effect.fail(
-              ContentTypeError.create(url, contentType, [
-                'text/html',
-                'application/xhtml+xml',
-                'text/*',
-              ])
-            );
+            return yield* ContentTypeError.create(url, contentType, [
+              'text/html',
+              'application/xhtml+xml',
+              'text/*',
+            ]);
           }
 
           // Defensive runtime check: the contract requires `body: string`,
@@ -238,15 +228,10 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           // contract violations as a ResponseError rather than letting
           // cheerio crash deep in parsing.
           if (typeof adapterResponse.body !== 'string') {
-            const bodyTypeName =
-              adapterResponse.body === null // eslint-disable-line effect/no-null-use-option -- discriminates null vs undefined in a runtime contract-violation diagnostic message; not a model of absence
-                ? 'null'
-                : typeof adapterResponse.body;
-            return yield* Effect.fail(
-              ResponseError.fromCause(
-                url,
-                `HttpAdapter contract violation: response.body must be a string, got ${bodyTypeName}`
-              )
+            const bodyTypeName = typeof adapterResponse.body;
+            return yield* ResponseError.fromCause(
+              url,
+              `HttpAdapter contract violation: response.body must be a string, got ${bodyTypeName}`
             );
           }
 
@@ -279,7 +264,9 @@ export class ScraperService extends Effect.Service<ScraperService>()(
 
           // Copy headers into the existing PageData shape. Adapter
           // contract guarantees `Record<string, string>`.
-          const headers: Record<string, string> = { ...adapterResponse.headers };
+          const headers: Record<string, string> = {
+            ...adapterResponse.headers,
+          };
 
           // Calculate duration
           const endTime = yield* DateTime.now;
@@ -288,8 +275,8 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           // Build PageData object using Option for optional fields
           const titleText = $('title').text();
           const title = Option.liftPredicate(titleText, (t) => t.length > 0);
-          const hasAnyMetadata = Object.values(commonMetadata).some(
-            (v) => Option.isSome(Option.fromNullable(v))
+          const hasAnyMetadata = Object.values(commonMetadata).some((v) =>
+            Option.isSome(Option.fromNullishOr(v))
           );
           const maybeCommonMetadata = Option.liftPredicate(
             commonMetadata,
@@ -310,11 +297,13 @@ export class ScraperService extends Effect.Service<ScraperService>()(
           };
 
           // Validate with schema
-          const validated = yield* Schema.decode(PageDataSchema)(pageData);
+          const validated = yield* Schema.decodeEffect(PageDataSchema)(pageData);
           // `adapterResponse.url` is the final URL after redirects
           // (Node.js native fetch exposes this via `Response.url`).
           return { pageData: validated, finalUrl: adapterResponse.url };
         }),
     })),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(ScraperService, ScraperService.make);
+}

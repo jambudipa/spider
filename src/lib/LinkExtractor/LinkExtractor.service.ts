@@ -1,4 +1,4 @@
-import { Chunk, Data, Effect, Option } from 'effect';
+import { Chunk, Context, Data, Effect, Layer, Option } from 'effect';
 import * as cheerio from 'cheerio';
 import type { AnyNode, Element } from 'domhandler';
 
@@ -172,10 +172,10 @@ const DEFAULT_CONFIG: Required<LinkExtractorConfig> = {
  * @group Services
  * @public
  */
-export class LinkExtractorService extends Effect.Service<LinkExtractorService>()(
+export class LinkExtractorService extends Context.Service<LinkExtractorService>()(
   '@jambudipa.io/LinkExtractorService',
   {
-    effect: Effect.succeed({
+    make: Effect.succeed({
       extractLinks: (html: string, config?: LinkExtractorConfig) =>
         Effect.gen(function* () {
           const finalConfig = { ...DEFAULT_CONFIG, ...config };
@@ -192,7 +192,12 @@ export class LinkExtractorService extends Effect.Service<LinkExtractorService>()
         }),
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    LinkExtractorService,
+    LinkExtractorService.make
+  );
+}
 
 /**
  * Default layer for LinkExtractorService.
@@ -200,7 +205,7 @@ export class LinkExtractorService extends Effect.Service<LinkExtractorService>()
  * @group Layers
  * @public
  */
-export const LinkExtractorServiceLayer = LinkExtractorService.Default;
+export const LinkExtractorServiceLayer = LinkExtractorService.layer;
 
 /**
  * Type guard to check if a cheerio element is a DOM Element.
@@ -229,7 +234,7 @@ const extractRawLinks = (
     attr: string
   ): Option.Option<string> => {
     const value = $(element).attr(attr);
-    return Option.fromNullable(value?.trim()).pipe(
+    return Option.fromNullishOr(value?.trim()).pipe(
       Option.filter((v) => v.length > 0)
     );
   };

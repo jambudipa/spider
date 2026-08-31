@@ -13,13 +13,30 @@ const testConfigLayer = Layer.succeed(
   makeSpiderConfig({})
 );
 
-const testLayer = Layer.provide(UrlDeduplicatorService.Default, testConfigLayer);
+const testLayer = Layer.provide(UrlDeduplicatorService.layer, testConfigLayer);
 
 const runWithDeduplicator = <A, E>(
   effect: Effect.Effect<A, E, UrlDeduplicatorService>
 ) => Effect.runPromise(Effect.provide(effect, testLayer));
 
 describe('UrlDeduplicator', () => {
+  it('creates independent trackers for separate domain crawls', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const firstDomain = yield* UrlDeduplicatorService.make;
+        const secondDomain = yield* UrlDeduplicatorService.make;
+        const url = 'https://shared.example.test/page';
+
+        return yield* Effect.all([
+          firstDomain.tryAdd(url),
+          secondDomain.tryAdd(url),
+        ]);
+      }).pipe(Effect.provide(SpiderConfig.layerWith(makeSpiderConfig({}))))
+    );
+
+    expect(result).toEqual([true, true]);
+  });
+
   it('should detect duplicate URLs', async () => {
     const result = await runWithDeduplicator(
       Effect.gen(function* () {

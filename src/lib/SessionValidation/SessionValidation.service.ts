@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Option } from 'effect';
+import { Context, Data, Duration, Effect, Layer, Option } from 'effect';
 import type { Page } from 'playwright';
 
 /**
@@ -175,7 +175,7 @@ const readMarker = (
   marker: SignedInMarker
 ): Effect.Effect<boolean> =>
   Effect.gen(function* () {
-    const bySelector = yield* Option.fromNullable(marker.selector).pipe(
+    const bySelector = yield* Option.fromNullishOr(marker.selector).pipe(
       Option.match({
         onNone: () => Effect.succeed(false),
         onSome: (selector) =>
@@ -187,7 +187,7 @@ const readMarker = (
     );
     if (bySelector) return true;
 
-    return yield* Option.fromNullable(marker.text).pipe(
+    return yield* Option.fromNullishOr(marker.text).pipe(
       Option.match({
         onNone: () => Effect.succeed(false),
         onSome: (text) =>
@@ -221,7 +221,7 @@ const observe = (
 
     const finalUrl = yield* Effect.sync(() => page.url());
 
-    return yield* Option.fromNullable(request.marker).pipe(
+    return yield* Option.fromNullishOr(request.marker).pipe(
       Option.match({
         onNone: () => Effect.succeed<ContextEvidence>({ finalUrl }),
         onSome: (marker) =>
@@ -265,10 +265,10 @@ const observe = (
  * @group Services
  * @public
  */
-export class SessionValidationService extends Effect.Service<SessionValidationService>()(
+export class SessionValidationService extends Context.Service<SessionValidationService>()(
   '@jambudipa.io/SessionValidationService',
   {
-    effect: Effect.succeed<SessionValidationServiceInterface>({
+    make: Effect.succeed<SessionValidationServiceInterface>({
       validate: (session, anonymous, request) =>
         Effect.gen(function* () {
           // Sequential, not concurrent: two contexts hitting the same route at
@@ -306,7 +306,7 @@ export class SessionValidationService extends Effect.Service<SessionValidationSe
             return { valid: false, reason: 'no-protection-observed' };
           };
 
-          const verdict = Option.fromNullable(request.marker).pipe(
+          const verdict = Option.fromNullishOr(request.marker).pipe(
             Option.match({ onSome: byMarker, onNone: byRedirect })
           );
 
@@ -318,7 +318,12 @@ export class SessionValidationService extends Effect.Service<SessionValidationSe
         }),
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    SessionValidationService,
+    SessionValidationService.make
+  );
+}
 
 /**
  * Default layer for {@link SessionValidationService}.
@@ -326,4 +331,4 @@ export class SessionValidationService extends Effect.Service<SessionValidationSe
  * @group Layers
  * @public
  */
-export const SessionValidationServiceLayer = SessionValidationService.Default;
+export const SessionValidationServiceLayer = SessionValidationService.layer;

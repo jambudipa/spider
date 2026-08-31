@@ -3,7 +3,8 @@
  * Comprehensive helper functions and test infrastructure for Effect-based testing
  */
 
-import { Cause, Context, Data, Duration, Effect, Exit, Layer, Option, pipe, TestClock, Ref, Random } from 'effect';
+import { Cause, Context, Data, Duration, Effect, Exit, Layer, Option, pipe, Ref, Random } from 'effect';
+import { TestClock } from 'effect/testing';
 
 // TaggedError for test utilities
 class TestError extends Data.TaggedError('TestError')<{
@@ -32,7 +33,6 @@ export const runTest = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
  * Run an Effect synchronously - intended for test setup only
  */
 export const runTestSync = <A, E>(effect: Effect.Effect<A, E>): A =>
-  // eslint-disable-next-line effect/no-effect-runsync-unguarded -- Test utility at program boundary
   Effect.runSync(effect);
 
 /**
@@ -51,9 +51,9 @@ export const expectSuccessEffect = <A, E>(
   Effect.gen(function* () {
     const exit = yield* Effect.exit(effect);
     if (Exit.isFailure(exit)) {
-      return yield* Effect.fail(new AssertionError({
+      return yield* new AssertionError({
         message: `Expected success but got failure: ${Cause.pretty(exit.cause)}`
-      }));
+      });
     }
     return exit.value;
   });
@@ -87,7 +87,7 @@ export const extractWithTimeout = <A, E>(
     if (Option.isSome(optionResult)) {
       return yield* unwrapOption(optionResult.value);
     }
-    return yield* Effect.fail(new TimeoutError({ message: 'Timeout' }));
+    return yield* new TimeoutError({ message: 'Timeout' });
   });
 
 /**
@@ -99,18 +99,18 @@ export const expectFailureEffect = <A, E>(
   Effect.gen(function* () {
     const exit = yield* Effect.exit(effect);
     if (Exit.isSuccess(exit)) {
-      return yield* Effect.fail(new AssertionError({
+      return yield* new AssertionError({
         message: `Expected failure but got success`
-      }));
+      });
     }
     // Extract the error from the cause using Cause utilities
-    const failureOption = Cause.failureOption(exit.cause);
+    const failureOption = Cause.findErrorOption(exit.cause);
     if (Option.isSome(failureOption)) {
       return failureOption.value;
     }
-    return yield* Effect.fail(new AssertionError({
+    return yield* new AssertionError({
       message: `Unexpected failure cause: ${Cause.pretty(exit.cause)}`
-    }));
+    });
   });
 
 /**
@@ -197,9 +197,9 @@ export const expectEffectGen = <A, E>(
       const result = yield* expectSuccessEffect(effect);
       // Simple equality check - for complex objects, users should use proper assertion libraries
       if (result !== expected) {
-        return yield* Effect.fail(new AssertionError({
+        return yield* new AssertionError({
           message: `Expected values to be equal`
-        }));
+        });
       }
     }),
   toSucceed: () => expectSuccessEffect(effect),
@@ -208,9 +208,9 @@ export const expectEffectGen = <A, E>(
     Effect.gen(function* () {
       const error = yield* expectFailureEffect(effect);
       if (!errorCheck(error)) {
-        return yield* Effect.fail(new AssertionError({
+        return yield* new AssertionError({
           message: `Error did not match expected condition`
-        }));
+        });
       }
     }),
 });
@@ -227,7 +227,6 @@ export const runSyncWithTestServices = <A, E>(
 ): A => {
   // Note: TestClock.setTime requires TestServices context
   // For simple sync test execution, we just run the effect
-  // eslint-disable-next-line effect/no-effect-runsync-unguarded -- Test utility at program boundary
   return Effect.runSync(effect);
 };
 
@@ -235,7 +234,7 @@ export const runSyncWithTestServices = <A, E>(
  * Create a mock service layer with proper typing
  */
 export const createMockServiceLayer = <S, I>(
-  tag: Context.Tag<I, S>,
+  tag: Context.Service<I, S>,
   implementation: S
 ): Layer.Layer<I> =>
   Layer.succeed(tag, implementation);
@@ -244,9 +243,9 @@ export const createMockServiceLayer = <S, I>(
  * Test layer for common services
  */
 export const commonTestLayers = {
-  clock: TestClock.defaultTestClock,
+  clock: TestClock.layer(),
   random: Layer.empty,
-  deterministic: TestClock.defaultTestClock,
+  deterministic: TestClock.layer(),
 };
 
 /**
@@ -342,7 +341,7 @@ export const testData = {
 
 // Type guards for error matching
 const isNonNullObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && Option.isSome(Option.fromNullable(value)) && !Option.isOption(value);
+  typeof value === 'object' && Option.isSome(Option.fromNullishOr(value)) && !Option.isOption(value);
 
 const hasTagProperty = (obj: Record<string, unknown>): obj is Record<string, unknown> & { _tag: unknown } =>
   '_tag' in obj;
@@ -372,7 +371,7 @@ export const errorMatchers = {
   hasProperty: <T>(error: unknown, property: string, value?: T): boolean => {
     if (!isNonNullObject(error)) return false;
     if (!(property in error)) return false;
-    if (Option.isNone(Option.fromNullable(value))) return true;
+    if (Option.isNone(Option.fromNullishOr(value))) return true;
     return error[property] === value;
   }
 };

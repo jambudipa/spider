@@ -10,17 +10,17 @@ import type { IEffectAssertions } from '../assertions/EffectAssertions.js';
 import type { SpiderConfigOptions } from '../../lib/Config/SpiderConfig.service.js';
 
 export interface TestContextShape {
-  readonly spider: SpiderService;
+  readonly spider: SpiderService['Service'];
   readonly baseUrl: string;
   readonly rateLimiter: RateLimiterServiceInterface;
   readonly assertions: IEffectAssertions;
   readonly cleanup: () => Effect.Effect<void>;
 }
 
-export class TestContext extends Context.Tag('TestContext')<
+export class TestContext extends Context.Service<
   TestContext,
   TestContextShape
->() {}
+>()('TestContext') {}
 
 export interface TestContextConfig {
   readonly baseUrl?: string;

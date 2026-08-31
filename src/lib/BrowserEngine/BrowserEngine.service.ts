@@ -3,7 +3,7 @@
  * Provides browser automation capabilities using Playwright with Effect patterns
  */
 
-import { Effect, Layer, Ref, Option } from 'effect';
+import { Context, Effect, Layer, Ref, Option } from 'effect';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { BrowserError, PageError } from '../errors/effect-errors.js';
 
@@ -58,7 +58,7 @@ export interface BrowserEngineServiceInterface {
   /**
    * Scroll the page
    */
-  scroll: (distance: number) => Effect.Effect<void>;
+  scroll: (distance: number) => Effect.Effect<void, PageError>;
 
   /**
    * Execute JavaScript in the page
@@ -288,7 +288,12 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
               try: () => page.evaluate((d) => {
                 window.scrollBy(0, d);
               }, distance),
-              catch: (error) => error
+              catch: (error) =>
+                new PageError({
+                  url: page.url(),
+                  operation: 'scroll',
+                  cause: error,
+                })
             })
           );
 
@@ -344,7 +349,12 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
             yield* Effect.ignore(
               Effect.tryPromise({
                 try: () => pageOpt.value.close(),
-                catch: (error) => error
+                catch: (error) =>
+                  new PageError({
+                    url: pageOpt.value.url(),
+                    operation: 'closePage',
+                    cause: error,
+                  })
               })
             );
 
@@ -360,7 +370,12 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
             yield* Effect.ignore(
               Effect.tryPromise({
                 try: () => pageOpt.value.close(),
-                catch: (error) => error
+                catch: (error) =>
+                  new PageError({
+                    url: pageOpt.value.url(),
+                    operation: 'closePage',
+                    cause: error,
+                  })
               })
             );
           }
@@ -371,7 +386,7 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
             yield* Effect.ignore(
               Effect.tryPromise({
                 try: () => contextOpt.value.close(),
-                catch: (error) => error
+                catch: (error) => BrowserError.closeContext(error)
               })
             );
           }
@@ -382,7 +397,8 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
             yield* Effect.ignore(
               Effect.tryPromise({
                 try: () => browserOpt.value.close(),
-                catch: (error) => error
+                catch: (error) =>
+                  new BrowserError({ operation: 'close', cause: error })
               })
             );
           }
@@ -400,17 +416,25 @@ export const makeBrowserEngine = (config: BrowserEngineConfig = {}) =>
 /**
  * Browser Engine Service implementation using Effect patterns
  */
-export class BrowserEngineService extends Effect.Service<BrowserEngineService>()(
+export class BrowserEngineService extends Context.Service<
+  BrowserEngineService,
+  BrowserEngineServiceInterface
+>()(
   '@jambudipa.io/BrowserEngine',
   {
-    effect: makeBrowserEngine()
+    make: makeBrowserEngine()
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    BrowserEngineService,
+    BrowserEngineService.make
+  );
+}
 
 /**
  * Default BrowserEngine layer
  */
-export const BrowserEngineLive = BrowserEngineService.Default;
+export const BrowserEngineLive = BrowserEngineService.layer;
 
 /**
  * Create BrowserEngine with custom configuration.
@@ -419,18 +443,13 @@ export const BrowserEngineLive = BrowserEngineService.Default;
  * pass `{ headless: false }` and you get a headed browser.
  */
 export const BrowserEngineWithConfig = (config: BrowserEngineConfig) =>
-  Layer.effect(
-    BrowserEngineService,
-    Effect.map(makeBrowserEngine(config), (engine) =>
-      BrowserEngineService.make(engine)
-    )
-  );
+  Layer.effect(BrowserEngineService, makeBrowserEngine(config));
 
 /**
  * Helper to run browser operations with automatic cleanup
  */
 export const withBrowser = <A, E, R>(
-  operation: (_engine: BrowserEngineService) => Effect.Effect<A, E, R>
+  operation: (_engine: BrowserEngineServiceInterface) => Effect.Effect<A, E, R>
 ) => Effect.gen(function* () {
   const engine = yield* BrowserEngineService;
   

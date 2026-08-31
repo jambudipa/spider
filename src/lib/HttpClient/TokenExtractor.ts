@@ -94,10 +94,10 @@ export interface TokenExtractorService {
 
 export type { TokenExtractorError };
 
-export class TokenExtractor extends Context.Tag('TokenExtractor')<
+export class TokenExtractor extends Context.Service<
   TokenExtractor,
   TokenExtractorService
->() {}
+>()('TokenExtractor') {}
 
 /**
  * Create a TokenExtractor service implementation
@@ -300,9 +300,8 @@ export const makeTokenExtractor = Effect.gen(function* () {
 
   // Helper to compute expiry DateTime (1 hour from now)
   const computeExpiryDate = (): Date => {
-    const now = DateTime.unsafeNow();
-    const oneHourMs = 3600000;
-    return DateTime.toDate(DateTime.add(now, { millis: oneHourMs }));
+    const now = DateTime.nowUnsafe();
+    return DateTime.toDate(DateTime.addDuration(now, '1 hour'));
   };
 
   const service: TokenExtractorService = {
@@ -429,7 +428,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
             .getToken(TokenType.CSRF)
             .pipe(
               Effect.map(Option.some),
-              Effect.catchAll(() => Effect.succeed(Option.none()))
+              Effect.catch(() => Effect.succeed(Option.none()))
             );
 
           if (Option.isSome(csrfTokenOption)) {
@@ -443,9 +442,9 @@ export const makeTokenExtractor = Effect.gen(function* () {
           const isValid = yield* stateManager.isTokenValid(TokenType.API);
 
           if (!isValid) {
-            return yield* Effect.fail(
-              new TokenNotAvailableError({ message: 'API token not available or expired' })
-            );
+            return yield* new TokenNotAvailableError({
+              message: 'API token not available or expired',
+            });
           }
 
           const apiToken = yield* stateManager.getToken(TokenType.API);
@@ -462,7 +461,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
             .getToken(TokenType.CSRF)
             .pipe(
               Effect.map(Option.some),
-              Effect.catchAll(() => Effect.succeed(Option.none()))
+              Effect.catch(() => Effect.succeed(Option.none()))
             );
           if (Option.isSome(currentCSRFOption)) {
             yield* service.detectTokenRotation(
@@ -478,7 +477,7 @@ export const makeTokenExtractor = Effect.gen(function* () {
             .getToken(TokenType.API)
             .pipe(
               Effect.map(Option.some),
-              Effect.catchAll(() => Effect.succeed(Option.none()))
+              Effect.catch(() => Effect.succeed(Option.none()))
             );
           if (Option.isSome(currentAPIOption)) {
             yield* service.detectTokenRotation(
@@ -534,7 +533,9 @@ export const makeTokenExtractor = Effect.gen(function* () {
     refreshToken: (type: TokenType, refreshUrl?: string) =>
       Effect.gen(function* () {
         if (!refreshUrl) {
-          return yield* Effect.fail(new NoRefreshUrlError({ message: 'No refresh URL provided' }));
+          return yield* new NoRefreshUrlError({
+            message: 'No refresh URL provided',
+          });
         }
 
         // Make request to refresh endpoint
@@ -550,9 +551,10 @@ export const makeTokenExtractor = Effect.gen(function* () {
         const newToken = tokens.find((t) => t.type === type);
 
         if (!newToken) {
-          return yield* Effect.fail(
-            new TokenRefreshError({ message: `Failed to refresh ${type} token`, tokenType: type })
-          );
+          return yield* new TokenRefreshError({
+            message: `Failed to refresh ${type} token`,
+            tokenType: type,
+          });
         }
 
         // Store new token

@@ -3,7 +3,7 @@
  *
  * Demonstrates the two override surfaces:
  *
- * 1. Effect's standard `Logger` — replace via `Logger.replace` to route every
+ * 1. Effect's standard `Logger` — replace via `Logger.layer` to route every
  *    `Effect.log*` call (debug/info/warn/error + structured annotations) to
  *    your own destination (pino, datadog, OpenTelemetry, file, etc.).
  *
@@ -14,7 +14,7 @@
  * Both are independent. Override either, both, or neither.
  */
 
-import { Chunk, Effect, HashMap, Layer, Logger, LogLevel, Ref, Sink } from 'effect';
+import { Chunk, Effect, Layer, Logger, References, Ref, Sink } from 'effect';
 import {
   CrawlResult,
   makeSpiderConfig,
@@ -26,10 +26,10 @@ import {
 // 1. Custom Effect Logger — formats annotations alongside the message.
 //    In production wire this to pino, OpenTelemetry, datadog, etc.
 const formatAnnotations = (
-  annotations: HashMap.HashMap<string, unknown>
+  annotations: Readonly<Record<string, unknown>>
 ): string => {
   let parts = Chunk.empty<string>();
-  for (const [key, value] of annotations) {
+  for (const [key, value] of Object.entries(annotations)) {
     parts = Chunk.append(parts, `${key}=${String(value)}`);
   }
   return Chunk.size(parts) > 0
@@ -37,16 +37,15 @@ const formatAnnotations = (
     : '';
 };
 
-const myLogger = Logger.make(
-  ({ logLevel, message, annotations, fiberId, date }) => {
-    const messageText = Array.isArray(message)
-      ? message.join(' ')
-      : String(message);
-    process.stdout.write(
-      `[${date.toISOString()}] [${logLevel.label}] [fiber=${String(fiberId)}] ${messageText}${formatAnnotations(annotations)}\n`
-    );
-  }
-);
+const myLogger = Logger.make(({ logLevel, message, fiber, date }) => {
+  const annotations = fiber.getRef(References.CurrentLogAnnotations);
+  const messageText = Array.isArray(message)
+    ? message.join(' ')
+    : String(message);
+  process.stdout.write(
+    `[${date.toISOString()}] [${logLevel.toUpperCase()}] [fiber=${fiber.id}] ${messageText}${formatAnnotations(annotations)}\n`
+  );
+});
 
 // Custom event sink: log every spider event with structured annotations.
 // In production, route this to analytics, a database, or an event bus.
@@ -82,13 +81,20 @@ const config = makeSpiderConfig({
 });
 
 const runnable = program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(config)),
-  // Override the SpiderEventSink — receives typed domain events.
-  Effect.provide(AnalyticsSink),
-  // Override Effect's built-in Logger — every Effect.log* now flows through myLogger.
-  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
-  Logger.withMinimumLogLevel(LogLevel.Info)
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          // Override the SpiderEventSink — receives typed domain events.
+          AnalyticsSink,
+          // Override Effect's built-in Logger — every Effect.log* now flows through myLogger.
+          Logger.layer([myLogger]),
+          Layer.succeed(References.MinimumLogLevel, 'Info')
+        )
+      )
+    )
+  )
 );
 
 void Effect.runPromiseExit(runnable).then((exit) => {

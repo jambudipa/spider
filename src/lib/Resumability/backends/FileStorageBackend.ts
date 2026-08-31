@@ -32,9 +32,9 @@ const SnapshotData = Schema.Struct({
 /**
  * JSON schemas for serialisation/deserialisation
  */
-const SpiderStateJsonSchema = Schema.parseJson(SpiderState, { space: 2 });
-const StateDeltaJsonSchema = Schema.parseJson(StateDelta, { space: 2 });
-const SnapshotDataJsonSchema = Schema.parseJson(SnapshotData, { space: 2 });
+const SpiderStateJsonSchema = Schema.fromJsonString(SpiderState, { space: 2 });
+const StateDeltaJsonSchema = Schema.fromJsonString(StateDelta, { space: 2 });
+const SnapshotDataJsonSchema = Schema.fromJsonString(SnapshotData, { space: 2 });
 
 /**
  * File system storage backend for spider state persistence.
@@ -121,7 +121,7 @@ export class FileStorageBackend implements StorageBackend {
             operation: 'saveState',
           }),
       });
-      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+      const jsonContent = yield* Schema.encodeEffect(SpiderStateJsonSchema)(
         state
       ).pipe(
         Effect.mapError(
@@ -157,7 +157,7 @@ export class FileStorageBackend implements StorageBackend {
         fs.readFile(statePath, 'utf8')
       ).pipe(
         Effect.map(Option.some),
-        Effect.catchAll((error: unknown) => {
+        Effect.catch((error: unknown) => {
           if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed(Option.none<string>());
           }
@@ -175,7 +175,7 @@ export class FileStorageBackend implements StorageBackend {
         return Option.none<SpiderState>();
       }
 
-      const decoded = yield* Schema.decode(SpiderStateJsonSchema)(
+      const decoded = yield* Schema.decodeEffect(SpiderStateJsonSchema)(
         result.value
       ).pipe(
         Effect.mapError(
@@ -234,7 +234,7 @@ export class FileStorageBackend implements StorageBackend {
             operation: 'saveDelta',
           }),
       });
-      const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(
+      const jsonContent = yield* Schema.encodeEffect(StateDeltaJsonSchema)(
         delta
       ).pipe(
         Effect.mapError(
@@ -279,7 +279,7 @@ export class FileStorageBackend implements StorageBackend {
       const deltasDir = path.join(self.getSessionDir(key), 'deltas');
 
       const files = yield* Effect.tryPromise(() => fs.readdir(deltasDir)).pipe(
-        Effect.catchAll((error: unknown) => {
+        Effect.catch((error: unknown) => {
           if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
@@ -319,7 +319,7 @@ export class FileStorageBackend implements StorageBackend {
             }),
         });
 
-        const decoded = yield* Schema.decode(StateDeltaJsonSchema)(content).pipe(
+        const decoded = yield* Schema.decodeEffect(StateDeltaJsonSchema)(content).pipe(
           Effect.mapError(
             (error) =>
               new PersistenceError({
@@ -359,9 +359,9 @@ export class FileStorageBackend implements StorageBackend {
       const snapshotData = {
         state,
         sequence,
-        timestamp: DateTime.formatIso(DateTime.unsafeNow()),
+        timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
       };
-      const jsonContent = yield* Schema.encode(SnapshotDataJsonSchema)(
+      const jsonContent = yield* Schema.encodeEffect(SnapshotDataJsonSchema)(
         snapshotData
       ).pipe(
         Effect.mapError(
@@ -400,7 +400,7 @@ export class FileStorageBackend implements StorageBackend {
         fs.readFile(snapshotPath, 'utf8')
       ).pipe(
         Effect.map(Option.some),
-        Effect.catchAll((error: unknown) => {
+        Effect.catch((error: unknown) => {
           if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed(Option.none<string>());
           }
@@ -418,7 +418,7 @@ export class FileStorageBackend implements StorageBackend {
         return Option.none<{ state: SpiderState; sequence: number }>();
       }
 
-      const parsed = yield* Schema.decode(SnapshotDataJsonSchema)(
+      const parsed = yield* Schema.decodeEffect(SnapshotDataJsonSchema)(
         content.value
       ).pipe(
         Effect.mapError(
@@ -447,7 +447,7 @@ export class FileStorageBackend implements StorageBackend {
       const deltasDir = path.join(self.getSessionDir(key), 'deltas');
 
       const files = yield* Effect.tryPromise(() => fs.readdir(deltasDir)).pipe(
-        Effect.catchAll((error: unknown) => {
+        Effect.catch((error: unknown) => {
           if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
@@ -494,7 +494,7 @@ export class FileStorageBackend implements StorageBackend {
       const sessionsDir = path.join(self.storageDir, 'sessions');
 
       const dirs = yield* Effect.tryPromise(() => fs.readdir(sessionsDir)).pipe(
-        Effect.catchAll((error: unknown) => {
+        Effect.catch((error: unknown) => {
           if (isNodeJSError(error) && error.code === 'ENOENT') {
             return Effect.succeed([]);
           }
@@ -522,18 +522,18 @@ export class FileStorageBackend implements StorageBackend {
           fs.readFile(statePath, 'utf8')
         ).pipe(
           Effect.map(Option.some),
-          Effect.catchAll(() => Effect.succeed(Option.none<string>()))
+          Effect.catch(() => Effect.succeed(Option.none<string>()))
         );
 
         if (Option.isNone(content)) {
           continue; // Skip invalid session directories
         }
 
-        const validationResult = yield* Schema.decode(SpiderStateJsonSchema)(
+        const validationResult = yield* Schema.decodeEffect(SpiderStateJsonSchema)(
           content.value
         ).pipe(
           Effect.map(Option.some),
-          Effect.catchAll(() => Effect.succeed(Option.none<SpiderState>()))
+          Effect.catch(() => Effect.succeed(Option.none<SpiderState>()))
         );
 
         if (Option.isSome(validationResult)) {
@@ -541,7 +541,7 @@ export class FileStorageBackend implements StorageBackend {
           const stateKey = new SpiderStateKey({
             id: dir,
             name: dir,
-            timestamp: DateTime.toDate(DateTime.unsafeNow()),
+            timestamp: DateTime.toDate(DateTime.nowUnsafe()),
           });
           sessions = Chunk.append(sessions, stateKey);
         }

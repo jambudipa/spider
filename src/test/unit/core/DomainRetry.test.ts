@@ -124,9 +124,12 @@ const runSpider = async (
   });
   await Effect.runPromise(
     program.pipe(
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(config)),
-      Effect.provide(captureEventsLayer(eventsRef))
+      Effect.provide(SpiderService.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          captureEventsLayer(eventsRef)
+        ))
+      ))
     )
   );
 };

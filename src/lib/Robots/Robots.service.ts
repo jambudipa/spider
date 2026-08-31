@@ -1,4 +1,4 @@
-import { Chunk, Effect, MutableHashMap, Option } from 'effect';
+import { Chunk, Context, Effect, Layer, MutableHashMap, Option } from 'effect';
 import { RobotsTxtError } from '../errors/effect-errors.js';
 
 /**
@@ -273,10 +273,10 @@ const decidePath = (
  * @group Services
  * @public
  */
-export class RobotsService extends Effect.Service<RobotsService>()(
+export class RobotsService extends Context.Service<RobotsService>()(
   '@jambudipa.io/RobotsService',
   {
-    effect: Effect.sync(() => {
+    make: Effect.sync(() => {
       const robotsCache = MutableHashMap.empty<string, RobotsFetch>();
 
       const fetchRobotsTxt = (
@@ -351,9 +351,7 @@ export class RobotsService extends Effect.Service<RobotsService>()(
           return { url, baseUrl };
         });
 
-      const resolveFetch = (
-        baseUrl: URL
-      ): Effect.Effect<RobotsFetch> => {
+      const resolveFetch = (baseUrl: URL): Effect.Effect<RobotsFetch> => {
         const cacheKey = baseUrl.toString();
         const cached = MutableHashMap.get(robotsCache, cacheKey);
         if (Option.isSome(cached)) return Effect.succeed(cached.value);
@@ -361,7 +359,7 @@ export class RobotsService extends Effect.Service<RobotsService>()(
         return fetchRobotsTxt(baseUrl).pipe(
           // A transport failure is not permission. Nothing is known, so the
           // outcome is `unavailable` and the caller fails closed.
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.succeed({
               status: 'unavailable',
               cause: error.message,
@@ -414,7 +412,10 @@ export class RobotsService extends Effect.Service<RobotsService>()(
             );
 
             // Rules match against path plus query, not path alone.
-            const decision = decidePath(`${url.pathname}${url.search}`, rules.rules);
+            const decision = decidePath(
+              `${url.pathname}${url.search}`,
+              rules.rules
+            );
 
             return {
               allowed: decision.allowed,
@@ -432,8 +433,8 @@ export class RobotsService extends Effect.Service<RobotsService>()(
 
         getRules: (domain: string): Effect.Effect<Option.Option<RobotsRules>> =>
           Effect.sync(() => {
-            const cacheKey = Option.liftThrowable(
-              () => new URL(domain).toString()
+            const cacheKey = Option.liftThrowable(() =>
+              new URL(domain).toString()
             )();
             if (Option.isNone(cacheKey)) return Option.none<RobotsRules>();
             return MutableHashMap.get(robotsCache, cacheKey.value).pipe(
@@ -447,4 +448,6 @@ export class RobotsService extends Effect.Service<RobotsService>()(
       };
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(RobotsService, RobotsService.make);
+}

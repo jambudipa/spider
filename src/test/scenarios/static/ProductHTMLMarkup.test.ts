@@ -74,7 +74,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
         expect(true).toBe(true); // Pass the test
       }
     } catch (error) {
-      await test.handleFailure('extract-product-schema', error as Error);
+      await runEffect(test.handleFailure('extract-product-schema', error as Error));
     }
   });
 
@@ -103,7 +103,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
         expect(foundProps.length).toBeGreaterThan(0);
       }
     } catch (error) {
-      await test.handleFailure('find-microdata', error as Error);
+      await runEffect(test.handleFailure('find-microdata', error as Error));
     }
   });
 
@@ -148,7 +148,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
         expect(true).toBe(true);
       }
     } catch (error) {
-      await test.handleFailure('extract-rdfa', error as Error);
+      await runEffect(test.handleFailure('extract-rdfa', error as Error));
     }
   });
 
@@ -179,7 +179,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('handle-og-tags', error as Error);
+      await runEffect(test.handleFailure('handle-og-tags', error as Error));
     }
   });
 
@@ -208,7 +208,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('extract-twitter-cards', error as Error);
+      await runEffect(test.handleFailure('extract-twitter-cards', error as Error));
     }
   });
 
@@ -238,7 +238,7 @@ describe('ProductHTMLMarkup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('validate-structured-data', error as Error);
+      await runEffect(test.handleFailure('validate-structured-data', error as Error));
     }
   });
 });

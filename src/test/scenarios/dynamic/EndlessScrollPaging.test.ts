@@ -39,7 +39,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
   it('should detect infinite scroll', async () => {
     try {
       // Wait for page to load completely
-      await test.waitForContent('body');
+      await runEffect(test.waitForContent('body'));
       
       // Check for indicators of infinite scroll
       const scrollIndicators = await test.getPage().evaluate(() => {
@@ -63,7 +63,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       expect(scrollIndicators.documentHeight).toBeGreaterThan(scrollIndicators.windowHeight);
       
     } catch (error) {
-      await test.handleFailure('detect-infinite-scroll', error as Error);
+      await runEffect(test.handleFailure('detect-infinite-scroll', error as Error));
     }
   });
 
@@ -114,7 +114,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('load-content-on-scroll', error as Error);
+      await runEffect(test.handleFailure('load-content-on-scroll', error as Error));
     }
   });
 
@@ -184,7 +184,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       expect(finalCount).toBeLessThan(1000); // Sanity check
       
     } catch (error) {
-      await test.handleFailure('handle-multiple-scrolls', error as Error);
+      await runEffect(test.handleFailure('handle-multiple-scrolls', error as Error));
     }
   });
 
@@ -253,7 +253,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       expect(finalInfo.scrollPercentage).toBeGreaterThanOrEqual(70); // Should have scrolled significantly
       
     } catch (error) {
-      await test.handleFailure('detect-end-of-content', error as Error);
+      await runEffect(test.handleFailure('detect-end-of-content', error as Error));
     }
   });
 
@@ -319,7 +319,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       console.log(`First testimonial: "${allTestimonials[0].content}" by ${allTestimonials[0].author}`);
       
     } catch (error) {
-      await test.handleFailure('extract-all-items', error as Error);
+      await runEffect(test.handleFailure('extract-all-items', error as Error));
     }
   });
 
@@ -373,7 +373,7 @@ describe('EndlessScrollPaging Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('handle-scroll-errors', error as Error);
+      await runEffect(test.handleFailure('handle-scroll-errors', error as Error));
     }
   });
 });

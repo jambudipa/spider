@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { Effect, Option } from 'effect';
-import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
+import { DynamicScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 
 class ForcedNewTabLinksTest extends DynamicScenarioBase {
   validateScenario() {
@@ -37,7 +37,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
 
   it('should detect links that force new tabs', async () => {
     try {
-      await test.waitForContent('body');
+      await runEffect(test.waitForContent('body'));
       
       // Look for the specific review-policy link found in manual validation
       const reviewPolicyLink = await test.getPage().locator('a[target="_blank"][href*="review-policy"]');
@@ -64,7 +64,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
         expect(true).toBe(true);
       }
     } catch (error) {
-      await test.handleFailure('detect-forced-new-tab-links', error as Error);
+      await runEffect(test.handleFailure('detect-forced-new-tab-links', error as Error));
     }
   });
 
@@ -100,7 +100,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       await newPage.close();
       
     } catch (error) {
-      await test.handleFailure('handle-new-tab-navigation', error as Error);
+      await runEffect(test.handleFailure('handle-new-tab-navigation', error as Error));
     }
   });
 
@@ -147,7 +147,7 @@ describe('ForcedNewTabLinks Scenario Tests - Real Site', () => {
       await newPage.close();
       
     } catch (error) {
-      await test.handleFailure('extract-content-from-new-tabs', error as Error);
+      await runEffect(test.handleFailure('extract-content-from-new-tabs', error as Error));
     }
   });
 

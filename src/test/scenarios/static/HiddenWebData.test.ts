@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { Effect } from 'effect';
-import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError } from '../../helpers/BaseScenarioTest';
+import { StaticScenarioBase, PageInitError, NavigationError, ElementNotFoundError, runEffect } from '../../helpers/BaseScenarioTest';
 import { DataExtractor } from '../../helpers/DataExtractor';
 
 class HiddenDataTest extends StaticScenarioBase {
@@ -134,7 +134,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         expect(hasContent).toBe(true);
       }
     } catch (error) {
-      await test.handleFailure('detect-hidden-elements', error as Error);
+      await runEffect(test.handleFailure('detect-hidden-elements', error as Error));
     }
   });
 
@@ -169,7 +169,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         expect(hasValues).toBe(true);
       }
     } catch (error) {
-      await test.handleFailure('extract-data-attributes', error as Error);
+      await runEffect(test.handleFailure('extract-data-attributes', error as Error));
     }
   });
 
@@ -238,7 +238,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('find-script-content', error as Error);
+      await runEffect(test.handleFailure('find-script-content', error as Error));
     }
   });
 
@@ -345,7 +345,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('decode-base64', error as Error);
+      await runEffect(test.handleFailure('decode-base64', error as Error));
     }
   });
 
@@ -410,7 +410,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('extract-json-ld', error as Error);
+      await runEffect(test.handleFailure('extract-json-ld', error as Error));
     }
   });
 
@@ -481,7 +481,7 @@ describe('HiddenWebData Scenario Tests - Real Site', () => {
         }
       }
     } catch (error) {
-      await test.handleFailure('find-html-comments', error as Error);
+      await runEffect(test.handleFailure('find-html-comments', error as Error));
     }
   });
 });

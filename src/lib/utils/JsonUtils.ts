@@ -54,7 +54,7 @@ export class JsonSchemaValidationError extends Data.TaggedError('JsonSchemaValid
  * Uses Option to handle the null case idiomatically
  */
 const isNonNullObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && !Array.isArray(value) && Option.isSome(Option.fromNullable(value));
+  typeof value === 'object' && !Array.isArray(value) && Option.isSome(Option.fromNullishOr(value));
 
 /**
  * Apply a replacer function to traverse and transform an object recursively
@@ -165,8 +165,8 @@ export const JsonUtils = {
    * // result: { name: "test" }
    * ```
    */
-  parse: <A, I = A, R = never>(input: string, schema: Schema.Schema<A, I, R>) =>
-    Schema.decodeUnknown(Schema.parseJson(schema))(input).pipe(
+  parse: <A, I = A, R = never>(input: string, schema: Schema.Codec<A, I, R>) =>
+    Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(input).pipe(
       Effect.mapError((cause) => new JsonParseError({ input, cause }))
     ),
 
@@ -180,7 +180,7 @@ export const JsonUtils = {
    * ```
    */
   parseUnknown: (input: string) =>
-    Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(input).pipe(
+    Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(input).pipe(
       Effect.mapError((cause) => new JsonParseError({ input, cause }))
     ),
 
@@ -202,7 +202,7 @@ export const JsonUtils = {
    */
   parseWithSchema: <A, I = unknown>(
     input: string,
-    schema: Schema.Schema<A, I>,
+    schema: Schema.Codec<A, I>,
     options?: { readonly strict?: boolean }
   ) =>
     Effect.gen(function* () {
@@ -241,18 +241,18 @@ export const JsonUtils = {
     space?: string | number,
     replacer?: (key: string, value: unknown) => unknown
   ) => {
-    const spaceOption = Option.fromNullable(space);
-    const replacerOption = Option.fromNullable(replacer);
+    const spaceOption = Option.fromNullishOr(space);
+    const replacerOption = Option.fromNullishOr(replacer);
 
     return pipe(
-      Schema.encode(Schema.parseJson(Schema.Unknown))(value),
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value),
       Effect.flatMap((jsonString) => {
         // Apply formatting options if specified
         if (Option.isSome(spaceOption) || Option.isSome(replacerOption)) {
           return pipe(
-            Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(jsonString),
+            Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(jsonString),
             Effect.flatMap((parsed) =>
-              Schema.encode(Schema.parseJson(Schema.Unknown))(
+              Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
                 Option.isSome(replacerOption) ? applyReplacer(parsed, replacerOption.value) : parsed
               )
             ),
@@ -276,11 +276,11 @@ export const JsonUtils = {
    * );
    * ```
    */
-  parseOrDefault: <T>(input: string, defaultValue: T, schema?: Schema.Schema<T>) =>
+  parseOrDefault: <T>(input: string, defaultValue: T, schema?: Schema.Codec<T>) =>
     (schema
       ? JsonUtils.parse(input, schema)
       : JsonUtils.parseUnknown(input)
-    ).pipe(Effect.catchAll(() => Effect.succeed(defaultValue))),
+    ).pipe(Effect.catch(() => Effect.succeed(defaultValue))),
 
   /**
    * Parse JSON and return Option.none() on failure
@@ -293,13 +293,13 @@ export const JsonUtils = {
    * }
    * ```
    */
-  parseOrNone: <T>(input: string, schema?: Schema.Schema<T>) =>
+  parseOrNone: <T>(input: string, schema?: Schema.Codec<T>) =>
     (schema
       ? JsonUtils.parse(input, schema)
       : JsonUtils.parseUnknown(input)
     ).pipe(
       Effect.map((value) => Option.some(value)),
-      Effect.catchAll(() => Effect.succeed(Option.none()))
+      Effect.catch(() => Effect.succeed(Option.none()))
     ),
 
   /**
@@ -314,7 +314,7 @@ export const JsonUtils = {
   isValid: (input: string) =>
     JsonUtils.parseUnknown(input).pipe(
       Effect.map(() => true),
-      Effect.catchAll(() => Effect.succeed(false))
+      Effect.catch(() => Effect.succeed(false))
     ),
 
   /**
@@ -337,7 +337,7 @@ export const JsonUtils = {
    * const clone = yield* JsonUtils.deepClone(originalObject);
    * ```
    */
-  deepClone: <T, I = unknown>(value: T, schema: Schema.Schema<T, I>) =>
+  deepClone: <T, I = unknown>(value: T, schema: Schema.Codec<T, I>) =>
     Effect.gen(function* () {
       const json = yield* JsonUtils.stringify(value);
       return yield* JsonUtils.parse(json, schema);
@@ -373,7 +373,7 @@ export const JsonUtils = {
   merge: <T extends Record<string, unknown>, U extends Record<string, unknown>>(
     target: T,
     source: U,
-    schema: Schema.Schema<T & U>
+    schema: Schema.Codec<T & U>
   ): Effect.Effect<T & U, JsonStringifyError | JsonParseError | JsonSchemaValidationError> =>
     Effect.gen(function* () {
       // Deep clone to avoid mutations using JSON round-trip
@@ -384,7 +384,7 @@ export const JsonUtils = {
       // Both are objects at runtime after JSON round-trip
       const merged = { ...Object(clonedTarget), ...Object(clonedSource) };
       // Validate with schema
-      return yield* Schema.decodeUnknown(schema)(merged).pipe(
+      return yield* Schema.decodeUnknownEffect(schema)(merged).pipe(
         Effect.mapError((cause) => new JsonSchemaValidationError({
           input: merged,
           schemaName: schema.ast._tag || 'Unknown',
@@ -409,7 +409,7 @@ export const JsonUtils = {
     obj: T,
     keys: readonly K[]
   ) =>
-    Effect.succeed(Struct.pick(obj, ...keys)),
+    Effect.succeed(Struct.pick(obj, keys)),
 
   /**
    * Omit properties from JSON object
@@ -427,7 +427,7 @@ export const JsonUtils = {
     obj: T,
     keys: readonly K[]
   ) =>
-    Effect.succeed(Struct.omit(obj, ...keys))
+    Effect.succeed(Struct.omit(obj, keys))
 };
 
 // ============================================================================

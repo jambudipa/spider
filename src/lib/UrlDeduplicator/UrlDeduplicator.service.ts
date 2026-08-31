@@ -1,4 +1,4 @@
-import { Effect, MutableHashSet } from 'effect';
+import { Context, Effect, Layer, MutableHashSet, Semaphore } from 'effect';
 import { SpiderConfig } from '../Config/SpiderConfig.service.js';
 
 /**
@@ -49,16 +49,16 @@ export interface IUrlDeduplicator {
  * @group Services
  * @public
  */
-export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorService>()(
+export class UrlDeduplicatorService extends Context.Service<UrlDeduplicatorService>()(
   '@jambudipa.io/UrlDeduplicatorService',
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const config = yield* SpiderConfig;
       const shouldNormalize =
         yield* config.shouldNormalizeUrlsForDeduplication();
 
       const seenUrls = MutableHashSet.empty<string>();
-      const mutex = yield* Effect.makeSemaphore(1); // Mutual exclusion semaphore
+      const mutex = yield* Semaphore.make(1); // Mutual exclusion semaphore
 
       /**
        * Normalizes a URL for consistent deduplication.
@@ -68,55 +68,56 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
           return Effect.succeed(url);
         }
 
-        return Effect.orElse(
-          Effect.sync(() => {
-            const parsed = new URL(url);
+        return Effect.try(() => {
+          const parsed = new URL(url);
 
-            // Normalize pathname: remove multiple consecutive slashes and trailing slashes
-            let normalizedPath = parsed.pathname
-              .replace(/\/+/g, '/') // Replace multiple slashes with single slash
-              .replace(/\/$/, ''); // Remove trailing slash
+          // Normalize pathname: remove multiple consecutive slashes and trailing slashes
+          let normalizedPath = parsed.pathname
+            .replace(/\/+/g, '/') // Replace multiple slashes with single slash
+            .replace(/\/$/, ''); // Remove trailing slash
 
-            // Keep root path as '/'
-            if (normalizedPath === '') {
-              normalizedPath = '/';
-            }
+          // Keep root path as '/'
+          if (normalizedPath === '') {
+            normalizedPath = '/';
+          }
 
-            // Remove fragment
-            const hash = '';
+          // Remove fragment
+          const hash = '';
 
-            // Remove default ports
-            let port = parsed.port;
-            if (
-              (parsed.protocol === 'http:' && parsed.port === '80') ||
-              (parsed.protocol === 'https:' && parsed.port === '443')
-            ) {
-              port = '';
-            }
+          // Remove default ports
+          let port = parsed.port;
+          if (
+            (parsed.protocol === 'http:' && parsed.port === '80') ||
+            (parsed.protocol === 'https:' && parsed.port === '443')
+          ) {
+            port = '';
+          }
 
-            // Sort query parameters alphabetically
-            let search = parsed.search;
-            if (parsed.search) {
-              const params = new URLSearchParams(parsed.search);
-              const sortedParams = new URLSearchParams();
-              Array.from(params.keys())
-                .sort()
-                .forEach((key) => {
-                  params.getAll(key).forEach((value) => {
-                    sortedParams.append(key, value);
-                  });
+          // Sort query parameters alphabetically
+          let search = parsed.search;
+          if (parsed.search) {
+            const params = new URLSearchParams(parsed.search);
+            const sortedParams = new URLSearchParams();
+            Array.from(params.keys())
+              .sort()
+              .forEach((key) => {
+                params.getAll(key).forEach((value) => {
+                  sortedParams.append(key, value);
                 });
-              const sortedStr = sortedParams.toString();
-              search = sortedStr ? `?${sortedStr}` : '';
-            }
+              });
+            const sortedStr = sortedParams.toString();
+            search = sortedStr ? `?${sortedStr}` : '';
+          }
 
-            // Build normalized URL from parts (no mutation of URL object)
-            const auth = parsed.username ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@` : '';
-            const portStr = port ? `:${port}` : '';
-            return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}${hash}`;
-          }),
+          // Build normalized URL from parts (no mutation of URL object)
+          const auth = parsed.username
+            ? `${parsed.username}${parsed.password ? ':' + parsed.password : ''}@`
+            : '';
+          const portStr = port ? `:${port}` : '';
+          return `${parsed.protocol}//${auth}${parsed.hostname}${portStr}${normalizedPath}${search}${hash}`;
+        }).pipe(
           // If URL parsing fails, return original
-          () => Effect.succeed(url)
+          Effect.catch(() => Effect.succeed(url))
         );
       };
 
@@ -154,6 +155,10 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
           ),
       };
     }),
-    dependencies: [SpiderConfig.Default],
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    UrlDeduplicatorService,
+    UrlDeduplicatorService.make
+  ).pipe(Layer.provide(SpiderConfig.layer));
+}

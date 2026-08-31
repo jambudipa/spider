@@ -13,7 +13,7 @@ export class AssertionCollector {
   private assertionsRef: Ref.Ref<AssertionResult[]>;
 
   constructor() {
-    this.assertionsRef = Ref.unsafeMake<AssertionResult[]>([]);
+    this.assertionsRef = Ref.makeUnsafe<AssertionResult[]>([]);
   }
 
   /**

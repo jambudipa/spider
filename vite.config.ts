@@ -31,21 +31,10 @@ export default defineConfig({
         'node:stream',
         'node:buffer',
         'node:events',
-      ],
-      output: {
-        globals: {
-          cheerio: 'cheerio',
-          domhandler: 'domhandler',
-          effect: 'effect',
-          tslib: 'tslib',
-          fs: 'fs',
-          path: 'path',
-          url: 'url'
-        }
-      }
+      ]
     },
     sourcemap: true,
-    target: 'node18',
+    target: 'node20',
     minify: false,
     ssr: true
   },

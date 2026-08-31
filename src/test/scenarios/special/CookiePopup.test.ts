@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { Effect } from 'effect';
-import { DynamicScenarioBase } from '../../helpers/BaseScenarioTest';
+import { DynamicScenarioBase, runEffect } from '../../helpers/BaseScenarioTest';
 
 class ModalPopupTest extends DynamicScenarioBase {
   validateScenario() {
@@ -123,7 +123,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('detect-modal-popups', error as Error);
+      await runEffect(test.handleFailure('detect-modal-popups', error as Error));
     }
   });
 
@@ -229,7 +229,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('extract-modal-content', error as Error);
+      await runEffect(test.handleFailure('extract-modal-content', error as Error));
     }
   });
 
@@ -330,7 +330,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       expect(pageContent.length).toBeGreaterThan(1000);
       
     } catch (error) {
-      await test.handleFailure('handle-modal-close', error as Error);
+      await runEffect(test.handleFailure('handle-modal-close', error as Error));
     }
   });
 
@@ -394,7 +394,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('detect-overlay-backgrounds', error as Error);
+      await runEffect(test.handleFailure('detect-overlay-backgrounds', error as Error));
     }
   });
 
@@ -476,7 +476,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('handle-nested-modals', error as Error);
+      await runEffect(test.handleFailure('handle-nested-modals', error as Error));
     }
   });
 
@@ -578,7 +578,7 @@ describe('CookiePopup Scenario Tests - Real Site', () => {
       }
       
     } catch (error) {
-      await test.handleFailure('extract-modal-form-data', error as Error);
+      await runEffect(test.handleFailure('extract-modal-form-data', error as Error));
     }
   });
 });

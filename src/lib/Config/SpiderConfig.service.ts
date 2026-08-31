@@ -1,5 +1,6 @@
 import {
   Chunk,
+  Context,
   Duration,
   Effect,
   HashMap,
@@ -203,14 +204,13 @@ export const defaultDomainRetry: DomainRetryConfig = {
 export const buildFetchRetrySchedule = (
   cfg: FetchRetryConfig,
   onAttempt?: Effect.Effect<unknown>
-): Schedule.Schedule<readonly [Duration.Duration, number]> => {
+): Schedule.Schedule<Duration.Duration> => {
   // `classifyFetchError` could in principle throw on exotic wrapped
   // errors (FiberFailure, Cause); a throw inside the predicate would
   // crash the worker. Treat any classification failure as non-retryable
   // so the error surfaces normally. try/catch is the right shape here
   // because the predicate is sync.
   const isRetryable = (error: unknown): boolean => {
-    // eslint-disable-next-line effect/no-try-catch-use-effect -- sync predicate, defensive guard against exotic error shapes
     try {
       const kind = classifyFetchError(error, 0, 0).kind;
       return cfg.retryOn.includes(kind);
@@ -219,13 +219,12 @@ export const buildFetchRetrySchedule = (
     }
   };
   const base = Schedule.exponential(Duration.millis(cfg.baseBackoffMs)).pipe(
-    Schedule.intersect(Schedule.recurs(Math.max(0, cfg.maxAttempts - 1))),
-    Schedule.whileInput(isRetryable)
+    Schedule.upTo({ times: Math.max(0, cfg.maxAttempts - 1) }),
+    Schedule.while(({ input }) => isRetryable(input))
   );
-  // eslint-disable-next-line effect/no-undefined-use-option -- `onAttempt` is an optional function parameter (Effect-or-omitted); the absence check is the natural JS shape, and Option would force callers to wrap every invocation
   return onAttempt === undefined
     ? base
-    : base.pipe(Schedule.tapInput(() => onAttempt));
+    : base.pipe(Schedule.tap(() => onAttempt));
 };
 
 /**
@@ -344,7 +343,6 @@ export const resolveUserAgent = (
     // contexts (per spec). UA selection is presentational, not security-
     // sensitive; deterministic testing uses the cache (perDomain stickiness)
     // rather than seeded randomness.
-    // eslint-disable-next-line effect/no-math-random-use-random
     strategy.pool[Math.floor(Math.random() * strategy.pool.length)] ?? '';
   if (strategy.perDomain) {
     const current = MutableRef.get(cache);
@@ -779,24 +777,28 @@ export interface SpiderConfigService {
  * });
  *
  * await Effect.runPromise(
- *   program.pipe(Effect.provide(SpiderConfig.Default))
+ *   program.pipe(Effect.provide(SpiderConfig.layer))
  * );
  * ```
  *
  * @group Configuration
  * @public
  */
-export class SpiderConfig extends Effect.Service<SpiderConfigService>()(
-  '@jambudipa/spiderConfig',
-  {
-    effect: Effect.sync(() => makeSpiderConfig({})),
-  }
-) {
+export class SpiderConfig extends Context.Service<
+  SpiderConfig,
+  SpiderConfigService
+>()('@jambudipa/spiderConfig', {
+  make: Effect.sync(() => makeSpiderConfig({})),
+}) {
+  static readonly layer = Layer.effect(SpiderConfig, SpiderConfig.make);
+
   /**
    * Creates a Layer that provides SpiderConfig with custom options
    * @param config - The configuration options or a pre-made SpiderConfigService
    */
-  static Live = (config: Partial<SpiderConfigOptions> | SpiderConfigService) =>
+  static layerWith = (
+    config: Partial<SpiderConfigOptions> | SpiderConfigService
+  ) =>
     Layer.effect(
       SpiderConfig,
       Effect.succeed('getOptions' in config ? config : makeSpiderConfig(config))
@@ -1004,7 +1006,6 @@ const normaliseDomainForComparison = (
   // wrapping in Effect would force the entire follow-decision pipeline
   // to become async for what is a defensive guard against an impossible
   // input (the caller already passed `URL.hostname`).
-  // eslint-disable-next-line effect/no-try-catch-use-effect -- sync helper, defensive guard
   try {
     h = new URL(`http://${h}`).hostname;
   } catch {
@@ -1023,15 +1024,15 @@ export const makeSpiderConfig = (
   // called from sync setup code, not from inside Effect.gen, so wrapping
   // in Effect.fail would force every call site to become async for what
   // is a programmer error caught at startup.
-  const maxAttemptsOpt = Option.fromNullable(options.fetchRetry?.maxAttempts);
+  const maxAttemptsOpt = Option.fromNullishOr(options.fetchRetry?.maxAttempts);
   if (Option.isSome(maxAttemptsOpt)) {
     const n = maxAttemptsOpt.value;
     if (!Number.isInteger(n) || n < 1) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'fetchRetry.maxAttempts',
         value: n,
-        reason: 'must be a positive integer >= 1 (the initial attempt counts as 1)',
+        reason:
+          'must be a positive integer >= 1 (the initial attempt counts as 1)',
       });
     }
   }
@@ -1042,11 +1043,10 @@ export const makeSpiderConfig = (
   // initial pass, producing an empty crawl with no obvious cause.
   // `backoffMs` is fed to `Effect.sleep`; negatives would either be
   // coerced or surprise callers.
-  const domainRetryOpt = Option.fromNullable(options.domainRetry);
+  const domainRetryOpt = Option.fromNullishOr(options.domainRetry);
   if (Option.isSome(domainRetryOpt)) {
     const dr = domainRetryOpt.value;
     if (!Number.isInteger(dr.maxPasses) || dr.maxPasses < 1) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'domainRetry.maxPasses',
         value: dr.maxPasses,
@@ -1059,7 +1059,6 @@ export const makeSpiderConfig = (
     // surfaces the misconfiguration. Reject at construction so the footgun
     // is caught at the boundary rather than silently degrading coverage.
     if (dr.enabled && dr.maxPasses < 2) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'domainRetry.maxPasses',
         value: dr.maxPasses,
@@ -1067,8 +1066,11 @@ export const makeSpiderConfig = (
           'must be >= 2 when `domainRetry.enabled` is true (otherwise no retry pass runs and opting in has no effect)',
       });
     }
-    if (typeof dr.backoffMs !== 'number' || !Number.isFinite(dr.backoffMs) || dr.backoffMs < 0) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
+    if (
+      typeof dr.backoffMs !== 'number' ||
+      !Number.isFinite(dr.backoffMs) ||
+      dr.backoffMs < 0
+    ) {
       throw new ConfigError({
         field: 'domainRetry.backoffMs',
         value: dr.backoffMs,
@@ -1079,7 +1081,6 @@ export const makeSpiderConfig = (
     // `enabled: true` and a sensible `maxPasses`. Reject so the
     // misconfiguration surfaces at the boundary.
     if (!Array.isArray(dr.retryOn.reasons) || dr.retryOn.reasons.length === 0) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'domainRetry.retryOn.reasons',
         value: dr.retryOn.reasons,
@@ -1097,7 +1098,6 @@ export const makeSpiderConfig = (
       mpa < 0 ||
       (!Number.isFinite(mpa) && mpa !== Infinity)
     ) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'domainRetry.retryOn.maxPagesAttempted',
         value: mpa,
@@ -1107,10 +1107,8 @@ export const makeSpiderConfig = (
     }
     // Mirror the fetchRetry validation for any override carried in passOverrides.
     const overrideMaxAttempts = dr.passOverrides?.fetchRetry?.maxAttempts;
-    // eslint-disable-next-line effect/no-undefined-use-option -- `overrideMaxAttempts` is an optional field on an optional nested config; the absence-check is the natural JS shape and mirrors the pattern used by the sibling fetchRetry validation above
     if (overrideMaxAttempts !== undefined) {
       if (!Number.isInteger(overrideMaxAttempts) || overrideMaxAttempts < 1) {
-        // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
         throw new ConfigError({
           field: 'domainRetry.passOverrides.fetchRetry.maxAttempts',
           value: overrideMaxAttempts,
@@ -1120,14 +1118,12 @@ export const makeSpiderConfig = (
       }
     }
     const overrideBaseBackoff = dr.passOverrides?.fetchRetry?.baseBackoffMs;
-    // eslint-disable-next-line effect/no-undefined-use-option -- optional nested config; sentinel-absence check
     if (overrideBaseBackoff !== undefined) {
       if (
         typeof overrideBaseBackoff !== 'number' ||
         !Number.isFinite(overrideBaseBackoff) ||
         overrideBaseBackoff < 0
       ) {
-        // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
         throw new ConfigError({
           field: 'domainRetry.passOverrides.fetchRetry.baseBackoffMs',
           value: overrideBaseBackoff,
@@ -1145,7 +1141,7 @@ export const makeSpiderConfig = (
   // paths and `setTimeout` clamping become surprising, and any sensible
   // configuration is far below this ceiling.
   const STALE_THRESHOLD_MAX_MS = 2_147_483_647;
-  const staleThresholdOpt = Option.fromNullable(options.staleWorkerThresholdMs);
+  const staleThresholdOpt = Option.fromNullishOr(options.staleWorkerThresholdMs);
   if (Option.isSome(staleThresholdOpt)) {
     const n = staleThresholdOpt.value;
     if (
@@ -1154,7 +1150,6 @@ export const makeSpiderConfig = (
       n < 1 ||
       n > STALE_THRESHOLD_MAX_MS
     ) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'staleWorkerThresholdMs',
         value: n,
@@ -1164,7 +1159,7 @@ export const makeSpiderConfig = (
   }
 
   // Same bounds as the threshold; same rationale (32-bit ms ceiling).
-  const checkIntervalOpt = Option.fromNullable(
+  const checkIntervalOpt = Option.fromNullishOr(
     options.staleWorkerCheckIntervalMs
   );
   if (Option.isSome(checkIntervalOpt)) {
@@ -1175,7 +1170,6 @@ export const makeSpiderConfig = (
       n < 1 ||
       n > STALE_THRESHOLD_MAX_MS
     ) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'staleWorkerCheckIntervalMs',
         value: n,
@@ -1189,11 +1183,10 @@ export const makeSpiderConfig = (
   // dynamic options) can sneak invalid strings through; without this check
   // the strict-equality branch at `Spider.service.ts:per-task` would
   // silently downgrade to `'per-iteration'`.
-  const heartbeatModeOpt = Option.fromNullable(options.workerHeartbeatMode);
+  const heartbeatModeOpt = Option.fromNullishOr(options.workerHeartbeatMode);
   if (Option.isSome(heartbeatModeOpt)) {
     const m = heartbeatModeOpt.value;
     if (m !== 'per-iteration' && m !== 'per-attempt') {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'workerHeartbeatMode',
         value: m,
@@ -1207,7 +1200,7 @@ export const makeSpiderConfig = (
   // surprisingly; non-integers would be coerced by the runtime. Catch at
   // startup so the failure mode is a clear ConfigError, not a silent stall.
   //
-  // `hasOwn` (not `Option.fromNullable`) so that explicit `null`/`undefined`
+  // `hasOwn` (not `Option.fromNullishOr`) so that explicit `null`/`undefined`
   // is rejected rather than silently falling back to the default — the
   // post-merge value would otherwise stay `null` and crash at
   // `Queue.bounded(null)`.
@@ -1221,7 +1214,6 @@ export const makeSpiderConfig = (
       c >= 1 &&
       c <= RESULT_CHANNEL_CAPACITY_MAX;
     if (!isUnbounded && !isValidInt) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- sync factory, programmer error at startup
       throw new ConfigError({
         field: 'resultChannelCapacity',
         value: c,
@@ -1307,7 +1299,7 @@ export const makeSpiderConfig = (
       }).pipe(
         Effect.flatMap((url) =>
           Effect.sync(() => {
-            const fromUrlParsed = Option.fromNullable(fromUrl).pipe(
+            const fromUrlParsed = Option.fromNullishOr(fromUrl).pipe(
               Option.flatMap((u) => safeParseUrl(u))
             );
             const techFilters =
@@ -1315,7 +1307,9 @@ export const makeSpiderConfig = (
 
             // Domain restriction override for multiple starting URLs
             if (restrictToStartingDomain) {
-              const startingDomainUrlOpt = safeParseUrl(restrictToStartingDomain);
+              const startingDomainUrlOpt = safeParseUrl(
+                restrictToStartingDomain
+              );
               if (Option.isSome(startingDomainUrlOpt)) {
                 const equiv =
                   config.domainEquivalence ?? defaultDomainEquivalence;
@@ -1497,7 +1491,7 @@ export const makeSpiderConfig = (
             return { follow: true };
           })
         ),
-        Effect.catchAll((errorMessage) =>
+        Effect.catch((errorMessage) =>
           Effect.succeed(
             // Technical filter: Malformed URL check (Scrapy equivalent)
             config.technicalFilters?.filterMalformedUrls
@@ -1532,8 +1526,7 @@ export const makeSpiderConfig = (
     getResultChannelCapacity: () =>
       Effect.succeed(config.resultChannelCapacity),
     isResumabilityEnabled: () => Effect.succeed(config.enableResumability),
-    getFetchRetry: () =>
-      Effect.succeed(config.fetchRetry ?? defaultFetchRetry),
+    getFetchRetry: () => Effect.succeed(config.fetchRetry ?? defaultFetchRetry),
     getDomainRetry: () =>
       Effect.succeed(config.domainRetry ?? defaultDomainRetry),
     getDomainEquivalence: () =>
@@ -1546,7 +1539,8 @@ export const makeSpiderConfig = (
     getHttpAdapter: () => Effect.succeed(config.httpAdapter),
     getStaleWorkerThreshold: () =>
       Effect.succeed(
-        config.staleWorkerThresholdMs ?? SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS
+        config.staleWorkerThresholdMs ??
+          SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS
       ),
     getWorkerHeartbeatMode: () =>
       Effect.succeed(config.workerHeartbeatMode ?? 'per-iteration'),

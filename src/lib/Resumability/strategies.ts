@@ -30,12 +30,10 @@ export class FullStatePersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.saveState) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support full state persistence`,
-            operation: 'persist',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support full state persistence`,
+          operation: 'persist',
+        });
       }
 
       yield* self.backend.saveState(
@@ -51,12 +49,10 @@ export class FullStatePersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.loadState) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support state loading`,
-            operation: 'restore',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support state loading`,
+          operation: 'restore',
+        });
       }
 
       return yield* self.backend.loadState(key);
@@ -67,12 +63,10 @@ export class FullStatePersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.deleteState) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support state deletion`,
-            operation: 'cleanup',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support state deletion`,
+          operation: 'cleanup',
+        });
       }
 
       yield* self.backend.deleteState(key);
@@ -105,12 +99,10 @@ export class DeltaPersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.saveDelta) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support delta persistence`,
-            operation: 'persist',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support delta persistence`,
+          operation: 'persist',
+        });
       }
 
       yield* self.backend.saveDelta(operation.delta);
@@ -123,12 +115,10 @@ export class DeltaPersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.loadDeltas) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support delta loading`,
-            operation: 'restore',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support delta loading`,
+          operation: 'restore',
+        });
       }
 
       const deltas = yield* self.backend.loadDeltas(key);
@@ -146,12 +136,10 @@ export class DeltaPersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.loadDeltas || !self.backend.compactDeltas) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support delta cleanup`,
-            operation: 'cleanup',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support delta cleanup`,
+          operation: 'cleanup',
+        });
       }
 
       // Remove all deltas for this session
@@ -296,12 +284,10 @@ export class HybridPersistence implements PersistenceStrategy {
     const self = this;
     return Effect.gen(function* () {
       if (!self.backend.saveSnapshot) {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support snapshots`,
-            operation: 'saveSnapshot',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support snapshots`,
+          operation: 'saveSnapshot',
+        });
       }
 
       // Save snapshot
@@ -334,12 +320,10 @@ export class HybridPersistence implements PersistenceStrategy {
       if (!self.config.batchDeltas) {
         // Save immediately if not batching
         if (!self.backend.saveDelta) {
-          return yield* Effect.fail(
-            new PersistenceError({
-              message: `Backend ${self.backend.name} does not support delta persistence`,
-              operation: 'saveDelta',
-            })
-          );
+          return yield* new PersistenceError({
+            message: `Backend ${self.backend.name} does not support delta persistence`,
+            operation: 'saveDelta',
+          });
         }
         yield* self.backend.saveDelta(operation.delta);
       }
@@ -361,12 +345,10 @@ export class HybridPersistence implements PersistenceStrategy {
           yield* self.backend.saveDelta(delta);
         }
       } else {
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support delta persistence`,
-            operation: 'flushPendingDeltas',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support delta persistence`,
+          operation: 'flushPendingDeltas',
+        });
       }
 
       self.pendingDeltas = [];
@@ -395,12 +377,10 @@ export class HybridPersistence implements PersistenceStrategy {
         if (Option.isSome(baseState)) {
           return baseState; // Return snapshot if no delta support
         }
-        return yield* Effect.fail(
-          new PersistenceError({
-            message: `Backend ${self.backend.name} does not support delta loading`,
-            operation: 'restore',
-          })
-        );
+        return yield* new PersistenceError({
+          message: `Backend ${self.backend.name} does not support delta loading`,
+          operation: 'restore',
+        });
       }
 
       const deltas = yield* self.backend.loadDeltas(key, fromSequence);

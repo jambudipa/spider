@@ -45,12 +45,12 @@ const StructuredProductDataSchema = Schema.Struct({
   description: Schema.optional(Schema.String),
   image: Schema.optional(Schema.String),
   offers: Schema.optional(Schema.Struct({
-    price: Schema.optional(Schema.Union(Schema.Number, Schema.String)),
+    price: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
     availability: Schema.optional(Schema.String)
   })),
   aggregateRating: Schema.optional(Schema.Struct({
-    ratingValue: Schema.optional(Schema.Union(Schema.Number, Schema.String)),
-    reviewCount: Schema.optional(Schema.Union(Schema.Number, Schema.String))
+    ratingValue: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
+    reviewCount: Schema.optional(Schema.Union([Schema.Number, Schema.String]))
   }))
 });
 
@@ -164,10 +164,10 @@ export class DataExtractor {
       );
 
       // Parse structured data in Node.js using Effect Schema
-      const structuredData = yield* Schema.decodeUnknown(
-        Schema.parseJson(StructuredProductDataSchema)
+      const structuredData = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(StructuredProductDataSchema)
       )(rawData.jsonLdText).pipe(
-        Effect.catchAll(() => Effect.succeed<StructuredProductData>({}))
+        Effect.catch(() => Effect.succeed<StructuredProductData>({}))
       );
 
       // Merge browser data with structured data
@@ -357,11 +357,11 @@ export class DataExtractor {
       // Parse script data in Node.js using Effect
       let parsedScriptData = Chunk.empty<unknown>();
       for (const scriptText of rawData.scriptTexts) {
-        const parseResult = yield* Schema.decodeUnknown(
-          Schema.parseJson(Schema.Unknown)
+        const parseResult = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Unknown)
         )(scriptText).pipe(
           Effect.map(Option.some),
-          Effect.catchAll(() => Effect.succeed(Option.none()))
+          Effect.catch(() => Effect.succeed(Option.none()))
         );
         if (Option.isSome(parseResult)) {
           parsedScriptData = Chunk.append(parsedScriptData, parseResult.value);
@@ -377,10 +377,10 @@ export class DataExtractor {
 
       if (!Chunk.isEmpty(parsedScriptData)) {
         // Convert to string for storage (since we need string values)
-        const stringified = yield* Schema.encode(
-          Schema.parseJson(Schema.Unknown)
+        const stringified = yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Unknown)
         )(Chunk.toReadonlyArray(parsedScriptData)).pipe(
-          Effect.catchAll(() => Effect.succeed('[]'))
+          Effect.catch(() => Effect.succeed('[]'))
         );
         result.scriptData = stringified;
       }
@@ -393,11 +393,11 @@ export class DataExtractor {
    * Extract GraphQL data from network requests
    */
   static extractGraphQLData(responseBody: string): Effect.Effect<Option.Option<unknown>> {
-    return Schema.decodeUnknown(
-      Schema.parseJson(GraphQLResponseSchema)
+    return Schema.decodeUnknownEffect(
+      Schema.fromJsonString(GraphQLResponseSchema)
     )(responseBody).pipe(
       Effect.map(parsed => Option.some(parsed.data ?? parsed)),
-      Effect.catchAll(() => Effect.succeed(Option.none()))
+      Effect.catch(() => Effect.succeed(Option.none()))
     );
   }
   

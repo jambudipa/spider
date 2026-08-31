@@ -14,7 +14,7 @@ afterEach(() => {
 
 const runWithScraper = <A, E>(
   effect: Effect.Effect<A, E, ScraperService>
-) => Effect.runPromise(Effect.provide(effect, ScraperService.Default));
+) => Effect.runPromise(Effect.provide(effect, ScraperService.layer));
 
 const htmlPage = (title: string, body: string, meta = '') =>
   `<html><head><title>${title}</title>${meta}</head><body>${body}</body></html>`;
@@ -164,7 +164,7 @@ describe('Scraper Service', () => {
             const scraper = yield* ScraperService;
             return (yield* scraper.fetchAndParse('https://unreachable.example.com', 0)).pageData;
           }),
-          ScraperService.Default
+          ScraperService.layer
         )
       );
       expect(error).toBeDefined();

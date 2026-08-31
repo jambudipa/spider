@@ -48,9 +48,12 @@ const runWithConfig = <A>(
 ) =>
   Effect.runPromise(
     program.pipe(
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(config)),
-      Effect.provide(captureEventsLayer(eventsRef))
+      Effect.provide(SpiderService.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          captureEventsLayer(eventsRef)
+        ))
+      ))
     )
   );
 
@@ -147,7 +150,7 @@ describe('IT-2: external abort signal', () => {
       const sink = Sink.forEach((_r: CrawlResult) => Effect.void);
 
       // Fork crawl so we can resolve the stop signal concurrently
-      const crawlFiber = yield* Effect.fork(
+      const crawlFiber = yield* Effect.forkChild(
         spider.crawl('https://abort-test.local/', sink, { externalStopSignal: stopSignal })
       );
 

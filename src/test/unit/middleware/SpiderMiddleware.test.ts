@@ -31,9 +31,9 @@ const makeResponse = (url = 'https://example.com') =>
   SpiderResponse.fromPageData(makePageData(url), 200);
 
 const testLayer = Layer.mergeAll(
-  MiddlewareManager.Default,
-  UserAgentMiddleware.Default,
-  StatsMiddleware.Default
+  MiddlewareManager.layer,
+  UserAgentMiddleware.layer,
+  StatsMiddleware.layer
 );
 
 const run = <A, E>(
@@ -51,7 +51,7 @@ describe('SpiderMiddleware', () => {
         return yield* manager.processRequest(request, [ua]);
       })
     );
-    const headers = Option.getOrElse(result.headers, () => ({} as Record<string, string>));
+    const headers: Record<string, string> = Option.getOrElse(result.headers, () => ({}));
     expect(headers['User-Agent']).toBe('TestBot/1.0');
   });
 
@@ -79,7 +79,7 @@ describe('SpiderMiddleware', () => {
         return yield* manager.processRequest(request, [ua]);
       })
     );
-    const headers = Option.getOrElse(result.headers, () => ({} as Record<string, string>));
+    const headers: Record<string, string> = Option.getOrElse(result.headers, () => ({}));
     expect(headers['User-Agent']).toBe('Spider/2.0');
     expect(headers['Accept']).toBe('text/html');
   });
@@ -122,7 +122,7 @@ describe('SpiderMiddleware', () => {
         return yield* manager.processRequest(request, [ua1, ua2]);
       })
     );
-    const headers = Option.getOrElse(result.headers, () => ({} as Record<string, string>));
+    const headers: Record<string, string> = Option.getOrElse(result.headers, () => ({}));
     expect(headers['User-Agent']).toBe('Second/2.0');
   });
 });

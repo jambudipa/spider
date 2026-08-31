@@ -55,8 +55,8 @@ export class SpiderRequest extends Data.Class<{
   ): SpiderRequest {
     return new SpiderRequest({
       task,
-      headers: Option.fromNullable(headers),
-      meta: Option.fromNullable(meta),
+      headers: Option.fromNullishOr(headers),
+      meta: Option.fromNullishOr(meta),
     });
   }
 
@@ -118,9 +118,9 @@ export class SpiderResponse extends Data.Class<{
   ): SpiderResponse {
     return new SpiderResponse({
       pageData,
-      statusCode: Option.fromNullable(statusCode),
-      headers: Option.fromNullable(headers),
-      meta: Option.fromNullable(meta),
+      statusCode: Option.fromNullishOr(statusCode),
+      headers: Option.fromNullishOr(headers),
+      meta: Option.fromNullishOr(meta),
     });
   }
 

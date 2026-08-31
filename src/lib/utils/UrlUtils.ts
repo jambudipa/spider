@@ -68,7 +68,7 @@ export const UrlUtils = {
   tryParse: (input: string, base?: string) =>
     UrlUtils.parse(input, base).pipe(
       Effect.map(Option.some),
-      Effect.catchAll(() => Effect.succeed(Option.none()))
+      Effect.catch(() => Effect.succeed(Option.none()))
     ),
 
   /**

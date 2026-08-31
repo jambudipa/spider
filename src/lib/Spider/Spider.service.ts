@@ -1,5 +1,7 @@
 import {
+  Cause,
   Chunk,
+  Context,
   Data,
   DateTime,
   Deferred,
@@ -7,12 +9,14 @@ import {
   Effect,
   Fiber,
   HashMap,
+  Layer,
   MutableRef,
   Option,
   Queue,
   Random,
   Ref,
   Schedule,
+  Semaphore,
   Sink,
   Stream,
 } from 'effect';
@@ -21,7 +25,9 @@ import type { AnyNode, Element as DomElement } from 'domhandler';
 import {
   SpiderConfig,
   buildFetchRetrySchedule,
+  makeSpiderConfig,
   resolveUserAgent,
+  type SpiderConfigService,
   type UserAgentStrategy,
   type ResolvedStopMode,
   type DomainCompleteReason,
@@ -35,8 +41,16 @@ import {
   LinkExtractorService,
 } from '../LinkExtractor/index.js';
 import { SpiderSchedulerService } from '../Scheduler/SpiderScheduler.service.js';
-import { StateError, ParseError, ConfigError } from '../errors/effect-errors.js';
-import { classifyFetchError, type PageFetchError, type PageFetchErrorKind } from './Spider.types.js';
+import {
+  StateError,
+  ParseError,
+  ConfigError,
+} from '../errors/effect-errors.js';
+import {
+  classifyFetchError,
+  type PageFetchError,
+  type PageFetchErrorKind,
+} from './Spider.types.js';
 import {
   DomainCompleteEvent,
   DomainRetryScheduledEvent,
@@ -164,12 +178,10 @@ class CrawlResultError extends Data.TaggedClass('error')<{
  */
 type CrawlResult = CrawlResultOk | CrawlResultError;
 
-// Companion namespace pattern — TS allows a type and const value to share
-// a name. The members are pure narrowing predicates on the union.
-// eslint-disable-next-line no-redeclare
 const CrawlResult = {
-  isOk: (r: CrawlResult): r is CrawlResultOk => r._tag === 'ok',
-  isError: (r: CrawlResult): r is CrawlResultError => r._tag === 'error',
+  isOk: (result: CrawlResult): result is CrawlResultOk => result._tag === 'ok',
+  isError: (result: CrawlResult): result is CrawlResultError =>
+    result._tag === 'error',
 } as const;
 
 /**
@@ -238,7 +250,7 @@ export interface SpiderLinkExtractionOptions {
    * @example
    * ```typescript
    * const stopSignal = yield* Deferred.make<void>();
-   * const crawlFiber = yield* Effect.fork(
+   * const crawlFiber = yield* Effect.forkChild(
    *   spider.crawl(urls, sink, { externalStopSignal: stopSignal })
    * );
    * // … later:
@@ -249,15 +261,11 @@ export interface SpiderLinkExtractionOptions {
   readonly externalStopSignal?: Deferred.Deferred<void>;
 }
 
-export class SpiderService extends Effect.Service<SpiderService>()(
-  '@jambudipa/spider',
-  {
-    effect: Effect.gen(function* () {
+const makeSpiderService = (config: SpiderConfigService) =>
+  Effect.gen(function* () {
       const robots = yield* RobotsService;
       const scraper = yield* ScraperService;
       const events = yield* SpiderEventSink;
-
-      // Note: SpiderConfig is resolved within the crawl method to allow runtime overrides
 
       const linkExtractor = yield* LinkExtractorService;
 
@@ -323,533 +331,539 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           // Effect.scoped supplies the Scope required by Effect.acquireRelease
           // for the resultChannel queue lifecycle. Eliminates Scope from R so
           // the public signature stays unchanged for callers.
-          Effect.scoped(Effect.gen(function* () {
-            // Install a process-level guard for undici's
-            // `TypeError: terminated` race (Fetch abort vs TLS socket
-            // close). The exception escapes via EventEmitter and would
-            // otherwise crash the process mid-crawl, bypassing all
-            // Effect error plumbing. Reference-counted across concurrent
-            // crawls; removed on scope close.
-            yield* acquireUndiciTerminatedGuard;
+          Effect.scoped(
+            Effect.gen(function* () {
+              // Install a process-level guard for undici's
+              // `TypeError: terminated` race (Fetch abort vs TLS socket
+              // close). The exception escapes via EventEmitter and would
+              // otherwise crash the process mid-crawl, bypassing all
+              // Effect error plumbing. Reference-counted across concurrent
+              // crawls; removed on scope close.
+              yield* acquireUndiciTerminatedGuard;
 
-            // Get config at runtime when crawl() is called - allows custom configs to override
-            const config = yield* SpiderConfig;
+              // Normalize input to array of StartUrlEntry
+              const isStartUrlEntry = (
+                input: typeof startingUrls
+              ): input is StartUrlEntry =>
+                typeof input === 'object' &&
+                !Array.isArray(input) &&
+                'url' in input &&
+                typeof input.url === 'string';
 
-            if (!config) {
-              return yield* Effect.fail(
-                new ConfigError({
-                  field: 'SpiderConfig',
-                  reason: 'SpiderConfig is required for crawling operations'
+              const normalizeUrlInput = (
+                input: typeof startingUrls
+              ): StartUrlEntry[] => {
+                if (typeof input === 'string') {
+                  return [{ url: input }];
+                }
+                if (Array.isArray(input)) {
+                  // Type the loop variable explicitly — Array.isArray erases
+                  // ReadonlyArray<string | StartUrlEntry> to any[].
+                  const items: ReadonlyArray<string | StartUrlEntry> = input;
+                  return items.map(
+                    (item): StartUrlEntry =>
+                      typeof item === 'string' ? { url: item } : item
+                  );
+                }
+                return isStartUrlEntry(input) ? [input] : [];
+              };
+
+              const startEntries = normalizeUrlInput(startingUrls);
+              // Lookup map for re-attaching `fallbackUrls` after deduplication
+              // (the dedup helper only sees the `{ url, metadata }` slice).
+              // When the same primary URL appears more than once in the input,
+              // prefer the entry that carries `fallbackUrls` so a plain-string
+              // duplicate doesn't clobber a richer entry.
+              let entriesByUrl = HashMap.empty<string, StartUrlEntry>();
+              for (const entry of startEntries) {
+                const existing = HashMap.get(entriesByUrl, entry.url);
+                if (
+                  Option.isNone(existing) ||
+                  (entry.fallbackUrls?.length ?? 0) >
+                    (existing.value.fallbackUrls?.length ?? 0)
+                ) {
+                  entriesByUrl = HashMap.set(entriesByUrl, entry.url, entry);
+                }
+              }
+              // Strip the `metadata` field entirely when absent — avoids
+              // explicit `undefined` (Option-equivalent absence sentinel)
+              // while keeping `UrlWithMetadata`'s optional field semantics.
+              const urlsWithMetadata = startEntries.map((e) =>
+                e.metadata
+                  ? { url: e.url, metadata: { ...e.metadata } }
+                  : { url: e.url }
+              );
+
+              // Domain-equivalence rules drive both up-front URL deduplication and
+              // the per-link `shouldFollowUrl` check. Deriving both from the same
+              // config keeps the two paths in sync.
+              const equiv = yield* config.getDomainEquivalence();
+
+              const deduplicationResult = yield* deduplicateUrls(
+                urlsWithMetadata,
+                {
+                  wwwHandling:
+                    equiv.wwwHandling === 'ignore' ? 'ignore' : 'preserve',
+                  // 'preserve' (not 'prefer-https') in both branches: rewriting
+                  // http→https during up-front dedup silently breaks crawls of
+                  // http-only servers. Equivalence between the two protocols
+                  // is enforced later by `shouldFollowUrl` in 'permissive' mode.
+                  protocolHandling: 'preserve',
+                  trailingSlashHandling: 'ignore',
+                  queryParamHandling: 'preserve',
+                  fragmentHandling: 'ignore',
+                }
+              );
+
+              const deduplicatedUrls = deduplicationResult.deduplicated;
+
+              // Log deduplication statistics
+              if (deduplicationResult.stats.duplicates > 0) {
+                yield* Effect.logInfo(
+                  `URL deduplication: ${deduplicationResult.stats.total} total, ` +
+                    `${deduplicationResult.stats.unique} unique, ` +
+                    `${deduplicationResult.stats.duplicates} duplicates removed`
+                );
+              }
+
+              // Log skipped URLs for debugging
+              for (const skipped of deduplicationResult.skipped) {
+                yield* Effect.logDebug(
+                  `Skipped URL: ${skipped.url} - Reason: ${skipped.reason}`
+                );
+              }
+
+              // Deduplication happens silently to prevent excessive logging
+
+              const concurrency = yield* config.getConcurrency();
+
+              // Check if multiple URLs are being crawled and warn about domain restrictions
+              if (deduplicatedUrls.length > 1) {
+                const configOptions = yield* config.getOptions();
+                if (
+                  configOptions.allowedDomains ||
+                  configOptions.blockedDomains
+                ) {
+                  yield* Effect.logWarning(
+                    'Multiple starting URLs detected with allowedDomains/blockedDomains configured. ' +
+                      'Domain restrictions will be ignored - each URL will be restricted to its own domain instead.'
+                  );
+                }
+              }
+
+              // Emit spider lifecycle start
+              const spiderStartTime = yield* DateTime.now;
+              const spiderStartMs = DateTime.toEpochMillis(spiderStartTime);
+              yield* events.emit(
+                new SpiderStartEvent({
+                  details: {
+                    totalUrls: deduplicatedUrls.length,
+                    urls: deduplicatedUrls.map((u) => u.url),
+                    originalCount: urlsWithMetadata.length,
+                    deduplicatedCount: deduplicatedUrls.length,
+                  },
                 })
               );
-            }
 
-            // Normalize input to array of StartUrlEntry
-            const normalizeUrlInput = (
-              input: typeof startingUrls
-            ): StartUrlEntry[] => {
-              if (typeof input === 'string') {
-                return [{ url: input }];
-              }
-              if (Array.isArray(input)) {
-                // Type the loop variable explicitly — Array.isArray erases
-                // ReadonlyArray<string | StartUrlEntry> to any[].
-                const items: ReadonlyArray<string | StartUrlEntry> = input;
-                return items.map(
-                  (item): StartUrlEntry =>
-                    typeof item === 'string' ? { url: item } : item
+              // When an externalStopSignal is provided and stopMode === 'interrupt',
+              // emit SpiderStoppedEvent as soon as the signal resolves.
+              const crawlStopMode: ResolvedStopMode =
+                yield* config.getStopMode();
+              if (
+                crawlStopMode.kind === 'interrupt' &&
+                options?.externalStopSignal
+              ) {
+                yield* Effect.forkChild(
+                  Deferred.await(options.externalStopSignal).pipe(
+                    Effect.flatMap(() =>
+                      Effect.gen(function* () {
+                        const now = yield* DateTime.now;
+                        yield* events.emit(
+                          new SpiderStoppedEvent({
+                            reason: 'external_abort',
+                            totalDomains: deduplicatedUrls.length,
+                            totalPages: 0,
+                            wallclockMs:
+                              DateTime.toEpochMillis(now) - spiderStartMs,
+                          })
+                        );
+                      })
+                    ),
+                    Effect.ignore
+                  )
                 );
               }
-              // After the string and array checks above, the remaining
-              // variant is StartUrlEntry. TS doesn't narrow ReadonlyArray via
-              // Array.isArray (which is typed as `arg is any[]`), so an
-              // explicit cast is the simplest way to keep type safety here.
-              // eslint-disable-next-line custom-rules/no-type-assertion -- residual narrowing after explicit type guards
-              return [input as StartUrlEntry];
-            };
 
-            const startEntries = normalizeUrlInput(startingUrls);
-            // Lookup map for re-attaching `fallbackUrls` after deduplication
-            // (the dedup helper only sees the `{ url, metadata }` slice).
-            // When the same primary URL appears more than once in the input,
-            // prefer the entry that carries `fallbackUrls` so a plain-string
-            // duplicate doesn't clobber a richer entry.
-            let entriesByUrl = HashMap.empty<string, StartUrlEntry>();
-            for (const entry of startEntries) {
-              const existing = HashMap.get(entriesByUrl, entry.url);
-              if (
-                Option.isNone(existing) ||
-                ((entry.fallbackUrls?.length ?? 0) >
-                  (existing.value.fallbackUrls?.length ?? 0))
-              ) {
-                entriesByUrl = HashMap.set(entriesByUrl, entry.url, entry);
-              }
-            }
-            // Strip the `metadata` field entirely when absent — avoids
-            // explicit `undefined` (Option-equivalent absence sentinel)
-            // while keeping `UrlWithMetadata`'s optional field semantics.
-            const urlsWithMetadata = startEntries.map((e) =>
-              e.metadata
-                ? { url: e.url, metadata: { ...e.metadata } }
-                : { url: e.url }
-            );
+              // Run each URL as a separate crawling operation with its own infrastructure.
+              // ALWAYS restrict to starting domain to prevent crawling external sites.
+              const restrictToStartingDomain = true;
 
-            // Domain-equivalence rules drive both up-front URL deduplication and
-            // the per-link `shouldFollowUrl` check. Deriving both from the same
-            // config keeps the two paths in sync.
-            const equiv = yield* config.getDomainEquivalence();
+              // Per-crawl UA cache. Lifetime is one `crawl()` invocation so per-domain
+              // UA stickiness applies within a session but doesn't leak between calls.
+              // MutableRef wraps an immutable HashMap so writes are visible across
+              // concurrent crawlSingle invocations without sharing a mutable Map.
+              const uaCache = MutableRef.make(HashMap.empty<string, string>());
 
-            const deduplicationResult = yield* deduplicateUrls(
-              urlsWithMetadata,
-              {
-                wwwHandling:
-                  equiv.wwwHandling === 'ignore' ? 'ignore' : 'preserve',
-                // 'preserve' (not 'prefer-https') in both branches: rewriting
-                // http→https during up-front dedup silently breaks crawls of
-                // http-only servers. Equivalence between the two protocols
-                // is enforced later by `shouldFollowUrl` in 'permissive' mode.
-                protocolHandling: 'preserve',
-                trailingSlashHandling: 'ignore',
-                queryParamHandling: 'preserve',
-                fragmentHandling: 'ignore'
-              }
-            );
-            
-            const deduplicatedUrls = deduplicationResult.deduplicated;
-            
-            // Log deduplication statistics
-            if (deduplicationResult.stats.duplicates > 0) {
-              yield* Effect.logInfo(
-                `URL deduplication: ${deduplicationResult.stats.total} total, ` +
-                `${deduplicationResult.stats.unique} unique, ` +
-                `${deduplicationResult.stats.duplicates} duplicates removed`
-              );
-            }
-            
-            // Log skipped URLs for debugging
-            for (const skipped of deduplicationResult.skipped) {
-              yield* Effect.logDebug(`Skipped URL: ${skipped.url} - Reason: ${skipped.reason}`);
-            }
-
-            // Deduplication happens silently to prevent excessive logging
-
-            const concurrency = yield* config.getConcurrency();
-
-            // Check if multiple URLs are being crawled and warn about domain restrictions
-            if (deduplicatedUrls.length > 1) {
-              const configOptions = yield* config.getOptions();
-              if (
-                configOptions.allowedDomains ||
-                configOptions.blockedDomains
-              ) {
-                yield* Effect.logWarning(
-                  'Multiple starting URLs detected with allowedDomains/blockedDomains configured. ' +
-                    'Domain restrictions will be ignored - each URL will be restricted to its own domain instead.'
-                );
-              }
-            }
-
-            // Emit spider lifecycle start
-            const spiderStartTime = yield* DateTime.now;
-            const spiderStartMs = DateTime.toEpochMillis(spiderStartTime);
-            yield* events.emit(
-              new SpiderStartEvent({
-                details: {
-                  totalUrls: deduplicatedUrls.length,
-                  urls: deduplicatedUrls.map((u) => u.url),
-                  originalCount: urlsWithMetadata.length,
-                  deduplicatedCount: deduplicatedUrls.length,
-                },
-              })
-            );
-
-            // When an externalStopSignal is provided and stopMode === 'interrupt',
-            // emit SpiderStoppedEvent as soon as the signal resolves.
-            const crawlStopMode: ResolvedStopMode = yield* (yield* SpiderConfig).getStopMode();
-            if (crawlStopMode.kind === 'interrupt' && options?.externalStopSignal) {
-              yield* Effect.fork(
-                Deferred.await(options.externalStopSignal).pipe(
-                  Effect.flatMap(() =>
-                    Effect.gen(function* () {
-                      const now = yield* DateTime.now;
-                      yield* events.emit(new SpiderStoppedEvent({
-                        reason: 'external_abort',
-                        totalDomains: deduplicatedUrls.length,
-                        totalPages: 0,
-                        wallclockMs: DateTime.toEpochMillis(now) - spiderStartMs,
-                      }));
-                    })
+              // Probe a candidate URL with a HEAD request (falling back to GET on 405).
+              // Returns `true` only when the response is OK. Wrapped in `timeoutOption`
+              // so a slow probe is interrupted via fiber cancellation, not raw timers.
+              const PROBE_TIMEOUT_MS = 5000;
+              const probeUrl = (
+                candidate: string,
+                ua: string
+              ): Effect.Effect<boolean> => {
+                // `signal` is auto-injected by Effect.tryPromise — the underlying
+                // fetch is aborted when the fiber is interrupted (e.g. by the
+                // Effect.timeoutOption below), so probe sockets close promptly.
+                const doFetch = (method: 'HEAD' | 'GET') =>
+                  Effect.tryPromise({
+                    try: (signal) =>
+                      globalThis.fetch(candidate, {
+                        method,
+                        headers: { 'User-Agent': ua },
+                        signal,
+                      }),
+                    catch: () => 'fetch_failed' as const,
+                  });
+                return doFetch('HEAD').pipe(
+                  Effect.flatMap((res) =>
+                    res.status === 405
+                      ? doFetch('GET').pipe(Effect.map((r) => r.ok))
+                      : Effect.succeed(res.ok)
                   ),
-                  Effect.ignore
-                )
-              );
-            }
+                  Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
+                  Effect.map(Option.getOrElse(() => false)),
+                  Effect.catch(() => Effect.succeed(false))
+                );
+              };
 
-            // Run each URL as a separate crawling operation with its own infrastructure.
-            // ALWAYS restrict to starting domain to prevent crawling external sites.
-            const restrictToStartingDomain = true;
-
-            // Per-crawl UA cache. Lifetime is one `crawl()` invocation so per-domain
-            // UA stickiness applies within a session but doesn't leak between calls.
-            // MutableRef wraps an immutable HashMap so writes are visible across
-            // concurrent crawlSingle invocations without sharing a mutable Map.
-            const uaCache = MutableRef.make(HashMap.empty<string, string>());
-
-            // Probe a candidate URL with a HEAD request (falling back to GET on 405).
-            // Returns `true` only when the response is OK. Wrapped in `timeoutOption`
-            // so a slow probe is interrupted via fiber cancellation, not raw timers.
-            const PROBE_TIMEOUT_MS = 5000;
-            const probeUrl = (
-              candidate: string,
-              ua: string
-            ): Effect.Effect<boolean> => {
-              // `signal` is auto-injected by Effect.tryPromise — the underlying
-              // fetch is aborted when the fiber is interrupted (e.g. by the
-              // Effect.timeoutOption below), so probe sockets close promptly.
-              const doFetch = (method: 'HEAD' | 'GET') =>
-                Effect.tryPromise({
-                  try: (signal) =>
-                    globalThis.fetch(candidate, {
-                      method,
-                      headers: { 'User-Agent': ua },
-                      signal,
-                    }),
-                  catch: () => 'fetch_failed' as const,
-                });
-              return doFetch('HEAD').pipe(
-                Effect.flatMap((res) =>
-                  res.status === 405
-                    ? doFetch('GET').pipe(Effect.map((r) => r.ok))
-                    : Effect.succeed(res.ok)
-                ),
-                Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
-                Effect.map(Option.getOrElse(() => false)),
-                Effect.catchAll(() => Effect.succeed(false))
-              );
-            };
-
-            // Probe primary then fallbacks in order. If every candidate fails the
-            // probe, fall back to the primary URL — `crawlSingle`'s fetch pipeline
-            // will surface the failure normally as a `CrawlResultError`.
-            const resolveStartUrl = (
-              entry: StartUrlEntry,
-              ua: string
-            ): Effect.Effect<string> =>
-              Effect.gen(function* () {
-                const candidates = [entry.url, ...(entry.fallbackUrls ?? [])];
-                for (const candidate of candidates) {
-                  const reachable = yield* probeUrl(candidate, ua);
-                  if (reachable) return candidate;
-                }
-                return entry.url;
-              });
-
-            const probeUserAgent = yield* config.getUserAgent();
-            // Effect.forEach accepts 'inherit' natively, so pass through
-            // the configured concurrency rather than rewriting it. This keeps
-            // probe parallelism consistent with the domain-crawl Effect.all
-            // call below.
-            const crawlConcurrency = concurrency;
-
-            // Resolve every start URL up front so `crawlSingle` always receives
-            // a candidate that returned a non-error response (when one exists).
-            const resolvedEntries = yield* Effect.forEach(
-              deduplicatedUrls,
-              (deduped) =>
+              // Probe primary then fallbacks in order. If every candidate fails the
+              // probe, fall back to the primary URL — `crawlSingle`'s fetch pipeline
+              // will surface the failure normally as a `CrawlResultError`.
+              const resolveStartUrl = (
+                entry: StartUrlEntry,
+                ua: string
+              ): Effect.Effect<string> =>
                 Effect.gen(function* () {
-                  const fallback: StartUrlEntry = {
-                    url: deduped.url,
-                    metadata: deduped.metadata,
-                  };
-                  const entry = HashMap.get(entriesByUrl, deduped.url).pipe(
-                    Option.getOrElse(() => fallback)
-                  );
-                  // In interrupt mode, race start-URL probing against the
-                  // external stop signal so a hung HEAD probe can't pin the
-                  // crawl for PROBE_TIMEOUT_MS after the caller aborts.
-                  const chosen = yield* (
-                    crawlStopMode.kind === 'interrupt' && options?.externalStopSignal
+                  const candidates = [entry.url, ...(entry.fallbackUrls ?? [])];
+                  for (const candidate of candidates) {
+                    const reachable = yield* probeUrl(candidate, ua);
+                    if (reachable) return candidate;
+                  }
+                  return entry.url;
+                });
+
+              const probeUserAgent = yield* config.getUserAgent();
+              // Effect v4 represents inherited concurrency by omitting the
+              // option. Apply the same mapping to probes and domain crawls.
+              const toEffectConcurrency = (
+                value: number | 'unbounded' | 'inherit'
+              ): number | 'unbounded' | undefined =>
+                value === 'inherit' ? undefined : value;
+              const crawlConcurrency = toEffectConcurrency(concurrency);
+
+              // Resolve every start URL up front so `crawlSingle` always receives
+              // a candidate that returned a non-error response (when one exists).
+              const resolvedEntries = yield* Effect.forEach(
+                deduplicatedUrls,
+                (deduped) =>
+                  Effect.gen(function* () {
+                    const fallback: StartUrlEntry = {
+                      url: deduped.url,
+                      metadata: deduped.metadata,
+                    };
+                    const entry = HashMap.get(entriesByUrl, deduped.url).pipe(
+                      Option.getOrElse(() => fallback)
+                    );
+                    // In interrupt mode, race start-URL probing against the
+                    // external stop signal so a hung HEAD probe can't pin the
+                    // crawl for PROBE_TIMEOUT_MS after the caller aborts.
+                    const chosen = yield* crawlStopMode.kind === 'interrupt' &&
+                    options?.externalStopSignal
                       ? Effect.raceFirst(
                           resolveStartUrl(entry, probeUserAgent),
                           Deferred.await(options.externalStopSignal).pipe(
                             Effect.map(() => entry.url)
                           )
                         )
-                      : resolveStartUrl(entry, probeUserAgent)
-                  );
-                  const chosenDomain = yield* Effect.try({
-                    try: () => new URL(chosen).hostname,
-                    catch: () => 'invalid-url',
-                  }).pipe(Effect.catchAll(() => Effect.succeed('invalid-url')));
-                  yield* events.emit(
-                    new StartUrlChosenEvent({
-                      domain: chosenDomain,
-                      attempted: [
-                        entry.url,
-                        ...(entry.fallbackUrls ?? []),
-                      ],
-                      chosen,
-                    })
-                  );
-                  return {
-                    url: chosen,
-                    originalUrl: entry.url,
-                    metadata: deduped.metadata,
-                  };
-                }),
-              { concurrency: crawlConcurrency }
-            );
-
-            // Shared serialiser channel: every domain worker offers `CrawlResult`
-            // values here. A single fiber drains them into the user-supplied sink,
-            // which guarantees the sink's element handler is never invoked
-            // concurrently across domains.
-            //
-            // Use Effect.acquireRelease so Queue.shutdown runs via Scope
-            // release — survives parent interrupt cleanly. Effect.ensuring
-            // alone doesn't guarantee finaliser execution under all interrupt
-            // scenarios. Stream.fromQueue terminates naturally when the
-            // queue is shut down, so buffered offers drain before exit.
-            //
-            // Capacity is configurable: `'unbounded'` (default) preserves
-            // historical behaviour; a numeric capacity uses `Queue.bounded(n)`
-            // so `Queue.offer` suspends worker fibers when the sink lags,
-            // bounding heap retention to roughly `n × avg(CrawlResult)`.
-            const resultChannelCapacity = yield* config.getResultChannelCapacity();
-            const resultChannel = yield* Effect.acquireRelease(
-              resultChannelCapacity === 'unbounded'
-                ? Queue.unbounded<CrawlResult>()
-                : Queue.bounded<CrawlResult>(resultChannelCapacity),
-              (q) => Queue.shutdown(q)
-            );
-            // If the sink fails or defects, the serialiser fiber would exit
-            // without draining the channel — under `Queue.bounded`, workers
-            // suspended on `Queue.offer` would then deadlock waiting for a
-            // sink that no longer exists. `ensuring` runs `Queue.shutdown`
-            // on any exit (success, failure, defect, interrupt), which
-            // releases suspended offers so the main fiber can observe the
-            // failure and unwind cleanly.
-            const serialiserFiber = yield* Effect.fork(
-              Stream.fromQueue(resultChannel).pipe(
-                Stream.run(sink),
-                Effect.ensuring(Queue.shutdown(resultChannel))
-              )
-            );
-
-            // Multi-pass domain retry. Default config (`enabled: false`,
-            // `maxPasses: 1`) collapses to a single `Effect.all` over every
-            // resolved entry — identical to the pre-feature behaviour. When
-            // enabled, residual domains matching `retryOn` are re-run after
-            // `backoffMs`, sharing the same undici connection pool, URL
-            // deduplicator, robots cache, result channel, and event sink
-            // because every pass lives inside this `crawl()` invocation.
-            const domainRetry = yield* config.getDomainRetry();
-            type ResolvedEntry = (typeof resolvedEntries)[number];
-            type CrawlPassResult = {
-              readonly completed: boolean;
-              readonly pagesScraped: number;
-              readonly domain: string;
-              readonly completionSummary: Option.Option<{
-                readonly reason: DomainCompleteEvent['reason'];
-                readonly pagesAttempted: number;
-              }>;
-            };
-
-            const isRetryEligible = (
-              summary: Option.Option<{
-                readonly reason: DomainCompleteEvent['reason'];
-                readonly pagesAttempted: number;
-              }>
-            ): boolean => {
-              if (Option.isNone(summary)) return false;
-              const { reason, pagesAttempted: pa } = summary.value;
-              return (
-                domainRetry.retryOn.reasons.includes(reason) &&
-                pa <= domainRetry.retryOn.maxPagesAttempted
+                      : resolveStartUrl(entry, probeUserAgent);
+                    const chosenDomain = yield* Effect.try({
+                      try: () => new URL(chosen).hostname,
+                      catch: () => 'invalid-url',
+                    }).pipe(
+                      Effect.catch(() => Effect.succeed('invalid-url'))
+                    );
+                    yield* events.emit(
+                      new StartUrlChosenEvent({
+                        domain: chosenDomain,
+                        attempted: [entry.url, ...(entry.fallbackUrls ?? [])],
+                        chosen,
+                      })
+                    );
+                    return {
+                      url: chosen,
+                      originalUrl: entry.url,
+                      metadata: deduped.metadata,
+                    };
+                  }),
+                { concurrency: crawlConcurrency }
               );
-            };
 
-            const runPass = (
-              entries: ReadonlyArray<ResolvedEntry>,
-              cycleIndex: number
-            ) => {
-              // Apply pass overrides only for retry cycles (>= 1). Pass 0
-              // always uses the base config so behaviour is identical when
-              // domainRetry is disabled.
-              const passConcurrency: number | 'unbounded' | 'inherit' =
-                // eslint-disable-next-line effect/no-undefined-use-option -- `passOverrides.concurrency` is an optional config field where absence means "use the base value"; the comparison is to a sentinel-absence value, not a value-absence to encode in Option
-                cycleIndex > 0 && domainRetry.passOverrides?.concurrency !== undefined
-                  ? domainRetry.passOverrides.concurrency
-                  : concurrency;
-              const passEffects = entries.map(({ url, originalUrl, metadata }) =>
-                self.crawlSingle(
-                  url,
-                  resultChannel,
-                  options,
-                  metadata,
-                  restrictToStartingDomain,
-                  uaCache,
-                  originalUrl,
-                  cycleIndex
+              // Shared serialiser channel: every domain worker offers `CrawlResult`
+              // values here. A single fiber drains them into the user-supplied sink,
+              // which guarantees the sink's element handler is never invoked
+              // concurrently across domains.
+              //
+              // Use Effect.acquireRelease so Queue.shutdown runs via Scope
+              // release — survives parent interrupt cleanly. Effect.ensuring
+              // alone doesn't guarantee finaliser execution under all interrupt
+              // scenarios. Stream.fromQueue terminates naturally when the
+              // queue is shut down, so buffered offers drain before exit.
+              //
+              // Capacity is configurable: `'unbounded'` (default) preserves
+              // historical behaviour; a numeric capacity uses `Queue.bounded(n)`
+              // so `Queue.offer` suspends worker fibers when the sink lags,
+              // bounding heap retention to roughly `n × avg(CrawlResult)`.
+              const resultChannelCapacity =
+                yield* config.getResultChannelCapacity();
+              const resultChannel = yield* Effect.acquireRelease(
+                resultChannelCapacity === 'unbounded'
+                  ? Queue.unbounded<CrawlResult, Cause.Done>()
+                  : Queue.bounded<CrawlResult, Cause.Done>(
+                      resultChannelCapacity
+                    ),
+                (q) => Queue.shutdown(q)
+              );
+              // If the sink fails or defects, the serialiser fiber would exit
+              // without draining the channel — under `Queue.bounded`, workers
+              // suspended on `Queue.offer` would then deadlock waiting for a
+              // sink that no longer exists. `ensuring` runs `Queue.shutdown`
+              // on any exit (success, failure, defect, interrupt), which
+              // releases suspended offers so the main fiber can observe the
+              // failure and unwind cleanly.
+              const serialiserFiber = yield* Effect.forkChild(
+                Stream.fromQueue(resultChannel).pipe(
+                  Stream.run(sink),
+                  Effect.ensuring(Queue.shutdown(resultChannel))
                 )
               );
-              return Effect.all(passEffects, { concurrency: passConcurrency });
-            };
 
-            // When `domainRetry.enabled` is false (default), force a single
-            // pass regardless of `maxPasses`.
-            const effectiveMaxPasses = domainRetry.enabled
-              ? domainRetry.maxPasses
-              : 1;
-
-            // For retry cycles, `passOverrides.fetchRetry` is applied by
-            // installing a SpiderConfig layer for the duration of the pass.
-            // This is the cleanest way to keep `crawlSingle` honest about
-            // reading the active `getFetchRetry()` without threading a new
-            // arg through its signature.
-            const baseConfigOptions = yield* config.getOptions();
-            const runPassWithOverrides = (
-              entries: ReadonlyArray<ResolvedEntry>,
-              cycleIndex: number
-            ) => {
-              if (
-                cycleIndex === 0 ||
-                // eslint-disable-next-line effect/no-undefined-use-option -- optional config field; sentinel-absence comparison rather than Option-wrapped value
-                domainRetry.passOverrides?.fetchRetry === undefined
-              ) {
-                return runPass(entries, cycleIndex);
-              }
-              const overrideOptions = {
-                ...baseConfigOptions,
-                fetchRetry: domainRetry.passOverrides.fetchRetry,
+              // Multi-pass domain retry. Default config (`enabled: false`,
+              // `maxPasses: 1`) collapses to a single `Effect.all` over every
+              // resolved entry — identical to the pre-feature behaviour. When
+              // enabled, residual domains matching `retryOn` are re-run after
+              // `backoffMs`, sharing the same undici connection pool, URL
+              // deduplicator, robots cache, result channel, and event sink
+              // because every pass lives inside this `crawl()` invocation.
+              const domainRetry = yield* config.getDomainRetry();
+              type ResolvedEntry = (typeof resolvedEntries)[number];
+              type CrawlPassResult = {
+                readonly completed: boolean;
+                readonly pagesScraped: number;
+                readonly domain: string;
+                readonly completionSummary: Option.Option<{
+                  readonly reason: DomainCompleteEvent['reason'];
+                  readonly pagesAttempted: number;
+                }>;
               };
-              return Effect.provide(
-                runPass(entries, cycleIndex),
-                SpiderConfig.Live(overrideOptions)
-              );
-            };
 
-            // State shape note: `residuals` and `previousReasons` are paired
-            // by index. `Effect.all` preserves input order, so we use the
-            // same index-pairing trick to correlate `passResults[i]` back to
-            // its source entry — far simpler (and correct) than a hostname
-            // keyed Map, which silently collapses sibling start URLs that
-            // share a hostname.
-            const initialState: {
-              cycle: number;
-              residuals: ReadonlyArray<ResolvedEntry>;
-              previousReasons: ReadonlyArray<DomainCompleteReason>;
-              accumulated: ReadonlyArray<CrawlPassResult>;
-            } = {
-              cycle: 0,
-              residuals: resolvedEntries,
-              previousReasons: [],
-              accumulated: [],
-            };
+              const isRetryEligible = (
+                summary: Option.Option<{
+                  readonly reason: DomainCompleteEvent['reason'];
+                  readonly pagesAttempted: number;
+                }>
+              ): boolean => {
+                if (Option.isNone(summary)) return false;
+                const { reason, pagesAttempted: pa } = summary.value;
+                return (
+                  domainRetry.retryOn.reasons.includes(reason) &&
+                  pa <= domainRetry.retryOn.maxPagesAttempted
+                );
+              };
 
-            // Hostname extraction mirrors the same defensive shape used in
-            // `crawlSingle` (where it produces the `domain` field on
-            // `DomainCompleteEvent`). Used only to populate the `domain`
-            // field of `DomainRetryScheduledEvent`.
-            const domainOf = (rawUrl: string): string => {
-              // eslint-disable-next-line effect/no-try-catch-use-effect -- sync helper, defensive guard
-              try {
-                return new URL(rawUrl).hostname;
-              } catch {
-                return 'invalid-url';
-              }
-            };
+              const baseConfigOptions = yield* config.getOptions();
 
-            const finalState = yield* Effect.iterate(initialState, {
-              while: (s) =>
-                s.residuals.length > 0 && s.cycle < effectiveMaxPasses,
-              body: (s) =>
-                Effect.gen(function* () {
-                  if (s.cycle > 0) {
-                    // Emit a DomainRetryScheduledEvent for every residual
-                    // BEFORE the backoff sleep so consumers can observe
-                    // the intended schedule.
-                    const now = yield* DateTime.now;
-                    const nowMs = DateTime.toEpochMillis(now);
-                    const nextPassAt = nowMs + domainRetry.backoffMs;
-                    yield* Effect.forEach(
-                      s.residuals,
-                      (entry, idx) =>
-                        events.emit(
-                          new DomainRetryScheduledEvent({
-                            domain: domainOf(entry.url),
-                            startUrl: entry.url,
-                            previousReason: s.previousReasons[idx],
-                            attempt: s.cycle,
-                            nextPassAt,
-                          })
-                        ),
-                      { discard: true }
-                    );
-                    yield* Effect.sleep(Duration.millis(domainRetry.backoffMs));
-                  }
-                  const passResults = yield* runPassWithOverrides(s.residuals, s.cycle);
-                  // Domains in this pass that match retryOn become the next
-                  // residual set. Index-pair the result with its source entry
-                  // and propagate the just-observed completion reason so the
-                  // next cycle's `DomainRetryScheduledEvent.previousReason`
-                  // reflects the most recent pass, not the oldest.
-                  const nextResiduals: ResolvedEntry[] = [];
-                  const nextPreviousReasons: DomainCompleteReason[] = [];
-                  for (let i = 0; i < passResults.length; i++) {
-                    const r = passResults[i];
-                    if (isRetryEligible(r.completionSummary)) {
-                      // eslint-disable-next-line effect/no-array-mutation-use-chunk -- local accumulator for residual entries; short-lived loop-local array
-                      nextResiduals.push(s.residuals[i]);
-                      // eslint-disable-next-line effect/no-array-mutation-use-chunk -- paired by index with nextResiduals; same lifetime
-                      nextPreviousReasons.push(
-                        Option.isSome(r.completionSummary)
-                          ? r.completionSummary.value.reason
-                          : 'all_fetches_failed'
+              const runPass = (
+                entries: ReadonlyArray<ResolvedEntry>,
+                cycleIndex: number
+              ) => {
+                // Apply pass overrides only for retry cycles (>= 1). Pass 0
+                // always uses the base config so behaviour is identical when
+                // domainRetry is disabled.
+                const configuredPassConcurrency =
+                  cycleIndex > 0 &&
+                  domainRetry.passOverrides?.concurrency !== undefined
+                    ? domainRetry.passOverrides.concurrency
+                    : concurrency;
+                const passConcurrency = toEffectConcurrency(
+                  configuredPassConcurrency
+                );
+                const fetchRetryOverride =
+                  cycleIndex > 0
+                    ? Option.fromNullishOr(
+                        domainRetry.passOverrides?.fetchRetry
+                      )
+                    : Option.none();
+                const passConfig = Option.match(fetchRetryOverride, {
+                  onNone: () => config,
+                  onSome: (fetchRetry) =>
+                    makeSpiderConfig({
+                      ...baseConfigOptions,
+                      fetchRetry,
+                    }),
+                });
+                const passEffects = entries.map(
+                  ({ url, originalUrl, metadata }) =>
+                    self.crawlSingle(
+                      url,
+                      resultChannel,
+                      options,
+                      metadata,
+                      restrictToStartingDomain,
+                      uaCache,
+                      originalUrl,
+                      cycleIndex,
+                      passConfig
+                    )
+                );
+                return Effect.all(passEffects, {
+                  concurrency: passConcurrency,
+                });
+              };
+
+              // When `domainRetry.enabled` is false (default), force a single
+              // pass regardless of `maxPasses`.
+              const effectiveMaxPasses = domainRetry.enabled
+                ? domainRetry.maxPasses
+                : 1;
+
+              // State shape note: `residuals` and `previousReasons` are paired
+              // by index. `Effect.all` preserves input order, so we use the
+              // same index-pairing trick to correlate `passResults[i]` back to
+              // its source entry — far simpler (and correct) than a hostname
+              // keyed Map, which silently collapses sibling start URLs that
+              // share a hostname.
+              const initialState: {
+                cycle: number;
+                residuals: ReadonlyArray<ResolvedEntry>;
+                previousReasons: ReadonlyArray<DomainCompleteReason>;
+                accumulated: ReadonlyArray<CrawlPassResult>;
+              } = {
+                cycle: 0,
+                residuals: resolvedEntries,
+                previousReasons: [],
+                accumulated: [],
+              };
+
+              // Hostname extraction mirrors the same defensive shape used in
+              // `crawlSingle` (where it produces the `domain` field on
+              // `DomainCompleteEvent`). Used only to populate the `domain`
+              // field of `DomainRetryScheduledEvent`.
+              const domainOf = (rawUrl: string): Effect.Effect<string> =>
+                Effect.try({
+                  try: () => new URL(rawUrl).hostname,
+                  catch: () => 'invalid-url',
+                }).pipe(Effect.catch(() => Effect.succeed('invalid-url')));
+
+              let finalState = initialState;
+              while (
+                finalState.residuals.length > 0 &&
+                finalState.cycle < effectiveMaxPasses
+              ) {
+                const s = finalState;
+                    if (s.cycle > 0) {
+                      // Emit a DomainRetryScheduledEvent for every residual
+                      // BEFORE the backoff sleep so consumers can observe
+                      // the intended schedule.
+                      const now = yield* DateTime.now;
+                      const nowMs = DateTime.toEpochMillis(now);
+                      const nextPassAt = nowMs + domainRetry.backoffMs;
+                      yield* Effect.forEach(
+                        s.residuals,
+                        (entry, idx) =>
+                          Effect.gen(function* () {
+                            const domain = yield* domainOf(entry.url);
+                            yield* events.emit(
+                              new DomainRetryScheduledEvent({
+                                domain,
+                                startUrl: entry.url,
+                                previousReason: s.previousReasons[idx],
+                                attempt: s.cycle,
+                                nextPassAt,
+                              })
+                            );
+                          }),
+                        { discard: true }
+                      );
+                      yield* Effect.sleep(
+                        Duration.millis(domainRetry.backoffMs)
                       );
                     }
-                  }
-                  return {
-                    cycle: s.cycle + 1,
-                    residuals: nextResiduals,
-                    previousReasons: nextPreviousReasons,
-                    accumulated: [...s.accumulated, ...passResults],
-                  };
-                }),
-            });
-            const results = finalState.accumulated;
+                    const passResults = yield* runPass(
+                      s.residuals,
+                      s.cycle
+                    );
+                    // Domains in this pass that match retryOn become the next
+                    // residual set. Index-pair the result with its source entry
+                    // and propagate the just-observed completion reason so the
+                    // next cycle's `DomainRetryScheduledEvent.previousReason`
+                    // reflects the most recent pass, not the oldest.
+                    let nextResiduals = Chunk.empty<ResolvedEntry>();
+                    let nextPreviousReasons = Chunk.empty<DomainCompleteReason>();
+                    for (let i = 0; i < passResults.length; i++) {
+                      const r = passResults[i];
+                      if (isRetryEligible(r.completionSummary)) {
+                        nextResiduals = Chunk.append(nextResiduals, s.residuals[i]);
+                        nextPreviousReasons = Chunk.append(
+                          nextPreviousReasons,
+                          Option.isSome(r.completionSummary)
+                            ? r.completionSummary.value.reason
+                            : 'all_fetches_failed'
+                        );
+                      }
+                    }
+                finalState = {
+                  cycle: s.cycle + 1,
+                  residuals: Chunk.toReadonlyArray(nextResiduals),
+                  previousReasons: Chunk.toReadonlyArray(nextPreviousReasons),
+                  accumulated: [...s.accumulated, ...passResults],
+                };
+              }
+              const results = finalState.accumulated;
 
-            // Trigger drain by shutting down the channel before joining.
-            // The acquireRelease finaliser will be a no-op second shutdown
-            // on success; on interrupt the finaliser is the only shutdown.
-            yield* Queue.shutdown(resultChannel);
+              // End the channel before joining so Stream.fromQueue drains
+              // buffered results and completes normally. Queue.shutdown
+              // interrupts consumers in Effect v4, so it remains only in the
+              // resource finaliser for cancellation paths.
+              yield* Queue.end(resultChannel);
 
-            // Wait for every offered result to drain through the sink.
-            yield* Fiber.join(serialiserFiber);
+              // Wait for every offered result to drain through the sink.
+              yield* Fiber.join(serialiserFiber);
 
-            // Emit spider lifecycle complete. `totalDomains` reflects the
-            // unique start-URL set the consumer asked for, not the number
-            // of pass invocations (`accumulated` can hold multiple entries
-            // per start URL when `domainRetry` runs retries). `totalPages`
-            // sums scraped pages across all passes — when retries recover
-            // pages on later passes, those scrapes are real work and count.
-            yield* events.emit(
-              new SpiderCompleteEvent({
-                details: {
-                  totalDomains: resolvedEntries.length,
-                  totalPages: results.reduce(
-                    (sum, r) => sum + (r.pagesScraped || 0),
-                    0
-                  ),
-                },
-              })
-            );
+              // Emit spider lifecycle complete. `totalDomains` reflects the
+              // unique start-URL set the consumer asked for, not the number
+              // of pass invocations (`accumulated` can hold multiple entries
+              // per start URL when `domainRetry` runs retries). `totalPages`
+              // sums scraped pages across all passes — when retries recover
+              // pages on later passes, those scrapes are real work and count.
+              yield* events.emit(
+                new SpiderCompleteEvent({
+                  details: {
+                    totalDomains: resolvedEntries.length,
+                    totalPages: results.reduce(
+                      (sum, r) => sum + (r.pagesScraped || 0),
+                      0
+                    ),
+                  },
+                })
+              );
 
-            // All results have been processed through the sink
-            return {
-              completed: true,
-            };
-          })),
+              // All results have been processed through the sink
+              return {
+                completed: true,
+              };
+            })
+          ),
 
         // Single URL crawling - each gets its own queue, workers, and deduplicator.
         // Workers offer results to the shared `resultChannel` owned by the caller
@@ -858,7 +872,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
         // `crawlSingle` so concurrent domains can't race against it.
         crawlSingle: (
           urlString: string,
-          resultChannel: Queue.Queue<CrawlResult>,
+          resultChannel: Queue.Queue<CrawlResult, Cause.Done>,
           options?: SpiderLinkExtractionOptions,
           initialMetadata?: Record<string, unknown>,
           restrictToStartingDomain?: boolean,
@@ -875,18 +889,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           // pass; incremented by the multi-pass retry loop in `crawl()`.
           // Defaults to `0` so the public single-domain entry point keeps
           // existing behaviour.
-          cycle: number = 0
+          cycle: number = 0,
+          activeConfig = config
         ) =>
           Effect.gen(function* () {
-            const config = yield* SpiderConfig;
-            const fetchRetry = yield* config.getFetchRetry();
-            const configOptions = yield* config.getOptions();
-            const httpAdapter = yield* config.getHttpAdapter();
+            const fetchRetry = yield* activeConfig.getFetchRetry();
+            const configOptions = yield* activeConfig.getOptions();
+            const httpAdapter = yield* activeConfig.getHttpAdapter();
 
             // Extract domain from URL using Effect error handling
             const domain = yield* Effect.try({
               try: () => new URL(urlString).hostname,
-              catch: () => 'invalid-url'
+              catch: () => 'invalid-url',
             });
 
             // The "effective" start URL — initially the requested URL, may be
@@ -899,8 +913,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // for `rotating` + `perDomain` strategies so subsequent crawls of
             // the same domain (within this `crawl()` invocation) reuse it.
             const uaStrategy: UserAgentStrategy =
-              configOptions.userAgentStrategy ??
-              { kind: 'static', userAgent: configOptions.userAgent };
+              configOptions.userAgentStrategy ?? {
+                kind: 'static',
+                userAgent: configOptions.userAgent,
+              };
             const userAgent = resolveUserAgent(uaStrategy, domain, uaCache);
 
             // Emit domain start
@@ -908,10 +924,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               new DomainStartEvent({ domain, startUrl: urlString })
             );
 
-            // Create a fresh deduplicator instance for this domain
-            const localDeduplicator = yield* Effect.provide(
-              UrlDeduplicatorService,
-              UrlDeduplicatorService.Default
+            // Create a fresh deduplicator instance for this domain. Calling
+            // the service factory avoids Effect v4 layer sharing across
+            // separate crawlSingle invocations.
+            const localDeduplicator = yield* Effect.provideService(
+              UrlDeduplicatorService.make,
+              SpiderConfig,
+              activeConfig
             );
 
             const urlQueue = yield* Queue.unbounded<CrawlTask>();
@@ -939,27 +958,33 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
 
             // Stop-signal infrastructure (used only when stopMode === 'interrupt')
-            const stopMode: ResolvedStopMode = yield* config.getStopMode();
+            const stopMode: ResolvedStopMode = yield* activeConfig.getStopMode();
 
             // Read worker-heartbeat policy once per domain scope — same source
             // of truth for the workerHealthMonitor's stale-threshold check and
             // for the per-task decision about firing between-retry heartbeats.
-            const staleWorkerThresholdMs = yield* config.getStaleWorkerThreshold();
-            const workerHeartbeatMode = yield* config.getWorkerHeartbeatMode();
+            const staleWorkerThresholdMs =
+              yield* activeConfig.getStaleWorkerThreshold();
+            const workerHeartbeatMode = yield* activeConfig.getWorkerHeartbeatMode();
             const staleWorkerCheckIntervalMs =
-              yield* config.getStaleWorkerCheckInterval();
+              yield* activeConfig.getStaleWorkerCheckInterval();
             const domainStopSignal = yield* Deferred.make<void>();
-            const domainStopReason = MutableRef.make<Option.Option<string>>(Option.none());
+            const domainStopReason = MutableRef.make<Option.Option<string>>(
+              Option.none()
+            );
             // Tracks the URL currently being fetched so WorkerInterruptedEvent
             // can report it accurately when the fiber is interrupted.
             const currentTaskUrl = MutableRef.make('');
 
             // Cascade an external stop signal → domain stop signal
             if (stopMode.kind === 'interrupt' && options?.externalStopSignal) {
-              yield* Effect.fork(
+              yield* Effect.forkChild(
                 Deferred.await(options.externalStopSignal).pipe(
                   Effect.flatMap(() => {
-                    MutableRef.set(domainStopReason, Option.some('external_abort'));
+                    MutableRef.set(
+                      domainStopReason,
+                      Option.some('external_abort')
+                    );
                     return Deferred.complete(domainStopSignal, Effect.void);
                   }),
                   Effect.ignore
@@ -988,7 +1013,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               });
 
             // Create semaphore for atomic queue operations (mutex with 1 permit)
-            const queueMutex = yield* Effect.makeSemaphore(1);
+            const queueMutex = yield* Semaphore.make(1);
 
             // Worker health monitoring system. `Ref` (not `MutableRef`) so
             // concurrent `reportWorkerHealth` calls — top-of-loop from many
@@ -1036,10 +1061,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 // positive elapsed.
                 if (elapsed < 0) continue;
                 if (elapsed > staleThreshold) {
-                  candidatesChunk = Chunk.append(
-                    candidatesChunk,
-                    [workerId, elapsed] as const
-                  );
+                  candidatesChunk = Chunk.append(candidatesChunk, [
+                    workerId,
+                    elapsed,
+                  ] as const);
                 }
               }
 
@@ -1055,7 +1080,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   (m) => {
                     const opt = HashMap.get(m, workerId);
                     if (Option.isNone(opt)) return [false, m] as const;
-                    const elapsedNow = nowMs - DateTime.toEpochMillis(opt.value);
+                    const elapsedNow =
+                      nowMs - DateTime.toEpochMillis(opt.value);
                     if (elapsedNow > staleThreshold) {
                       return [true, HashMap.remove(m, workerId)] as const;
                     }
@@ -1195,14 +1221,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const memUsage = process.memoryUsage();
 
                   // Log warnings for concerning resource usage
-                  if (memUsage.heapUsed > SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES) {
+                  if (
+                    memUsage.heapUsed > SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES
+                  ) {
                     yield* Effect.logWarning('high memory usage').pipe(
                       Effect.annotateLogs({
                         event: 'high_memory_usage',
                         domain,
                         workerId,
                         heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
-                        heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024),
+                        heapTotalMb: Math.round(
+                          memUsage.heapTotal / 1024 / 1024
+                        ),
                         queueSize,
                       })
                     );
@@ -1250,7 +1280,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         })
                       )
                     ),
-                    Effect.catchAll((error) =>
+                    Effect.catch((error) =>
                       Effect.gen(function* () {
                         yield* Effect.logWarning(
                           'task acquisition failed, marking worker idle and retrying'
@@ -1360,10 +1390,11 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     })
                   );
 
-                  const restrictToStartingDomainOption = restrictToStartingDomain
-                    ? Option.some(MutableRef.get(effectiveStartUrl))
-                    : Option.none<string>();
-                  const shouldFollow = yield* config.shouldFollowUrl(
+                  const restrictToStartingDomainOption =
+                    restrictToStartingDomain
+                      ? Option.some(MutableRef.get(effectiveStartUrl))
+                      : Option.none<string>();
+                  const shouldFollow = yield* activeConfig.shouldFollowUrl(
                     task.url,
                     task.fromUrl,
                     Option.getOrUndefined(restrictToStartingDomainOption)
@@ -1395,7 +1426,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   }
 
                   // Check robots.txt unless configured to ignore
-                  const ignoreRobots = yield* config.shouldIgnoreRobotsTxt();
+                  const ignoreRobots = yield* activeConfig.shouldIgnoreRobotsTxt();
                   if (!ignoreRobots) {
                     yield* Effect.logDebug('checking robots.txt').pipe(
                       Effect.annotateLogs({
@@ -1447,7 +1478,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     // Apply crawl delay if specified, but cap at maximum
                     if (robotsCheck.crawlDelay) {
                       const maxCrawlDelayMs =
-                        yield* config.getMaxRobotsCrawlDelay();
+                        yield* activeConfig.getMaxRobotsCrawlDelay();
                       const maxCrawlDelaySeconds = maxCrawlDelayMs / 1000;
                       const effectiveCrawlDelay = Math.min(
                         robotsCheck.crawlDelay,
@@ -1474,11 +1505,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   }
 
                   // Apply configured request delay
-                  const requestDelay = yield* config.getRequestDelay();
+                  const requestDelay = yield* activeConfig.getRequestDelay();
                   yield* Effect.sleep(`${requestDelay} millis`);
 
                   const fetchStartDateTime = yield* DateTime.now;
-                  const fetchStartTime = DateTime.toEpochMillis(fetchStartDateTime);
+                  const fetchStartTime =
+                    DateTime.toEpochMillis(fetchStartDateTime);
                   yield* Effect.logDebug('about to fetch and parse page').pipe(
                     Effect.annotateLogs({
                       event: 'before_fetch',
@@ -1514,8 +1546,8 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   const heartbeatOnAttempt: Effect.Effect<unknown> | undefined =
                     workerHeartbeatMode === 'per-attempt'
                       ? reportWorkerHealth(workerId)
-                      // eslint-disable-next-line effect/no-undefined-use-option -- `heartbeatOnAttempt` is the optional `onAttempt` slot of buildFetchRetrySchedule; absence is the JS shape, not a value-absence to encode in Option
-                      : undefined;
+                      :
+                        undefined;
                   const retrySchedule = buildFetchRetrySchedule(
                     fetchRetry,
                     heartbeatOnAttempt
@@ -1546,7 +1578,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           MutableRef.update(attemptCounter, (n) => n + 1)
                         )
                       ),
-                      Effect.retry(retrySchedule),
+                      Effect.retry(retrySchedule)
                     );
                   const maybeFetchResult: Option.Option<FetchOk> = yield* (
                     stopMode.kind === 'interrupt'
@@ -1558,56 +1590,63 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         )
                       : fetchCore
                   ).pipe(
-                      Effect.map((result): Option.Option<FetchOk> =>
-                        Option.some(result)
-                      ),
-                      Effect.catchAll((error) =>
-                        Effect.gen(function* () {
-                          const fetchEndDateTime = yield* DateTime.now;
-                          const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
-                          const attemptsMade = MutableRef.get(attemptCounter);
-                          const fetchError = classifyFetchError(error, fetchDuration, attemptsMade);
+                    Effect.map(
+                      (result): Option.Option<FetchOk> => Option.some(result)
+                    ),
+                    Effect.catch((error) =>
+                      Effect.gen(function* () {
+                        const fetchEndDateTime = yield* DateTime.now;
+                        const fetchDuration =
+                          DateTime.toEpochMillis(fetchEndDateTime) -
+                          fetchStartTime;
+                        const attemptsMade = MutableRef.get(attemptCounter);
+                        const fetchError = classifyFetchError(
+                          error,
+                          fetchDuration,
+                          attemptsMade
+                        );
 
-                          yield* Effect.logWarning(
-                            error?.name === 'TimeoutException'
-                              ? `fetch timed out after ${fetchDuration}ms`
-                              : `fetch failed after ${fetchDuration}ms`
-                          ).pipe(
-                            Effect.annotateLogs({
-                              event: 'fetch_error',
-                              domain,
-                              workerId,
-                              url: task.url,
-                              errorKind: fetchError.kind,
-                              statusCode: fetchError.statusCode,
-                              durationMs: fetchDuration,
-                            })
-                          );
+                        yield* Effect.logWarning(
+                          error?.name === 'TimeoutException'
+                            ? `fetch timed out after ${fetchDuration}ms`
+                            : `fetch failed after ${fetchDuration}ms`
+                        ).pipe(
+                          Effect.annotateLogs({
+                            event: 'fetch_error',
+                            domain,
+                            workerId,
+                            url: task.url,
+                            errorKind: fetchError.kind,
+                            statusCode: fetchError.statusCode,
+                            durationMs: fetchDuration,
+                          })
+                        );
 
-                          yield* recordFailure(fetchError.kind);
+                        yield* recordFailure(fetchError.kind);
 
-                          const crawlTimestamp = yield* DateTime.now;
-                          yield* Queue.offer(
-                            resultChannel,
-                            new CrawlResultError({
-                              url: task.url,
-                              depth: task.depth,
-                              timestamp: DateTime.toDateUtc(crawlTimestamp),
-                              metadata: task.metadata,
-                              error: fetchError,
-                            })
-                          );
+                        const crawlTimestamp = yield* DateTime.now;
+                        yield* Queue.offer(
+                          resultChannel,
+                          new CrawlResultError({
+                            url: task.url,
+                            depth: task.depth,
+                            timestamp: DateTime.toDateUtc(crawlTimestamp),
+                            metadata: task.metadata,
+                            error: fetchError,
+                          })
+                        );
 
-                          return Option.none<FetchOk>();
-                        })
-                      )
-                    );
+                        return Option.none<FetchOk>();
+                      })
+                    )
+                  );
 
                   if (Option.isSome(maybeFetchResult)) {
                     const { pageData: actualPageData, finalUrl } =
                       maybeFetchResult.value;
                     const fetchEndDateTime = yield* DateTime.now;
-                    const fetchDuration = DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
+                    const fetchDuration =
+                      DateTime.toEpochMillis(fetchEndDateTime) - fetchStartTime;
 
                     // Cross-domain redirect detection (depth-0 only). When the
                     // start URL's response landed on a different host AND the
@@ -1618,13 +1657,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     // from a custom fetch wrapper) defaults `Response.url` to
                     // `''`, which would otherwise trigger spurious redirect
                     // logic and a `new URL('')` throw.
-                    if (
-                      task.depth === 0 &&
-                      finalUrl &&
-                      finalUrl !== task.url
-                    ) {
+                    if (task.depth === 0 && finalUrl && finalUrl !== task.url) {
                       const crossDomainConfig =
-                        yield* config.getCrossDomainRedirects();
+                        yield* activeConfig.getCrossDomainRedirects();
                       if (crossDomainConfig.enabled) {
                         const hostnamesOpt = yield* Effect.try({
                           try: () => ({
@@ -1636,7 +1671,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                           catch: () => 'parse_failed' as const,
                         }).pipe(
                           Effect.map(Option.some),
-                          Effect.catchAll(() =>
+                          Effect.catch(() =>
                             Effect.succeed(
                               Option.none<{
                                 readonly finalHostname: string;
@@ -1686,9 +1721,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         const isFieldExtractionConfig = (
                           fieldCfg: DataExtractionFieldConfig
                         ): fieldCfg is FieldExtractionConfig =>
-                          Option.fromNullable(fieldCfg).pipe(
-                            Option.filter((cfg): cfg is FieldExtractionConfig =>
-                              typeof cfg === 'object' && 'selector' in cfg
+                          Option.fromNullishOr(fieldCfg).pipe(
+                            Option.filter(
+                              (cfg): cfg is FieldExtractionConfig =>
+                                typeof cfg === 'object' && 'selector' in cfg
                             ),
                             Option.isSome
                           );
@@ -1697,16 +1733,25 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         const isNestedFieldConfig = (
                           nestedCfg: unknown
                         ): nestedCfg is NestedFieldConfig =>
-                          Option.fromNullable(nestedCfg).pipe(
-                            Option.filter((cfg): cfg is NestedFieldConfig =>
-                              typeof cfg === 'object' && Object.prototype.hasOwnProperty.call(cfg, 'selector')
+                          Option.fromNullishOr(nestedCfg).pipe(
+                            Option.filter(
+                              (cfg): cfg is NestedFieldConfig =>
+                                typeof cfg === 'object' &&
+                                Object.prototype.hasOwnProperty.call(
+                                  cfg,
+                                  'selector'
+                                )
                             ),
                             Option.isSome
                           );
 
                         // Type guard to check if a cheerio node is a DOM Element
-                        const isDomElement = (node: AnyNode): node is DomElement =>
-                          node.type === 'tag' || node.type === 'script' || node.type === 'style';
+                        const isDomElement = (
+                          node: AnyNode
+                        ): node is DomElement =>
+                          node.type === 'tag' ||
+                          node.type === 'script' ||
+                          node.type === 'style';
 
                         for (const [fieldName, fieldConfig] of Object.entries(
                           extractDataConfig
@@ -1715,7 +1760,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                             // Simple selector - extract text
                             const text = $(fieldConfig).text().trim();
                             // Store empty string as Option.none, non-empty as Option.some (unwrapped for result)
-                            result[fieldName] = Option.fromNullable(text.length > 0 ? text : Option.none<string>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
+                            result[fieldName] = Option.fromNullishOr(
+                              text.length > 0
+                                ? text
+                                : Option.none<string>().pipe(
+                                    Option.getOrUndefined
+                                  )
+                            ).pipe(Option.getOrUndefined);
                           } else if (isFieldExtractionConfig(fieldConfig)) {
                             // FieldExtractionConfig object - no type assertion needed
                             const {
@@ -1736,13 +1787,16 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                                 const $el = $(el);
                                 if (fields) {
                                   // Handle nested fields extraction
-                                  const nestedResult: Record<string, unknown> = {};
+                                  const nestedResult: Record<string, unknown> =
+                                    {};
                                   for (const [
                                     nestedName,
                                     nestedConfig,
                                   ] of Object.entries(fields)) {
                                     if (isNestedFieldConfig(nestedConfig)) {
-                                      const $nested = $el.find(nestedConfig.selector);
+                                      const $nested = $el.find(
+                                        nestedConfig.selector
+                                      );
                                       if (nestedConfig.attribute) {
                                         nestedResult[nestedName] = $nested.attr(
                                           nestedConfig.attribute
@@ -1754,16 +1808,31 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                                       }
                                     }
                                   }
-                                  valuesChunk = Chunk.append(valuesChunk, nestedResult);
+                                  valuesChunk = Chunk.append(
+                                    valuesChunk,
+                                    nestedResult
+                                  );
                                 } else if (attribute) {
-                                  valuesChunk = Chunk.append(valuesChunk, $el.attr(attribute));
+                                  valuesChunk = Chunk.append(
+                                    valuesChunk,
+                                    $el.attr(attribute)
+                                  );
                                 } else {
-                                  valuesChunk = Chunk.append(valuesChunk, $el.text().trim());
+                                  valuesChunk = Chunk.append(
+                                    valuesChunk,
+                                    $el.text().trim()
+                                  );
                                 }
                               });
                               const values = Chunk.toArray(valuesChunk);
                               // Store empty array as Option.none, non-empty as Option.some (unwrapped for result)
-                              result[fieldName] = Option.fromNullable(values.length > 0 ? values : Option.none<unknown[]>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
+                              result[fieldName] = Option.fromNullishOr(
+                                values.length > 0
+                                  ? values
+                                  : Option.none<unknown[]>().pipe(
+                                      Option.getOrUndefined
+                                    )
+                              ).pipe(Option.getOrUndefined);
                             } else {
                               const $el = $(selector);
                               if (attribute) {
@@ -1771,7 +1840,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                               } else {
                                 const text = $el.text().trim();
                                 // Store empty string as Option.none, non-empty as Option.some (unwrapped for result)
-                                result[fieldName] = Option.fromNullable(text.length > 0 ? text : Option.none<string>().pipe(Option.getOrUndefined)).pipe(Option.getOrUndefined);
+                                result[fieldName] = Option.fromNullishOr(
+                                  text.length > 0
+                                    ? text
+                                    : Option.none<string>().pipe(
+                                        Option.getOrUndefined
+                                      )
+                                ).pipe(Option.getOrUndefined);
                               }
                             }
                           }
@@ -1824,7 +1899,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     );
 
                     // Queue new URLs if not at max depth
-                    const maxDepth = yield* config.getMaxDepth();
+                    const maxDepth = yield* activeConfig.getMaxDepth();
 
                     if (!maxDepth || task.depth < maxDepth) {
                       let linksToProcess: string[] = [];
@@ -1840,9 +1915,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                                 // (extractRawLinks) to allow for dependency injection and alternative implementations.
                                 // The service wraps the pure function with Effect error handling and enables
                                 // testing with mock implementations or enhanced extractors with different capabilities.
-                                .extractLinks(pageDataWithExtraction.html, extractorConfig)
+                                .extractLinks(
+                                  pageDataWithExtraction.html,
+                                  extractorConfig
+                                )
                                 .pipe(
-                                  Effect.catchAll(() =>
+                                  Effect.catch(() =>
                                     Effect.succeed({
                                       links: [],
                                       totalElementsProcessed: 0,
@@ -1863,11 +1941,17 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         extractionResult.links,
                         (url) =>
                           Effect.try({
-                            try: () => new URL(url, pageDataWithExtraction.url).toString(),
-                            catch: () => Option.none<string>()
+                            try: () =>
+                              new URL(
+                                url,
+                                pageDataWithExtraction.url
+                              ).toString(),
+                            catch: () => Option.none<string>(),
                           }).pipe(
                             Effect.map(Option.some),
-                            Effect.catchAll(() => Effect.succeed(Option.none<string>()))
+                            Effect.catch(() =>
+                              Effect.succeed(Option.none<string>())
+                            )
                           ),
                         { concurrency: 'unbounded' }
                       );
@@ -1883,7 +1967,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                         const linkRestrictOption = restrictToStartingDomain
                           ? Option.some(MutableRef.get(effectiveStartUrl))
                           : Option.none<string>();
-                        const linkShouldFollow = yield* config.shouldFollowUrl(
+                        const linkShouldFollow = yield* activeConfig.shouldFollowUrl(
                           link,
                           task.url,
                           Option.getOrUndefined(linkRestrictOption)
@@ -1937,7 +2021,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   );
 
                   // Check if we've reached max pages for this domain (atomic check)
-                  const maxPages = yield* config.getMaxPages();
+                  const maxPages = yield* activeConfig.getMaxPages();
                   if (maxPages) {
                     const currentPageCount = yield* localDeduplicator.size();
                     if (currentPageCount >= maxPages) {
@@ -1979,10 +2063,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       // In interrupt mode, resolve the stop signal so
                       // peer workers abandon their in-flight fetches.
                       if (stopMode.kind === 'interrupt') {
-                        MutableRef.set(domainStopReason, Option.some('max_pages'));
-                        yield* Deferred.complete(domainStopSignal, Effect.void).pipe(
-                          Effect.ignore
+                        MutableRef.set(
+                          domainStopReason,
+                          Option.some('max_pages')
                         );
+                        yield* Deferred.complete(
+                          domainStopSignal,
+                          Effect.void
+                        ).pipe(Effect.ignore);
                       }
                       break;
                     }
@@ -1993,7 +2081,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   if (pageCount % 10 === 0) {
                     const queueSize = yield* queueManager.size();
                     const activeCount = MutableRef.get(activeWorkers);
-                    const maxWorkers = yield* config.getMaxConcurrentWorkers();
+                    const maxWorkers = yield* activeConfig.getMaxConcurrentWorkers();
 
                     // Log detailed domain status
                     yield* Effect.logDebug('domain status').pipe(
@@ -2021,12 +2109,19 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 // Emit WorkerInterruptedEvent when this fiber is interrupted
                 // by a stop signal (interrupt mode only).
                 Effect.onInterrupt(() =>
-                  events.emit(new WorkerInterruptedEvent({
-                    workerId,
-                    domain,
-                    url: MutableRef.get(currentTaskUrl),
-                    reason: Option.getOrElse(MutableRef.get(domainStopReason), () => 'interrupted'),
-                  })).pipe(Effect.ignore)
+                  events
+                    .emit(
+                      new WorkerInterruptedEvent({
+                        workerId,
+                        domain,
+                        url: MutableRef.get(currentTaskUrl),
+                        reason: Option.getOrElse(
+                          MutableRef.get(domainStopReason),
+                          () => 'interrupted'
+                        ),
+                      })
+                    )
+                    .pipe(Effect.ignore)
                 ),
                 // Ensure this runs even if the worker is interrupted/crashes
                 Effect.ensuring(
@@ -2037,32 +2132,6 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                       reason: 'effect_ensuring_cleanup',
                     })
                   )
-                ),
-                // Add catchAll to handle any unhandled errors
-                Effect.catchAll((error) =>
-                  Effect.gen(function* () {
-                    yield* Effect.logError(
-                      `worker ${workerId} crashed: ${error}`
-                    ).pipe(
-                      Effect.annotateLogs({
-                        event: 'worker_crash',
-                        domain,
-                        workerId,
-                        error: String(error),
-                      })
-                    );
-
-                    // Mark worker as exited due to error
-                    yield* Effect.logDebug('worker exiting_loop').pipe(
-                      Effect.annotateLogs({
-                        workerId,
-                        domain,
-                        reason: 'error_exit',
-                      })
-                    );
-
-                    // Re-throw to maintain error semantics
-                  })
                 )
               );
 
@@ -2083,8 +2152,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
 
             // Start workers with unique IDs using Chunk for immutable collection
-            const maxWorkers = yield* config.getMaxConcurrentWorkers();
-            let workerFibersChunk = Chunk.empty<Fiber.RuntimeFiber<void, unknown>>();
+            const maxWorkers = yield* activeConfig.getMaxConcurrentWorkers();
+            let workerFibersChunk =
+              Chunk.empty<Fiber.Fiber<void, unknown>>();
             for (let i = 0; i < maxWorkers; i++) {
               const workerId = yield* generateWorkerId();
 
@@ -2099,7 +2169,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               );
 
               // Workers start idle, they'll mark themselves active when processing tasks
-              const fiber = yield* Effect.fork(worker(workerId));
+              const fiber = yield* Effect.forkChild(worker(workerId));
               workerFibersChunk = Chunk.append(workerFibersChunk, fiber);
             }
             const workerFibers = Chunk.toArray(workerFibersChunk);
@@ -2109,52 +2179,69 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // If DomainCompleteEvent has not been emitted by then, force-emit it
             // with reason 'interrupt_grace_exceeded' as a belt-and-braces cap.
             if (stopMode.kind === 'interrupt') {
-              yield* Effect.fork(Effect.gen(function* () {
-                yield* Deferred.await(domainStopSignal);
-                const stopTime = yield* DateTime.now;
+              yield* Effect.forkChild(
+                Effect.gen(function* () {
+                  yield* Deferred.await(domainStopSignal);
+                  const stopTime = yield* DateTime.now;
 
-                // Interrupt workers that are still running
-                yield* Fiber.interruptAll(workerFibers).pipe(Effect.ignore);
+                  // Interrupt workers that are still running
+                  yield* Fiber.interruptAll(workerFibers).pipe(Effect.ignore);
 
-                // Wait gracePeriodMs for clean exit
-                yield* Effect.sleep(Duration.millis(stopMode.gracePeriodMs));
+                  // Wait gracePeriodMs for clean exit
+                  yield* Effect.sleep(Duration.millis(stopMode.gracePeriodMs));
 
-                const wasFirst = MutableRef.compareAndSet(domainCompleteEmitted, false, true);
-                if (wasFirst) {
-                  const finalCount = yield* localDeduplicator.size();
-                  const now = yield* DateTime.now;
-                  const gracefulMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(stopTime);
-                  const failedMap = MutableRef.get(pagesFailed);
-                  MutableRef.set(
-                    completionSummary,
-                    Option.some({
-                      reason: 'interrupt_grace_exceeded' as const,
-                      pagesAttempted: MutableRef.get(pagesAttempted),
-                    })
+                  const wasFirst = MutableRef.compareAndSet(
+                    domainCompleteEmitted,
+                    false,
+                    true
                   );
-                  yield* events.emit(new DomainCompleteEvent({
-                    domain,
-                    startUrl: urlString,
-                    finalStartUrl: MutableRef.get(effectiveStartUrl),
-                    pagesScraped: finalCount,
-                    pagesAttempted: MutableRef.get(pagesAttempted),
-                    pagesFailed: Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count })),
-                    reason: 'interrupt_grace_exceeded',
-                    durationMs: DateTime.toEpochMillis(now) - domainStartMs,
-                    cycle,
-                  }));
-                  yield* events.emit(new DomainStoppedEvent({
-                    domain,
-                    reason: Option.getOrElse(MutableRef.get(domainStopReason), () => 'interrupted'),
-                    gracefulMs,
-                    forced: true,
-                  }));
-                }
-              }).pipe(Effect.ignore));
+                  if (wasFirst) {
+                    const finalCount = yield* localDeduplicator.size();
+                    const now = yield* DateTime.now;
+                    const gracefulMs =
+                      DateTime.toEpochMillis(now) -
+                      DateTime.toEpochMillis(stopTime);
+                    const failedMap = MutableRef.get(pagesFailed);
+                    MutableRef.set(
+                      completionSummary,
+                      Option.some({
+                        reason: 'interrupt_grace_exceeded' as const,
+                        pagesAttempted: MutableRef.get(pagesAttempted),
+                      })
+                    );
+                    yield* events.emit(
+                      new DomainCompleteEvent({
+                        domain,
+                        startUrl: urlString,
+                        finalStartUrl: MutableRef.get(effectiveStartUrl),
+                        pagesScraped: finalCount,
+                        pagesAttempted: MutableRef.get(pagesAttempted),
+                        pagesFailed: Array.from(HashMap.entries(failedMap)).map(
+                          ([kind, count]) => ({ kind, count })
+                        ),
+                        reason: 'interrupt_grace_exceeded',
+                        durationMs: DateTime.toEpochMillis(now) - domainStartMs,
+                        cycle,
+                      })
+                    );
+                    yield* events.emit(
+                      new DomainStoppedEvent({
+                        domain,
+                        reason: Option.getOrElse(
+                          MutableRef.get(domainStopReason),
+                          () => 'interrupted'
+                        ),
+                        gracefulMs,
+                        forced: true,
+                      })
+                    );
+                  }
+                }).pipe(Effect.ignore)
+              );
             }
 
             // Start worker health monitoring
-            const healthMonitorFiber = yield* Effect.fork(workerHealthMonitor);
+            const healthMonitorFiber = yield* Effect.forkChild(workerHealthMonitor);
 
             // Domain failure detection - mark domains as failed if they get stuck
             const failureDetector = Effect.gen(function* () {
@@ -2225,7 +2312,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                   );
                   if (wasFirstToEmit) {
                     const failedMap = MutableRef.get(pagesFailed);
-                    const pagesFailedArray = Array.from(HashMap.entries(failedMap)).map(([kind, count]) => ({ kind, count }));
+                    const pagesFailedArray = Array.from(
+                      HashMap.entries(failedMap)
+                    ).map(([kind, count]) => ({ kind, count }));
                     const completeTime = yield* DateTime.now;
                     MutableRef.set(
                       completionSummary,
@@ -2262,7 +2351,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               }
             });
 
-            const failureDetectorFiber = yield* Effect.fork(failureDetector);
+            const failureDetectorFiber = yield* Effect.forkChild(failureDetector);
 
             // Wait for all workers to complete. In interrupt mode workers may
             // be interrupted by the grace period enforcer; Effect.ignore only
@@ -2270,7 +2359,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             // interruptions. In drain mode workers exit cleanly so this is a no-op.
             yield* Effect.all(
               workerFibers.map((f) =>
-                Fiber.join(f).pipe(Effect.catchAllCause(() => Effect.void))
+                Fiber.join(f).pipe(Effect.catchCause(() => Effect.void))
               ),
               { concurrency: 'unbounded' }
             );
@@ -2291,11 +2380,13 @@ export class SpiderService extends Effect.Service<SpiderService>()(
             );
             // Log final page count
             const finalPageCount = yield* localDeduplicator.size();
-            const maxPages = yield* config.getMaxPages();
+            const maxPages = yield* activeConfig.getMaxPages();
             const totalAttempts = MutableRef.get(pagesAttempted);
             const robotsBlocked = MutableRef.get(robotsBlockedCount);
             const failedCountMap = MutableRef.get(pagesFailed);
-            const totalFailed = Array.from(HashMap.values(failedCountMap)).reduce((a, b) => a + b, 0);
+            const totalFailed = Array.from(
+              HashMap.values(failedCountMap)
+            ).reduce((a, b) => a + b, 0);
             const stopReasonValue = MutableRef.get(domainStopReason);
             const completionReason: DomainCompleteEvent['reason'] =
               Option.isSome(stopReasonValue) && stopMode.kind === 'interrupt'
@@ -2307,7 +2398,9 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                     : totalAttempts > 0 && totalFailed === totalAttempts
                       ? 'all_fetches_failed'
                       : 'queue_empty';
-            const pagesFailedArray = Array.from(HashMap.entries(failedCountMap)).map(([kind, count]) => ({ kind, count }));
+            const pagesFailedArray = Array.from(
+              HashMap.entries(failedCountMap)
+            ).map(([kind, count]) => ({ kind, count }));
             // Gate emission on the dedicated `domainCompleteEmitted` ref
             // (NOT `domainCompleted`, which workers flip for loop-exit).
             // Failure-detector path and grace-period enforcer use the same CAS
@@ -2343,12 +2436,18 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               // Emit DomainStoppedEvent when domain was cleanly interrupted
               // (i.e. workers exited within the grace period).
               if (completionReason === 'interrupted') {
-                yield* events.emit(new DomainStoppedEvent({
-                  domain,
-                  reason: Option.getOrElse(stopReasonValue, () => 'interrupted'),
-                  gracefulMs: DateTime.toEpochMillis(completeTime) - domainStartMs,
-                  forced: false,
-                }));
+                yield* events.emit(
+                  new DomainStoppedEvent({
+                    domain,
+                    reason: Option.getOrElse(
+                      stopReasonValue,
+                      () => 'interrupted'
+                    ),
+                    gracefulMs:
+                      DateTime.toEpochMillis(completeTime) - domainStartMs,
+                    forced: false,
+                  })
+                );
               }
             }
 
@@ -2396,26 +2495,14 @@ export class SpiderService extends Effect.Service<SpiderService>()(
           _persistence?: import('../Scheduler/SpiderScheduler.service.js').StatePersistence
         ) =>
           Effect.gen(function* () {
-            const config = yield* SpiderConfig;
-
-            if (!config) {
-              return yield* Effect.fail(
-                new ConfigError({
-                  field: 'SpiderConfig',
-                  reason: 'SpiderConfig is required for resumability operations'
-                })
-              );
-            }
-
             const resumabilityEnabled = yield* config.isResumabilityEnabled();
             if (!resumabilityEnabled) {
-              return yield* Effect.fail(
-                new ConfigError({
-                  field: 'enableResumability',
-                  reason: 'Resume functionality requires resumability to be enabled in SpiderConfig. ' +
-                    'Set enableResumability: true in your spider configuration.'
-                })
-              );
+              return yield* new ConfigError({
+                field: 'enableResumability',
+                reason:
+                  'Resume functionality requires resumability to be enabled in SpiderConfig. ' +
+                  'Set enableResumability: true in your spider configuration.',
+              });
             }
 
             // Implement resume logic using Effect patterns
@@ -2437,36 +2524,39 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               // For now, we'll use the scheduler's state management
               if (resumeScheduler.getState) {
                 const state = yield* resumeScheduler.getState();
-                return Option.fromNullable(state);
+                return Option.fromNullishOr(state);
               }
               return Option.none<unknown>();
             }).pipe(
-              Effect.catchAll((error) =>
-                Effect.fail(new StateError({
-                  operation: 'load',
-                  stateKey: stateKey.id,
-                  cause: error
-                }))
+              Effect.mapError(
+                (error) =>
+                  new StateError({
+                    operation: 'load',
+                    stateKey: stateKey.id,
+                    cause: error,
+                  })
               )
             );
 
             if (Option.isNone(savedStateOption)) {
-              return yield* Effect.fail(
-                new StateError({
-                  operation: 'load',
-                  stateKey: stateKey.id,
-                  cause: 'No saved state found for session'
-                })
-              );
+              return yield* new StateError({
+                operation: 'load',
+                stateKey: stateKey.id,
+                cause: 'No saved state found for session',
+              });
             }
 
             const savedState = savedStateOption.value;
 
             // Restore the crawl state using Chunk for immutable collection building
             // Type guard for state record using Option pattern
-            const isStateRecord = (value: unknown): value is Record<string, unknown> =>
-              Option.fromNullable(value).pipe(
-                Option.filter((v): v is Record<string, unknown> => typeof v === 'object'),
+            const isStateRecord = (
+              value: unknown
+            ): value is Record<string, unknown> =>
+              Option.fromNullishOr(value).pipe(
+                Option.filter(
+                  (v): v is Record<string, unknown> => typeof v === 'object'
+                ),
                 Option.isSome
               );
 
@@ -2476,7 +2566,10 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 let urlsChunk = Chunk.empty<string>();
                 if (isStateRecord(savedState)) {
                   // Extract pending URLs from state
-                  if ('pendingUrls' in savedState && Array.isArray(savedState.pendingUrls)) {
+                  if (
+                    'pendingUrls' in savedState &&
+                    Array.isArray(savedState.pendingUrls)
+                  ) {
                     for (const url of savedState.pendingUrls) {
                       if (typeof url === 'string') {
                         urlsChunk = Chunk.append(urlsChunk, url);
@@ -2488,11 +2581,12 @@ export class SpiderService extends Effect.Service<SpiderService>()(
                 }
                 return Chunk.toArray(urlsChunk);
               },
-              catch: (error) => new ParseError({
-                input: 'saved state',
-                expected: 'crawl state',
-                cause: error
-              })
+              catch: (error) =>
+                new ParseError({
+                  input: 'saved state',
+                  expected: 'crawl state',
+                  cause: error,
+                }),
             });
 
             const loadTime = yield* DateTime.now;
@@ -2529,7 +2623,7 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               return {
                 ...crawlResult,
                 resumed: true,
-                sessionId: stateKey.id
+                sessionId: stateKey.id,
               };
             }
 
@@ -2537,23 +2631,44 @@ export class SpiderService extends Effect.Service<SpiderService>()(
               completed: true,
               resumed: true,
               sessionId: stateKey.id,
-              urlsProcessed: 0
+              urlsProcessed: 0,
             };
           }),
-
       };
 
       return self;
-    }),
-    dependencies: [
-      RobotsService.Default,
-      ScraperService.Default,
-      UrlDeduplicatorService.Default,
-      SpiderConfig.Default,
-      LinkExtractorService.Default,
-    ],
+  });
+
+/**
+ * The layer accepts a caller-provided `SpiderConfig` during construction.
+ * The constructed service captures that value, so its public methods do not
+ * require `SpiderConfig` from callers.
+ *
+ * @effect-expect-leaking SpiderConfig
+ */
+export class SpiderService extends Context.Service<SpiderService>()(
+  '@jambudipa/spider',
+  {
+    make: makeSpiderService(makeSpiderConfig({})),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    SpiderService,
+    Effect.gen(function* () {
+      const config = yield* SpiderConfig;
+      return yield* makeSpiderService(config);
+    })
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        RobotsService.layer,
+        ScraperService.layer,
+        UrlDeduplicatorService.layer,
+        LinkExtractorService.layer
+      )
+    )
+  );
+}
 
 export type {
   CrawlResultOk,

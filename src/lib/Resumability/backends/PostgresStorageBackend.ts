@@ -13,8 +13,8 @@ import {
 /**
  * JSON schemas for serialisation/deserialisation
  */
-const SpiderStateJsonSchema = Schema.parseJson(SpiderState);
-const StateDeltaJsonSchema = Schema.parseJson(StateDelta);
+const SpiderStateJsonSchema = Schema.fromJsonString(SpiderState);
+const StateDeltaJsonSchema = Schema.fromJsonString(StateDelta);
 
 /**
  * Database client interface for dependency injection.
@@ -127,7 +127,7 @@ export class PostgresStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+      const jsonContent = yield* Schema.encodeEffect(SpiderStateJsonSchema)(
         state
       ).pipe(
         Effect.mapError(
@@ -212,31 +212,37 @@ export class PostgresStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
+      const context = yield* Effect.context();
       // Use transaction if available for consistency
       if (self.db.transaction) {
         yield* Effect.tryPromise({
-          // pg transaction callback requires a Promise, not Effect — .then() chains are intentional
-          /* eslint-disable effect/no-promise-then-catch */
+          // pg transaction callbacks require Promises. Run the sequential
+          // query Effects at this adapter boundary.
           try: () =>
             self.db.transaction!((tx) =>
-              tx.query(
-                `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
-                [key.id]
+              Effect.runPromiseWith(context)(
+                Effect.gen(function* () {
+                  yield* Effect.tryPromise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('snapshots')} WHERE session_id = $1`,
+                      [key.id]
+                    )
+                  );
+                  yield* Effect.tryPromise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
+                      [key.id]
+                    )
+                  );
+                  yield* Effect.tryPromise(() =>
+                    tx.query(
+                      `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
+                      [key.id]
+                    )
+                  );
+                })
               )
-                .then(() =>
-                  tx.query(
-                    `DELETE FROM ${self.getTableName('deltas')} WHERE session_id = $1`,
-                    [key.id]
-                  )
-                )
-                .then(() =>
-                  tx.query(
-                    `DELETE FROM ${self.getTableName('sessions')} WHERE id = $1`,
-                    [key.id]
-                  )
-                )
             ),
-          /* eslint-enable effect/no-promise-then-catch */
           catch: (error) =>
             new PersistenceError({
               message: `Failed to delete state from PostgreSQL: ${error}`,
@@ -293,7 +299,7 @@ export class PostgresStorageBackend implements StorageBackend {
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(delta).pipe(
+      const jsonContent = yield* Schema.encodeEffect(StateDeltaJsonSchema)(delta).pipe(
         Effect.mapError(
           (error) =>
             new PersistenceError({
@@ -339,14 +345,14 @@ export class PostgresStorageBackend implements StorageBackend {
       // Build up values and params using immutable Chunk operations
       const { values, params } = yield* Effect.reduce(
         deltas,
-        {
+        () => ({
           values: Chunk.empty<string>(),
           params: Chunk.empty<unknown>(),
           paramIndex: 1,
-        },
+        }),
         (acc, delta) =>
           Effect.gen(function* () {
-            const jsonContent = yield* Schema.encode(StateDeltaJsonSchema)(
+            const jsonContent = yield* Schema.encodeEffect(StateDeltaJsonSchema)(
               delta
             ).pipe(
               Effect.mapError(
@@ -424,7 +430,7 @@ export class PostgresStorageBackend implements StorageBackend {
 
       const deltasChunk = yield* Effect.reduce(
         result.rows,
-        Chunk.empty<StateDelta>(),
+        () => Chunk.empty<StateDelta>(),
         (acc, row) =>
           Effect.gen(function* () {
             const decoded = yield* Effect.try({
@@ -453,7 +459,7 @@ export class PostgresStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const jsonContent = yield* Schema.encode(SpiderStateJsonSchema)(
+      const jsonContent = yield* Schema.encodeEffect(SpiderStateJsonSchema)(
         state
       ).pipe(
         Effect.mapError(
@@ -584,7 +590,7 @@ export class PostgresStorageBackend implements StorageBackend {
           new SpiderStateKey({
             id: row.id,
             name: row.name,
-            timestamp: DateTime.toDate(DateTime.unsafeMake(row.created_at)),
+            timestamp: DateTime.toDate(DateTime.makeUnsafe(row.created_at)),
           })
       );
 

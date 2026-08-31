@@ -64,10 +64,10 @@ export interface EnhancedHttpClientService {
   ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 }
 
-export class EnhancedHttpClient extends Context.Tag('EnhancedHttpClient')<
+export class EnhancedHttpClient extends Context.Service<
   EnhancedHttpClient,
   EnhancedHttpClientService
->() {}
+>()('EnhancedHttpClient') {}
 
 /**
  * Create an EnhancedHttpClient service
@@ -157,13 +157,11 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
                     timeoutMs,
                   })
                 );
-                return yield* Effect.fail(
-                  new TimeoutError({
-                    operation: `HTTP ${options.method ?? 'GET'}`,
-                    timeoutMs,
-                    url,
-                  })
-                );
+                return yield* new TimeoutError({
+                  operation: `HTTP ${options.method ?? 'GET'}`,
+                  timeoutMs,
+                  url,
+                });
               }),
             onSome: (response) => Effect.succeed(response),
           })
@@ -175,12 +173,12 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
 
       // Check for HTTP errors
       if (!response.ok) {
-        return yield* Effect.fail(new NetworkError({
+        return yield* new NetworkError({
           url: response.url,
           statusCode: response.status,
           method: options.method ?? 'GET',
           cause: `HTTP ${response.status}: ${response.statusText}`
-        }));
+        });
       }
 
       // Parse response body
@@ -202,7 +200,7 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
         if (cookieString) {
           yield* cookieManager
             .setCookie(cookieString, url)
-            .pipe(Effect.catchAll(() => Effect.void));
+            .pipe(Effect.catch(() => Effect.void));
         }
       }
 
@@ -236,20 +234,18 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
 
     // Create retry schedule with exponential backoff
     const retrySchedule = Schedule.exponential(Duration.millis(retryDelay), 2).pipe(
-      Schedule.compose(Schedule.recurs(retries)),
-      Schedule.tapInput((error) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning('http request retry').pipe(
-            Effect.annotateLogs({
-              event: 'http_request_retry',
-              domain: new URL(url).hostname,
-              url,
-              method: options.method ?? 'GET',
-              error: error instanceof Error ? error.message : String(error),
-              attempt: retries,
-            })
-          );
-        })
+      Schedule.upTo({ times: retries }),
+      Schedule.tap(({ input: error }) =>
+        Effect.logWarning('http request retry').pipe(
+          Effect.annotateLogs({
+            event: 'http_request_retry',
+            domain: new URL(url).hostname,
+            url,
+            method: options.method ?? 'GET',
+            error: error instanceof Error ? error.message : String(error),
+            attempt: retries,
+          })
+        )
       )
     );
 
@@ -282,7 +278,7 @@ export const makeEnhancedHttpClient = Effect.gen(function* () {
     ) =>
       Effect.gen(function* () {
         // Convert data to body using Option for type-safe handling
-        const maybeData = Option.fromNullable(data);
+        const maybeData = Option.fromNullishOr(data);
         const body: string | FormData | URLSearchParams | undefined = yield* Option.match(
           maybeData,
           {

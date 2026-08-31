@@ -124,7 +124,7 @@ export class RedisStorageBackend implements StorageBackend {
   ): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const serialized = yield* Schema.encode(Schema.parseJson(SpiderState))(
+      const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(SpiderState))(
         state
       ).pipe(
         Effect.mapError(
@@ -167,11 +167,11 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      return yield* Option.fromNullable(serialized).pipe(
+      return yield* Option.fromNullishOr(serialized).pipe(
         Option.match({
           onNone: () => Effect.succeed(Option.none<SpiderState>()),
           onSome: (value) =>
-            Schema.decode(Schema.parseJson(SpiderState))(value).pipe(
+            Schema.decodeEffect(Schema.fromJsonString(SpiderState))(value).pipe(
               Effect.map(Option.some),
               Effect.mapError(
                 (error) =>
@@ -231,7 +231,7 @@ export class RedisStorageBackend implements StorageBackend {
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
-      const serialized = yield* Schema.encode(Schema.parseJson(StateDelta))(
+      const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(StateDelta))(
         delta
       ).pipe(
         Effect.mapError(
@@ -294,8 +294,8 @@ export class RedisStorageBackend implements StorageBackend {
         for (const [sessionId, sessionDeltas] of deltasBySession) {
           const deltasKey = `${self.keyPrefix}:deltas:${sessionId}`;
           for (const delta of sessionDeltas) {
-            const serialized = yield* Schema.encode(
-              Schema.parseJson(StateDelta)
+            const serialized = yield* Schema.encodeEffect(
+              Schema.fromJsonString(StateDelta)
             )(delta).pipe(
               Effect.mapError(
                 (error) =>
@@ -358,7 +358,7 @@ export class RedisStorageBackend implements StorageBackend {
 
       let deltas = Chunk.empty<StateDelta>();
       for (const serialized of serializedDeltas) {
-        const decoded = yield* Schema.decode(Schema.parseJson(StateDelta))(
+        const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(StateDelta))(
           serialized
         ).pipe(
           Effect.mapError(
@@ -392,8 +392,8 @@ export class RedisStorageBackend implements StorageBackend {
         sequence,
         timestamp: DateTime.formatIso(now),
       };
-      const serialized = yield* Schema.encode(
-        Schema.parseJson(SnapshotDataSchema)
+      const serialized = yield* Schema.encodeEffect(
+        Schema.fromJsonString(SnapshotDataSchema)
       )(snapshotData).pipe(
         Effect.mapError(
           (error) =>
@@ -439,14 +439,14 @@ export class RedisStorageBackend implements StorageBackend {
           }),
       });
 
-      return yield* Option.fromNullable(serialized).pipe(
+      return yield* Option.fromNullishOr(serialized).pipe(
         Option.match({
           onNone: () =>
             Effect.succeed(
               Option.none<{ state: SpiderState; sequence: number }>()
             ),
           onSome: (value) =>
-            Schema.decode(Schema.parseJson(SnapshotDataSchema))(value).pipe(
+            Schema.decodeEffect(Schema.fromJsonString(SnapshotDataSchema))(value).pipe(
               Effect.map((snapshotData) =>
                 Option.some({
                   state: snapshotData.state,
@@ -514,16 +514,18 @@ export class RedisStorageBackend implements StorageBackend {
             }),
         });
 
-        yield* Option.fromNullable(serialized).pipe(
+        yield* Option.fromNullishOr(serialized).pipe(
           Option.match({
             onNone: () => Effect.void,
             onSome: (value) =>
-              Schema.decode(Schema.parseJson(SpiderState))(value).pipe(
-                Effect.tap((state) => {
-                  sessions = Chunk.append(sessions, state.key);
-                }),
+              Schema.decodeEffect(Schema.fromJsonString(SpiderState))(value).pipe(
+                Effect.tap((state) =>
+                  Effect.sync(() => {
+                    sessions = Chunk.append(sessions, state.key);
+                  })
+                ),
                 // Skip invalid sessions silently
-                Effect.catchAll(() => Effect.void)
+                Effect.catch(() => Effect.void)
               ),
           })
         );

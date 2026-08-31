@@ -16,7 +16,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Effect, Layer, MutableRef, Sink } from 'effect';
+import { Data, Effect, Layer, MutableRef, Sink } from 'effect';
 import { SpiderService } from '../../../lib/Spider/Spider.service.js';
 import {
   SpiderConfig,
@@ -32,6 +32,10 @@ afterEach(() => {
 const noopEventSink = Layer.succeed(SpiderEventSink, {
   emit: () => Effect.void,
 });
+
+class SinkFailure extends Data.TaggedError('SinkFailure')<{
+  readonly message: string;
+}> {}
 
 const minimalHtml = '<html><head><title>x</title></head><body></body></html>';
 
@@ -70,9 +74,12 @@ describe('Bounded result-channel wiring', () => {
         const spider = yield* SpiderService;
         return yield* spider.crawl(startUrls, sink);
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 
@@ -110,9 +117,12 @@ describe('Bounded result-channel wiring', () => {
         const spider = yield* SpiderService;
         return yield* spider.crawl(startUrls, sink);
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 
@@ -178,9 +188,12 @@ describe('Bounded result-channel wiring', () => {
         const spider = yield* SpiderService;
         return yield* spider.crawl(['https://multipage.test/'], sink);
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 
@@ -201,7 +214,7 @@ describe('Bounded result-channel wiring', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => okResponse());
 
     const sink = Sink.forEach((_r: CrawlResult) =>
-      Effect.fail(new Error('sink boom'))
+      Effect.fail(new SinkFailure({ message: 'sink boom' }))
     );
 
     const config = makeSpiderConfig({
@@ -224,9 +237,12 @@ describe('Bounded result-channel wiring', () => {
       const spider = yield* SpiderService;
       return yield* spider.crawl(startUrls, sink);
     }).pipe(
-      Effect.provide(SpiderService.Default),
-      Effect.provide(SpiderConfig.Live(config)),
-      Effect.provide(noopEventSink),
+      Effect.provide(SpiderService.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          noopEventSink
+        ))
+      )),
       Effect.timeout('5 seconds')
     );
 
@@ -269,9 +285,12 @@ describe('Bounded result-channel wiring', () => {
           sink
         );
       }).pipe(
-        Effect.provide(SpiderService.Default),
-        Effect.provide(SpiderConfig.Live(config)),
-        Effect.provide(noopEventSink)
+        Effect.provide(SpiderService.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            noopEventSink
+          ))
+        ))
       )
     );
 

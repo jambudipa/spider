@@ -530,7 +530,7 @@ describe('PDFDownloads Scenario Tests - Real Site', () => {
       
       // Test timeout handling with PlaywrightAdapter
       try {
-        await test.testContext.adapter.goto(`${test.testBaseUrl}/product/1`, { timeout: 1 }); // Very short timeout
+        await Effect.runPromise(test.testContext.adapter.goto(`${test.testBaseUrl}/product/1`, { timeout: 1 })); // Very short timeout
       } catch (timeoutError) {
         expect(timeoutError).toBeInstanceOf(Error);
         expect((timeoutError as Error).message.toLowerCase()).toContain('timeout');

@@ -3,7 +3,7 @@
  * Effect-based URL normalization and deduplication with configurable strategies
  */
 
-import { Effect, HashMap, HashSet, Option, Ref } from 'effect';
+import { Effect, HashMap, HashSet, Option, Ref, Result } from 'effect';
 import { ValidationError } from '../errors/effect-errors.js';
 
 /**
@@ -172,16 +172,16 @@ export const deduplicateUrls = (
     // Sequential loop — no concurrent fibers. This avoids pathological
     // slowdown when scoped layers are in the fiber context.
     for (const urlObj of urls) {
-      const normalizeResult = yield* Effect.either(normalizeUrl(urlObj.url, strategy));
+      const normalizeResult = yield* Effect.result(normalizeUrl(urlObj.url, strategy));
 
-      if (normalizeResult._tag === 'Left') {
+      if (Result.isFailure(normalizeResult)) {
         invalidCount++;
-        skipped.push({ url: urlObj.url, reason: `Invalid URL: ${normalizeResult.left.message}` });
+        skipped.push({ url: urlObj.url, reason: `Invalid URL: ${normalizeResult.failure.message}` });
         yield* Effect.logWarning(`Invalid URL skipped: ${urlObj.url}`);
         continue;
       }
 
-      const normalized = normalizeResult.right;
+      const normalized = normalizeResult.success;
       const key = strategy.wwwHandling === 'preserve'
         ? normalized.normalized
         : normalized.domain;

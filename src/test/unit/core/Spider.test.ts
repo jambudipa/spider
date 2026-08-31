@@ -114,8 +114,6 @@ describe('SPIDER_DEFAULTS', () => {
   it('should contain all expected operational defaults', () => {
     expect(SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS).toBe(300_000);
     expect(SPIDER_DEFAULTS.STALE_WORKER_CHECK_INTERVAL_MS).toBe(15_000);
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- exhaustive defaults assertion intentionally covers the legacy string-form field too, until it is removed in a future major
-    expect(SPIDER_DEFAULTS.HEALTH_CHECK_INTERVAL).toBe('15 seconds');
     expect(SPIDER_DEFAULTS.MEMORY_THRESHOLD_BYTES).toBe(1024 * 1024 * 1024);
     expect(SPIDER_DEFAULTS.QUEUE_SIZE_THRESHOLD).toBe(10_000);
     expect(SPIDER_DEFAULTS.TASK_ACQUISITION_TIMEOUT).toBe('10 seconds');
@@ -185,7 +183,7 @@ describe('SpiderConfig worker heartbeat options', () => {
   });
 
   // `null` and `undefined` are intentionally treated as "no override"
-  // (per Option.fromNullable semantics — matches every other optional config
+  // (per Option.fromNullishOr semantics — matches every other optional config
   // field). The validator rejects only defined non-string or wrong-string
   // values.
   it('should return the default stale-worker check interval via the getter', async () => {

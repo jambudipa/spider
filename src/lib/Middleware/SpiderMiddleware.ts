@@ -1,4 +1,11 @@
-import { DateTime, Effect, MutableHashMap, Option } from 'effect';
+import {
+  Context,
+  DateTime,
+  Effect,
+  Layer,
+  MutableHashMap,
+  Option,
+} from 'effect';
 import { MiddlewareError } from '../errors/effect-errors.js';
 import { SpiderRequest, SpiderResponse } from './types.js';
 
@@ -94,10 +101,10 @@ export interface SpiderMiddleware {
  * @group Services
  * @public
  */
-export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
+export class MiddlewareManager extends Context.Service<MiddlewareManager>()(
   '@jambudipa.io/MiddlewareManager',
   {
-    effect: Effect.sync(() => ({
+    make: Effect.sync(() => ({
       /**
        * Processes a request through the middleware pipeline.
        *
@@ -112,7 +119,7 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
         request: SpiderRequest,
         middlewares: SpiderMiddleware[]
       ) =>
-        Effect.reduce(middlewares, request, (req, middleware) =>
+        Effect.reduce(middlewares, () => request, (req, middleware) =>
           middleware.processRequest
             ? middleware.processRequest(req)
             : Effect.succeed(req)
@@ -136,7 +143,7 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
       ) =>
         Effect.reduce(
           middlewares.slice().reverse(),
-          response,
+          () => response,
           (res, middleware) =>
             middleware.processResponse
               ? middleware.processResponse(res, request)
@@ -162,7 +169,7 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
       ) =>
         Effect.reduce(
           middlewares.slice().reverse(),
-          Option.none<SpiderResponse>(),
+          () => Option.none<SpiderResponse>(),
           (res, middleware) =>
             middleware.processException
               ? middleware.processException(error, request)
@@ -170,7 +177,12 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
         ),
     })),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    MiddlewareManager,
+    MiddlewareManager.make
+  );
+}
 
 /**
  * Provides rate limiting functionality for respectful crawling.
@@ -191,10 +203,10 @@ export class MiddlewareManager extends Effect.Service<MiddlewareManager>()(
  * @group Middleware
  * @public
  */
-export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
+export class RateLimitMiddleware extends Context.Service<RateLimitMiddleware>()(
   '@jambudipa.io/RateLimitMiddleware',
   {
-    effect: Effect.sync(() => {
+    make: Effect.sync(() => {
       const domainLastRequest = MutableHashMap.empty<string, number>();
       const domainRequestCount = MutableHashMap.empty<string, number>();
       const domainWindowStart = MutableHashMap.empty<string, number>();
@@ -260,7 +272,12 @@ export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
       };
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    RateLimitMiddleware,
+    RateLimitMiddleware.make
+  );
+}
 
 /**
  * Provides logging functionality using Effect.Logger.
@@ -281,10 +298,10 @@ export class RateLimitMiddleware extends Effect.Service<RateLimitMiddleware>()(
  * @group Middleware
  * @public
  */
-export class LoggingMiddleware extends Effect.Service<LoggingMiddleware>()(
+export class LoggingMiddleware extends Context.Service<LoggingMiddleware>()(
   '@jambudipa.io/LoggingMiddleware',
   {
-    effect: Effect.sync(() => ({
+    make: Effect.sync(() => ({
       create: (
         config: {
           logRequests?: boolean;
@@ -357,7 +374,12 @@ export class LoggingMiddleware extends Effect.Service<LoggingMiddleware>()(
       },
     })),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    LoggingMiddleware,
+    LoggingMiddleware.make
+  );
+}
 
 /**
  * Adds User-Agent headers to requests.
@@ -374,19 +396,22 @@ export class LoggingMiddleware extends Effect.Service<LoggingMiddleware>()(
  * @group Middleware
  * @public
  */
-export class UserAgentMiddleware extends Effect.Service<UserAgentMiddleware>()(
+export class UserAgentMiddleware extends Context.Service<UserAgentMiddleware>()(
   '@jambudipa.io/UserAgentMiddleware',
   {
-    effect: Effect.sync(() => ({
+    make: Effect.sync(() => ({
       create: (userAgent: string): SpiderMiddleware => ({
         processRequest: (request: SpiderRequest) =>
-          Effect.succeed(
-            request.withHeaders({ 'User-Agent': userAgent })
-          ),
+          Effect.succeed(request.withHeaders({ 'User-Agent': userAgent })),
       }),
     })),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(
+    UserAgentMiddleware,
+    UserAgentMiddleware.make
+  );
+}
 
 /**
  * Collects statistics about crawling activity.
@@ -408,10 +433,10 @@ export class UserAgentMiddleware extends Effect.Service<UserAgentMiddleware>()(
  * @group Middleware
  * @public
  */
-export class StatsMiddleware extends Effect.Service<StatsMiddleware>()(
+export class StatsMiddleware extends Context.Service<StatsMiddleware>()(
   '@jambudipa.io/StatsMiddleware',
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const startTime = DateTime.toEpochMillis(yield* DateTime.now);
 
       return {
@@ -477,4 +502,6 @@ export class StatsMiddleware extends Effect.Service<StatsMiddleware>()(
       };
     }),
   }
-) {}
+) {
+  static readonly layer = Layer.effect(StatsMiddleware, StatsMiddleware.make);
+}

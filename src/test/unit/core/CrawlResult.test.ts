@@ -1,8 +1,22 @@
 import { describe, it, expect } from 'vitest';
+import { Data } from 'effect';
 import { NetworkError, RequestAbortError, ResponseError } from '../../../lib/errors/effect-errors.js';
 import { classifyFetchError, type PageFetchErrorKind } from '../../../lib/Spider/Spider.types.js';
-import type { CrawlResultOk, CrawlResultError } from '../../../lib/Spider/Spider.service.js';
-import { CrawlResult } from '../../../lib/Spider/Spider.service.js';
+import {
+  CrawlResult,
+} from '../../../lib/Spider/Spider.service.js';
+import type {
+  CrawlResultError,
+  CrawlResultOk,
+} from '../../../lib/Spider/Spider.service.js';
+
+class TestCrawlResultOk extends Data.TaggedClass('ok')<
+  Omit<CrawlResultOk, '_tag' | 'pipe'>
+> {}
+
+class TestCrawlResultError extends Data.TaggedClass('error')<
+  Omit<CrawlResultError, '_tag' | 'pipe'>
+> {}
 
 describe('classifyFetchError', () => {
   it('should classify TimeoutException as timeout', () => {
@@ -70,20 +84,18 @@ describe('classifyFetchError', () => {
 });
 
 describe('CrawlResult helpers', () => {
-  const okResult: CrawlResultOk = {
-    _tag: 'ok',
+  const okResult: CrawlResultOk = new TestCrawlResultOk({
     pageData: {} as never,
     depth: 0,
     timestamp: new Date(),
-  };
+  });
 
-  const errorResult: CrawlResultError = {
-    _tag: 'error',
+  const errorResult: CrawlResultError = new TestCrawlResultError({
     url: 'https://example.com',
     depth: 0,
     timestamp: new Date(),
     error: { kind: 'timeout', durationMs: 5000, attemptsMade: 3, message: 'timed out' },
-  };
+  });
 
   it('should return true for isOk on an ok result', () => {
     expect(CrawlResult.isOk(okResult)).toBe(true);

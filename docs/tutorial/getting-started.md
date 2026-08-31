@@ -31,7 +31,7 @@ npx tsc --init
 Let's start with a simple example that crawls a single page. Create a file called `basic-spider.js`:
 
 ```typescript
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -70,9 +70,11 @@ const config = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(SpiderConfig.layerWith(config))
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n✅ Completed! Crawled ${results.length} page(s).`);
@@ -98,7 +100,7 @@ node basic-spider.js
 Now let's access the page data and HTML content. Create `data-extraction.js`:
 
 ```typescript
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 import * as cheerio from 'cheerio'; // You'll need to install cheerio: npm install cheerio
 
@@ -158,9 +160,11 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(SpiderConfig.layerWith(config))
+      )
+    )
   )
 ).then(() => {
   console.log('\n✅ Data extraction completed!');
@@ -180,7 +184,7 @@ Effect.runPromise(
 Let's create a spider that follows links to crawl multiple pages. Create `simple-crawler.js`:
 
 ```typescript
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -222,9 +226,11 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(SpiderConfig.layerWith(config))
+      )
+    )
   )
 ).then((visitedPages) => {
   console.log('\n📊 Crawl Summary:');
@@ -260,7 +266,7 @@ Effect.runPromise(
 Real-world scraping often encounters errors. Let's build a robust spider that handles common issues:
 
 ```typescript
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 import { SpiderService, SpiderConfig, makeSpiderConfig, NetworkError, ResponseError } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -320,9 +326,11 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(SpiderConfig.layerWith(config))
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n📊 Results: ${results.length} successful crawls`);
@@ -343,7 +351,7 @@ Effect.runPromise(
 Let's explore more advanced configuration options for different scraping scenarios:
 
 ```typescript
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -411,9 +419,11 @@ const configurations = {
 // Run with production configuration
 Effect.runPromise(
   program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(configurations.production)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(SpiderConfig.layerWith(configurations.production))
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n✅ Advanced crawling completed! Found ${results.length} pages.`);
@@ -453,7 +463,7 @@ Congratulations! You've built your first web scrapers with Spider. You've learne
 
 - **Effect patterns**: Always use `yield*` to access services and handle errors with `Effect.catchTags`
 - **Streaming**: Results are processed as streams through Sinks, not collected in memory
-- **Configuration**: Use `makeSpiderConfig()` and `SpiderConfig.Live()` to configure behavior
+- **Configuration**: Use `makeSpiderConfig()` and `SpiderConfig.layerWith()` to configure behavior
 - **Respectful crawling**: Always respect robots.txt and use appropriate delays
 
 Head to the **[How-to Guides](../how-to/)** section to learn specific techniques, or check the **[Reference documentation](../reference/)** for detailed API information.

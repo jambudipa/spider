@@ -52,12 +52,13 @@ Long-running web scraping operations are inherently fragile. Spider treats resum
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                     SpiderService (Effect.Context.Tag)           │
+│                     SpiderService (Context.Service)              │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │                 Effect Layer Dependencies                  │  │
-│  │  SpiderConfig → SpiderLogger → EnhancedHttpClient          │  │
-│  │                                        ↓                   │  │
-│  │                               CookieManager                │  │
+│  │  SpiderConfig → SpiderService.layer ← SpiderEventSink      │  │
+│  │                       ↓                                    │  │
+│  │ RobotsService · ScraperService · UrlDeduplicatorService    │  │
+│  │ LinkExtractorService                                       │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                              │                                   │
 │    ┌─────────────────────────▼───────────────────────────────┐   │
@@ -83,11 +84,11 @@ Long-running web scraping operations are inherently fragile. Spider treats resum
 
 ### SpiderService - The Main Orchestrator
 
-The `SpiderService` is implemented as an Effect.Context.Tag service that coordinates crawling operations:
+The `SpiderService` is implemented as a `Context.Service` that coordinates crawling operations:
 
 **Responsibilities:**
 - Manage URL queues and crawling state
-- Coordinate HTTP requests through EnhancedHttpClient
+- Coordinate page fetches through `ScraperService` and the configured `HttpAdapter`
 - Stream results through Effect Sinks
 - Handle configuration and dependency injection
 - Provide the public crawling API
@@ -101,11 +102,13 @@ Spider uses Effect layers for service composition:
 ```typescript
 // Service dependencies are declared in the type system
 spider.crawl(urls, sink) // Requires: SpiderService
-  ├── SpiderConfig     // Configuration layer
-  ├── SpiderLogger     // Logging layer  
-  └── EnhancedHttpClient // HTTP client layer
-      ├── SpiderLogger    // Shared logging
-      └── CookieManager   // Cookie management layer
+  └── SpiderService.layer
+      ├── SpiderConfig       // Caller-provided configuration layer
+      ├── SpiderEventSink    // Caller-provided event sink layer
+      ├── RobotsService.layer
+      ├── ScraperService.layer
+      ├── UrlDeduplicatorService.layer
+      └── LinkExtractorService.layer
 ```
 
 **Key Benefits:**
@@ -116,19 +119,15 @@ spider.crawl(urls, sink) // Requires: SpiderService
 
 ### Effect-Based Service Architecture
 
-Spider uses Effect Context.Tag services for dependency injection:
+Spider uses Effect `Context.Service` classes for dependency injection:
 
 ```typescript
-// Services are defined as Context.Tag classes
-export class SpiderService extends Context.Tag('SpiderService')<
-  SpiderService,
-  SpiderServiceInterface
->() {}
-
-// Service interface defines the operations
-interface SpiderServiceInterface {
-  crawl(urls: string[], sink: Sink): Effect<void, CrawlError>;
-  getProgress(): Effect<CrawlProgress, never>;
+// SpiderService uses Context.Service and exposes a layer.
+export class SpiderService extends Context.Service<SpiderService>()(
+  '@jambudipa/spider',
+  { /* implementation */ }
+) {
+  static readonly layer: Layer.Layer<SpiderService, SpiderConfig | SpiderEventSink>;
 }
 
 // Consumers access services through Effect.gen
@@ -153,18 +152,18 @@ const program = Effect.gen(function* () {
 ### 1. Request Processing Flow
 
 ```
-URL Input → Configuration Check → URL Queue → EnhancedHttpClient → Cookie Management → Response
+URL Input → Configuration Check → URL Queue → ScraperService → HttpAdapter → Response
 ```
 
 **Configuration Check:** URLs are validated against allowed domains, protocols, and file extension filters from SpiderConfig.
 
 **URL Queue:** Internal queue management handles depth tracking, deduplication, and crawling limits (maxPages, maxDepth).
 
-**EnhancedHttpClient:** Handles HTTP requests with built-in retry logic, timeout management, and error handling.
+**ScraperService:** Parses pages after the configured `HttpAdapter` fetches each response.
 
-**Cookie Management:** CookieManager automatically handles session cookies, authentication state, and cookie persistence.
+**HttpAdapter:** The default undici adapter fetches pages. A configuration option can select a custom adapter per request.
 
-**Logging Integration:** SpiderLogger records all significant events, errors, and edge cases throughout the process.
+**Observability:** Effect log calls use the standard `Logger` system. Typed lifecycle events use `SpiderEventSink`.
 
 ### 2. Response Processing Flow
 
@@ -208,15 +207,13 @@ const config = makeSpiderConfig({
   maxConcurrentWorkers: 3,  // Maximum parallel requests
   requestDelayMs: 1000,     // Delay between requests
   maxPages: 100,            // Total page limit
-  maxDepth: 3               // Crawling depth limit
-});
-
-// EnhancedHttpClient handles retry logic and timeouts
-const httpClient = yield* EnhancedHttpClient;
-const response = yield* httpClient.get(url, {
-  timeout: 30000,
-  retries: 3,
-  retryDelay: 1000
+  maxDepth: 3,              // Crawling depth limit
+  // The spider applies this policy to page fetches.
+  fetchRetry: {
+    maxAttempts: 3,
+    baseBackoffMs: 1000,
+    retryOn: ['timeout', 'http_5xx', 'http_429'],
+  },
 });
 ```
 
@@ -277,16 +274,9 @@ Effect ensures that resources are properly cleaned up:
 const scrapingOperation = Effect.gen(function* () {
   // Services are acquired through dependency injection
   const spider = yield* SpiderService;
-  const httpClient = yield* EnhancedHttpClient;
-  const cookieManager = yield* CookieManager;
-  
-  // If an error occurs here, services are still cleaned up
+  // If an error occurs here, the crawl and its resources are still cleaned up.
   const collectSink = Sink.collectAll<CrawlResult>();
   yield* spider.crawl(['https://example.com'], collectSink);
-  
-  // Cookies can be persisted for session management
-  const cookieData = yield* cookieManager.serialize();
-  
 }).pipe(
   // Automatic cleanup happens here, even on errors
   Effect.scoped
@@ -301,7 +291,7 @@ Spider uses Effect tagged errors for precise error handling:
 
 **NetworkError:**
 - Connection failures, timeouts, DNS issues
-- Handled with automatic retry logic in EnhancedHttpClient
+- Handled by the configured page-fetch retry policy
 
 **ParseError:**
 - JSON parsing failures, malformed content
@@ -328,22 +318,16 @@ class NetworkError extends Data.TaggedError('NetworkError')<{
   cause?: unknown;
 }> {}
 
-// Usage with error handling
+// Inspect typed crawl failures in the sink.
 const program = Effect.gen(function* () {
-  const httpClient = yield* EnhancedHttpClient;
-  
-  const response = yield* httpClient.get('https://example.com').pipe(
-    Effect.catchTags({
-      NetworkError: (error) => {
-        console.error(`Network error for ${error.url}: ${error.cause}`);
-        return Effect.succeed(null); // Continue processing
-      },
-      TimeoutError: (error) => {
-        console.error(`Timeout for ${error.operation}: ${error.timeoutMs}ms`);
-        return Effect.succeed(null);
-      }
-    })
+  const sink = Sink.forEach<CrawlResult>((result) =>
+    CrawlResult.isError(result)
+      ? Effect.logWarning(`${result.error.kind}: ${result.url}`)
+      : Effect.void
   );
+
+  const spider = yield* SpiderService;
+  yield* spider.crawl(['https://example.com'], sink);
 });
 ```
 
@@ -362,56 +346,28 @@ Spider provides several extension points through Effect services:
 ### Custom Service Implementations
 
 ```typescript
-// Create custom HTTP client implementation
-const CustomHttpClient = Layer.succeed(
-  EnhancedHttpClient,
-  {
-    get: (url: string, options?: HttpRequestOptions) => 
-      Effect.gen(function* () {
-        // Custom HTTP client logic
-        return { status: 200, body: 'custom response', headers: {}, url };
-      }),
-    post: (url: string, data?: any, options?: HttpRequestOptions) => 
-      Effect.gen(function* () {
-        // Custom POST logic
-        return { status: 200, body: 'posted', headers: {}, url };
-      }),
-    // ... other methods
-  } as EnhancedHttpClientService
-);
+// Provide a custom page-fetch adapter through SpiderConfig.
+const customAdapter: HttpAdapter = {
+  fetch: (request) =>
+    Effect.succeed({
+      url: request.url,
+      statusCode: 200,
+      headers: {},
+      body: '<html></html>',
+    }),
+};
 
-// Use custom implementation
-const program = Effect.gen(function* () {
-  const spider = yield* SpiderService;
-  // Spider will use your custom HTTP client
-}).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(CustomHttpClient) // Replace default HTTP client
+const config = makeSpiderConfig({ httpAdapter: customAdapter });
+const spiderLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(SpiderConfig.layerWith(config), SpiderEventSinkNoop)
+  )
 );
 ```
 
-### Custom Cookie Management
+### Custom Observability
 
-```typescript
-// Create custom cookie manager for special session handling
-const CustomCookieManager = Layer.succeed(
-  CookieManager,
-  {
-    setCookie: (cookieString: string, url: string) => 
-      Effect.gen(function* () {
-        // Custom cookie storage logic
-        console.log(`Setting custom cookie for ${url}`);
-      }),
-    getCookies: (url: string) => 
-      Effect.succeed(['custom=cookie']),
-    getCookieHeader: (url: string) => 
-      Effect.succeed('custom=cookie'),
-    clearCookies: () => Effect.succeed(undefined),
-    serialize: () => Effect.succeed('{}'),
-    deserialize: (data: string) => Effect.succeed(undefined)
-  } as CookieManagerService
-);
-```
+Use `Logger.layer` to route `Effect.log*` calls. Provide a custom `SpiderEventSink` layer to consume typed crawl events. These two surfaces are independent.
 
 ### Custom Sink Processing
 

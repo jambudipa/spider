@@ -71,7 +71,9 @@ export interface HttpAdapterResponse {
  * @public
  */
 export interface HttpAdapterError {
+  /** Retry classifier used by the spider's page-fetch policy. */
   readonly kind: PageFetchErrorKind;
+  /** Safe diagnostic text for logs and crawl results. */
   readonly message: string;
   /**
    * HTTP status code, present when `kind` is `http_4xx | http_429 | http_5xx`.
@@ -97,6 +99,10 @@ export interface HttpAdapterError {
  * @public
  */
 export interface HttpAdapter {
+  /**
+   * Performs one cancellable request and converts transport failures into the
+   * structured error contract that the spider can classify and retry.
+   */
   readonly fetch: (
     request: HttpAdapterRequest
   ) => Effect.Effect<HttpAdapterResponse, HttpAdapterError>;

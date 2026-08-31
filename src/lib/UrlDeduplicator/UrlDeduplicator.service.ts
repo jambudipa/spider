@@ -157,6 +157,7 @@ export class UrlDeduplicatorService extends Context.Service<UrlDeduplicatorServi
     }),
   }
 ) {
+  /** Supplies the deduplicator with the default SpiderConfig dependency. */
   static readonly layer = Layer.effect(
     UrlDeduplicatorService,
     UrlDeduplicatorService.make

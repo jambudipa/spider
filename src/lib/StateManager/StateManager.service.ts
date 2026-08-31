@@ -6,45 +6,60 @@
 import { Context, Data, DateTime, Effect, HashMap, Layer, Option, Ref } from 'effect';
 import * as cheerio from 'cheerio';
 
-// Tagged error types for Effect-style error handling
+/** Signals that an HTML page has no supported CSRF token source. */
 export class CSRFTokenNotFoundError extends Data.TaggedError('CSRFTokenNotFoundError')<{
   readonly message: string;
 }> {}
 
+/** Signals that the supplied scripts contain no supported API token assignment. */
 export class APITokenNotFoundError extends Data.TaggedError('APITokenNotFoundError')<{
   readonly message: string;
 }> {}
 
+/** Signals that an operation requires a token that this isolated state does not hold. */
 export class TokenNotFoundError extends Data.TaggedError('TokenNotFoundError')<{
   readonly message: string;
   readonly tokenType: TokenType;
 }> {}
 
+/** Signals that a stored token cannot be used after its expiry time. */
 export class TokenExpiredError extends Data.TaggedError('TokenExpiredError')<{
   readonly message: string;
   readonly tokenType: TokenType;
 }> {}
 
+/** Signals that a requested browser-storage key is absent from the selected storage area. */
 export class StorageKeyNotFoundError extends Data.TaggedError('StorageKeyNotFoundError')<{
   readonly message: string;
   readonly key: string;
   readonly storageType: 'local' | 'session';
 }> {}
 
+/** Identifies the token purpose so callers cannot mix credentials with request protection tokens. */
 export enum TokenType {
+  /** Identifies a token that protects a form or request from cross-site forgery. */
   CSRF = 'csrf',
+  /** Identifies a token used to authorize an API request. */
   API = 'api',
+  /** Identifies a token that represents an authenticated user session. */
   AUTH = 'auth',
+  /** Identifies a token used to obtain a replacement authenticated token. */
   REFRESH = 'refresh',
 }
 
+/** Stores one credential with its optional expiry and access boundaries. */
 export interface Token {
+  /** Distinguishes the credential purpose for lookup and expiry errors. */
   type: TokenType;
+  /** Holds the opaque credential value without attempting to parse it. */
   value: string;
+  /** Sets the wall-clock time after which the service rejects the token. */
   expiry?: Date;
+  /** Records the optional permission scopes supplied by the token issuer. */
   scope?: string[];
 }
 
+/** Provides isolated token and browser-storage state for one scraping workflow. */
 export interface StateManagerService {
   /**
    * Extract CSRF token from HTML
@@ -82,7 +97,9 @@ export interface StateManagerService {
     key: string,
     value: string
   ) => Effect.Effect<void>;
+  /** Reads a local-storage value and fails when this workflow has not written the key. */
   getLocalStorage: (key: string) => Effect.Effect<string, StorageKeyNotFoundError>;
+  /** Removes every local-storage value without affecting tokens or session storage. */
   clearLocalStorage: () => Effect.Effect<void>;
 
   /**
@@ -92,7 +109,9 @@ export interface StateManagerService {
     key: string,
     value: string
   ) => Effect.Effect<void>;
+  /** Reads a session-storage value and fails when this workflow has not written the key. */
   getSessionStorage: (key: string) => Effect.Effect<string, StorageKeyNotFoundError>;
+  /** Removes every session-storage value without affecting tokens or local storage. */
   clearSessionStorage: () => Effect.Effect<void>;
 
   /**
@@ -101,14 +120,13 @@ export interface StateManagerService {
   clearState: () => Effect.Effect<void>;
 }
 
+/** Exposes a workflow-local StateManagerService through the Effect context. */
 export class StateManager extends Context.Service<
   StateManager,
   StateManagerService
 >()('StateManager') {}
 
-/**
- * Create a StateManager service implementation
- */
+/** Creates independent token and storage maps for one scraping workflow. */
 export const makeStateManager = (): Effect.Effect<StateManagerService> =>
   Effect.gen(function* () {
     // Token storage using Effect's HashMap
@@ -322,7 +340,5 @@ export const makeStateManager = (): Effect.Effect<StateManagerService> =>
     };
   });
 
-/**
- * StateManager Layer
- */
+/** Supplies one independent StateManagerService instance to the Effect context. */
 export const StateManagerLive = Layer.effect(StateManager, makeStateManager());

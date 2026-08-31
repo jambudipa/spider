@@ -116,33 +116,41 @@ export interface StorageBackend {
   cleanup(): Effect.Effect<void, PersistenceError>;
 
   // Full state operations
+  /** Stores the complete state that the session key identifies. */
   saveState?(
     key: SpiderStateKey,
     state: SpiderState
   ): Effect.Effect<void, PersistenceError>;
+  /** Loads a complete state, returning none when the backend has no saved state. */
   loadState?(
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError>;
+  /** Deletes all complete-state data for one session. */
   deleteState?(
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError>;
 
   // Delta operations
+  /** Stores one ordered state change. */
   saveDelta?(delta: StateDelta): Effect.Effect<void, PersistenceError>;
+  /** Stores many state changes, preferably as one backend operation. */
   saveDeltas?(
     deltas: readonly StateDelta[]
   ): Effect.Effect<void, PersistenceError>;
+  /** Loads changes at or after the inclusive sequence boundary. */
   loadDeltas?(
     key: SpiderStateKey,
     fromSequence?: number
   ): Effect.Effect<readonly StateDelta[], PersistenceError>;
 
   // Snapshot operations for hybrid strategies
+  /** Stores a complete recovery point and its last included delta sequence. */
   saveSnapshot?(
     key: SpiderStateKey,
     state: SpiderState,
     sequence: number
   ): Effect.Effect<void, PersistenceError>;
+  /** Loads the most recent recovery point for the selected session. */
   loadLatestSnapshot?(
     key: SpiderStateKey
   ): Effect.Effect<
@@ -151,10 +159,12 @@ export interface StorageBackend {
   >;
 
   // Cleanup operations
+  /** Deletes changes older than the supplied exclusive replay boundary. */
   compactDeltas?(
     key: SpiderStateKey,
     beforeSequence: number
   ): Effect.Effect<void, PersistenceError>;
+  /** Lists sessions that the backend can restore. */
   listSessions?(): Effect.Effect<readonly SpiderStateKey[], PersistenceError>;
 }
 

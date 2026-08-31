@@ -14,6 +14,7 @@ import {
  * JSON schemas for serialisation/deserialisation
  */
 const SpiderStateJsonSchema = Schema.fromJsonString(SpiderState);
+/** Serialises a state delta for the JSONB operation data column. */
 const StateDeltaJsonSchema = Schema.fromJsonString(StateDelta);
 
 /**
@@ -26,10 +27,12 @@ const StateDeltaJsonSchema = Schema.fromJsonString(StateDelta);
  * @public
  */
 export interface DatabaseClientInterface {
+  /** Runs parameterised SQL and returns the affected rows and count. */
   query<T = unknown>(
     sql: string,
     params?: readonly unknown[]
   ): Promise<{ rows: readonly T[]; rowCount: number }>;
+  /** Runs work atomically when the client exposes a transaction adapter. */
   transaction?<T>(
     callback: (client: DatabaseClientInterface) => Promise<T>
   ): Promise<T>;
@@ -86,6 +89,7 @@ export interface PostgresStorageConfig {
  * @public
  */
 export class PostgresStorageBackend implements StorageBackend {
+  /** Describes the relational storage features available to strategies. */
   readonly capabilities: StorageCapabilities = {
     supportsDelta: true,
     supportsSnapshot: true,
@@ -94,12 +98,17 @@ export class PostgresStorageBackend implements StorageBackend {
     latency: 'medium',
   };
 
+  /** Identifies this backend in strategy information and errors. */
   readonly name = 'PostgresStorageBackend';
 
+  /** Prefixes all tables so one database can hold several crawler stores. */
   private readonly tablePrefix: string;
+  /** Chooses the PostgreSQL schema that contains the persistence tables. */
   private readonly schema: string;
+  /** Controls whether initialization creates the required tables and indexes. */
   private readonly autoCreateTables: boolean;
 
+  /** Uses a caller-owned client and derives table names from optional settings. */
   constructor(
     readonly db: DatabaseClientInterface,
     config?: PostgresStorageConfig
@@ -109,6 +118,7 @@ export class PostgresStorageBackend implements StorageBackend {
     this.autoCreateTables = config?.autoCreateTables ?? true;
   }
 
+  /** Creates tables and indexes only when automatic setup is enabled. */
   initialize = (): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -118,9 +128,11 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Leaves connection cleanup to the caller that created the database client. */
   cleanup = (): Effect.Effect<void, PersistenceError> => Effect.void; // Database client cleanup is handled externally
 
   // Full state operations
+  /** Upserts the complete state while preserving the session identity. */
   saveState = (
     key: SpiderStateKey,
     state: SpiderState
@@ -167,6 +179,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads a complete state, or none when the sessions table has no row. */
   loadState = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -207,6 +220,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Deletes all snapshot, delta, and session rows for one crawl session. */
   deleteState = (
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError> => {
@@ -296,6 +310,7 @@ export class PostgresStorageBackend implements StorageBackend {
   };
 
   // Delta operations
+  /** Inserts one delta and ignores a duplicate session-sequence pair. */
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -334,6 +349,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Inserts many deltas in one parameterised query. */
   saveDeltas = (
     deltas: readonly StateDelta[]
   ): Effect.Effect<void, PersistenceError> => {
@@ -401,6 +417,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads decoded deltas in ascending sequence order from an inclusive boundary. */
   loadDeltas = (
     key: SpiderStateKey,
     fromSequence = 0
@@ -452,6 +469,7 @@ export class PostgresStorageBackend implements StorageBackend {
   };
 
   // Snapshot operations
+  /** Appends a complete recovery point after the supplied delta sequence. */
   saveSnapshot = (
     key: SpiderStateKey,
     state: SpiderState,
@@ -489,6 +507,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads the highest-sequence snapshot, or none when no snapshot row exists. */
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
@@ -541,6 +560,7 @@ export class PostgresStorageBackend implements StorageBackend {
   };
 
   // Cleanup operations
+  /** Deletes delta rows lower than the caller's replay boundary. */
   compactDeltas = (
     key: SpiderStateKey,
     beforeSequence: number
@@ -564,6 +584,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Lists persisted sessions from newest to oldest by their creation time. */
   listSessions = (): Effect.Effect<SpiderStateKey[], PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -599,6 +620,7 @@ export class PostgresStorageBackend implements StorageBackend {
   };
 
   // Private helper methods
+  /** Creates the persistence tables and the indexes required for recovery queries. */
   private createTables = (): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -685,6 +707,7 @@ export class PostgresStorageBackend implements StorageBackend {
     });
   };
 
+  /** Qualifies one logical table with this backend's schema and prefix. */
   private getTableName = (table: string): string => {
     return `${this.schema}.${this.tablePrefix}_${table}`;
   };

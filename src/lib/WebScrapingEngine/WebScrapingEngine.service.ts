@@ -22,19 +22,23 @@ import { JsonStringifyError } from '../utils/JsonUtils.js';
 // Error Types
 // ============================================================================
 
+/** Signals that a login response did not establish an authenticated session. */
 export class LoginError extends Data.TaggedError('LoginError')<{
   readonly status: number;
   readonly message: string;
 }> {}
 
+/** Signals that an authenticated request lacks a current valid session. */
 export class SessionNotValidError extends Data.TaggedError('SessionNotValidError')<{
   readonly message: string;
 }> {}
 
+/** Signals that session storage did not yield the session requested by a caller. */
 export class SessionLoadError extends Data.TaggedError('SessionLoadError')<{
   readonly message: string;
 }> {}
 
+/** Groups the domain failures that this service raises around login and session state. */
 export type WebScrapingEngineError = LoginError | SessionNotValidError | SessionLoadError;
 
 /**
@@ -47,22 +51,35 @@ export type HttpOperationError = NetworkError | ParseError | TimeoutError;
  */
 export type HttpPostOperationError = HttpOperationError | JsonStringifyError;
 
+/** Defines the field mapping needed to submit one application's login form. */
 export interface LoginCredentials {
+  /** Supplies the account name that the form sends to the configured username field. */
   username: string;
+  /** Supplies the account secret that the form sends to the configured password field. */
   password: string;
+  /** Identifies the page that serves and accepts the login form. */
   loginUrl: string;
+  /** Overrides the conventional `username` form field when the application uses another name. */
   usernameField?: string;
+  /** Overrides the conventional `password` form field when the application uses another name. */
   passwordField?: string;
+  /** Adds fixed fields such as tenant or locale values required by the login form. */
   additionalFields?: Record<string, string>;
 }
 
+/** Describes the authenticated state that the engine derives from one stored session. */
 export interface ScrapingSession {
+  /** Identifies the session in the configured session store. */
   id: string;
+  /** Reports whether the engine has completed a successful login for this session. */
   authenticated: boolean;
+  /** Captures the currently available CSRF, API, and authentication tokens. */
   tokens: HashMap.HashMap<TokenType, string>;
+  /** Records when the session started in UTC for persistence-safe comparisons. */
   startTime: DateTime.Utc;
 }
 
+/** Combines HTTP, cookies, tokens, and stored sessions for authenticated scraping. */
 export interface WebScrapingEngineService {
   /**
    * Perform login with form submission
@@ -122,14 +139,13 @@ export interface WebScrapingEngineService {
   clearAll: () => Effect.Effect<void>;
 }
 
+/** Exposes a WebScrapingEngineService through the Effect context. */
 export class WebScrapingEngine extends Context.Service<
   WebScrapingEngine,
   WebScrapingEngineService
 >()('WebScrapingEngine') {}
 
-/**
- * Create a WebScrapingEngine service implementation
- */
+/** Creates an engine from the HTTP, cookie, session, token, and state services in its context. */
 export const makeWebScrapingEngine = Effect.gen(function* () {
   const httpClient = yield* EnhancedHttpClient;
   const cookieManager = yield* CookieManager;
@@ -428,9 +444,7 @@ export const makeWebScrapingEngine = Effect.gen(function* () {
   return service;
 });
 
-/**
- * WebScrapingEngine Layer with all dependencies
- */
+/** Supplies the engine after callers provide its HTTP, session, token, and state dependencies. */
 export const WebScrapingEngineLive = Layer.effect(
   WebScrapingEngine,
   makeWebScrapingEngine

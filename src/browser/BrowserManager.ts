@@ -7,22 +7,40 @@ import { Effect, MutableHashMap, Option, Result } from 'effect';
 import { Browser, BrowserContext, Page, chromium, BrowserContextOptions } from 'playwright';
 import { BrowserCleanupError, BrowserError } from '../lib/errors/effect-errors.js';
 
+/** Configures the browser pool and the default settings for its new contexts. */
 export interface BrowserConfig {
+  /** Run Chromium without a visible window unless the caller opts out. */
   headless?: boolean;
+  /** Apply this Playwright timeout to every context that this manager creates. */
   timeout?: number;
+  /** Keep this many launched browsers available for context allocation. */
   poolSize?: number;
+  /** Set the default viewport for new contexts. */
   viewport?: { width: number; height: number };
+  /** Identify requests from every context that this manager creates. */
   userAgent?: string;
+  /** Set the locale for every context that this manager creates. */
   locale?: string;
+  /** Send these additional HTTP headers from every context that this manager creates. */
   extraHTTPHeaders?: Record<string, string>;
 }
 
+/**
+ * Owns a reusable pool of Playwright browsers and their named contexts.
+ *
+ * Call {@link close} after the crawl so the manager releases every browser it launched.
+ */
 export class BrowserManager {
+  /** Holds the browser pool after {@link initialise} launches it. */
   private browsers: Browser[] = [];
+  /** Maps caller context identifiers to their live Playwright contexts. */
   private contexts: MutableHashMap.MutableHashMap<string, BrowserContext> = MutableHashMap.empty();
+  /** Stores the resolved defaults that each new browser context receives. */
   private config: Required<BrowserConfig>;
+  /** Prevents a second pool launch after the first successful initialisation. */
   private isInitialised = false;
 
+  /** Resolves optional settings once so all later contexts share the same browser policy. */
   constructor(config: BrowserConfig = {}) {
     this.config = {
       headless: config.headless ?? true,

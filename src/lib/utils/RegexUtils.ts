@@ -9,22 +9,26 @@ import { Effect, Data, Option, Chunk } from 'effect';
 // Error Types
 // ============================================================================
 
+/** Represents a pattern or flag set that JavaScript cannot compile. */
 export class RegexCompileError extends Data.TaggedError('RegexCompileError')<{
   readonly pattern: string;
   readonly flags?: string;
   readonly cause?: unknown;
 }> {
+  /** Produces a compile failure message that includes the failed pattern. */
   get message(): string {
     const flagsInfo = this.flags ? ` with flags "${this.flags}"` : '';
     return `Invalid regex pattern: "${this.pattern}"${flagsInfo}. ${this.cause}`;
   }
 }
 
+/** Represents an error that occurred while applying a regular expression. */
 export class RegexExecutionError extends Data.TaggedError('RegexExecutionError')<{
   readonly pattern: string;
   readonly operation: string;
   readonly cause?: unknown;
 }> {
+  /** Produces an execution failure message that names the attempted operation. */
   get message(): string {
     return `Regex ${this.operation} failed for pattern "${this.pattern}": ${this.cause}`;
   }
@@ -34,16 +38,25 @@ export class RegexExecutionError extends Data.TaggedError('RegexExecutionError')
 // Types
 // ============================================================================
 
+/** Describes one match with its source position and named capture groups. */
 export interface RegexMatch {
+  /** Stores the complete matched text. */
   readonly match: string;
+  /** Stores the zero-based index in the input string. */
   readonly index: number;
+  /** Stores named capture groups when the pattern defines them. */
   readonly groups: Record<string, string | undefined>;
+  /** Stores the input that produced this match. */
   readonly input: string;
 }
 
+/** Describes the before-and-after text from a replacement operation. */
 export interface RegexReplacement {
+  /** Stores the original input text. */
   readonly original: string;
+  /** Stores the text after replacement. */
   readonly replaced: string;
+  /** Counts replacements, not distinct patterns. */
   readonly matches: number;
 }
 
@@ -51,6 +64,7 @@ export interface RegexReplacement {
 // Regex Operations
 // ============================================================================
 
+/** Provides effectful regular-expression helpers with typed compile failures. */
 export const RegexUtils = {
   /**
    * Safely compile regex pattern
@@ -413,6 +427,7 @@ export const RegexUtils = {
 // Re-exports for convenience
 // ============================================================================
 
+/** Re-exports regular-expression helpers for callers that prefer named imports. */
 export const {
   compile,
   test,

@@ -27,6 +27,7 @@ import {
   SpiderService,
 } from '../index.js';
 
+/** Demonstrates concurrent crawling from several independent start URLs. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 02: Multiple Starting URLs');
   yield* Effect.logInfo('Testing concurrent crawling with domain isolation\n');
@@ -157,6 +158,7 @@ const program = Effect.gen(function* () {
 });
 
 // Run the example with custom configuration for concurrency
+/** Configures worker and page limits for the multi-origin demonstration. */
 const config = makeSpiderConfig({
   maxPages: 8,
   maxDepth: 1,
@@ -167,6 +169,7 @@ const config = makeSpiderConfig({
   maxConcurrentRequests: 6,
 });
 
+/** Supplies the composed runtime layer to the multi-URL program. */
 const mainEffect = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

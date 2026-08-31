@@ -68,6 +68,11 @@ CLAUDE.md
 
 /specs
 /scripts
+!/scripts/
+/scripts/*
+!/scripts/README.md
+!/scripts/docs-audit.mjs
+!/scripts/docs-audit.test.mjs
 fix-all-type-errors-loop.sh
 
 /tools

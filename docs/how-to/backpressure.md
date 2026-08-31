@@ -43,8 +43,13 @@ I/O, and `100–200` for sinks whose work is occasionally bursty.
 ## Example
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 
 const config = makeSpiderConfig({
   concurrency: 4,
@@ -64,8 +69,13 @@ const program = Effect.gen(function* () {
   const spider = yield* SpiderService;
   yield* spider.crawl(['https://example.com'], slowSink);
 }).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(config))
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(SpiderConfig.layerWith(config), SpiderEventSinkNoop)
+      )
+    )
+  )
 );
 ```
 

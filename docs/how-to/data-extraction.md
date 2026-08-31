@@ -7,8 +7,13 @@ This guide covers advanced data extraction techniques using Spider's powerful ex
 Extract specific elements using CSS selectors:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 
 const basicExtractionProgram = Effect.gen(function* () {
   const spider = yield* SpiderService;
@@ -53,9 +58,13 @@ const config = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   basicExtractionProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -126,9 +135,13 @@ const config2 = makeSpiderConfig({
 // Run the program  
 Effect.runPromise(
   advancedSelectorsProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config2)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config2), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -205,9 +218,13 @@ const config3 = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   extractFromTableProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config3)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config3), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -274,9 +291,13 @@ const config4 = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   extractJsonDataProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config4)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config4), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -356,9 +377,13 @@ const config5 = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   dataTransformationsProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config5)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config5), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -368,8 +393,13 @@ Effect.runPromise(
 For pages that load content dynamically, use browser integration:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, makeSpiderConfig, SpiderConfig } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 
 const extractDynamicContentProgram = Effect.gen(function* () {
   const spider = yield* SpiderService;
@@ -413,9 +443,13 @@ const config6 = makeSpiderConfig({
 // Run the program
 Effect.runPromise(
   extractDynamicContentProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(config6)),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layerWith(config6), SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -471,8 +505,13 @@ const regexExtractionProgram = Effect.gen(function* () {
 // Run the program
 Effect.runPromise(
   regexExtractionProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layer, SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -546,8 +585,13 @@ const extractMediaProgram = Effect.gen(function* () {
 // Run the program
 Effect.runPromise(
   extractMediaProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layer, SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```
@@ -604,8 +648,13 @@ const robustExtractionProgram = Effect.gen(function* () {
 // Run the program
 Effect.runPromise(
   robustExtractionProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide()
+    Effect.provide(
+      SpiderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(SpiderConfig.layer, SpiderEventSinkNoop)
+        )
+      )
+    )
   )
 ).catch(console.error);
 ```

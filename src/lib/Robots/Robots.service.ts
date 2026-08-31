@@ -449,5 +449,6 @@ export class RobotsService extends Context.Service<RobotsService>()(
     }),
   }
 ) {
+  /** Provides one per-run robots cache and the URL compliance service. */
   static readonly layer = Layer.effect(RobotsService, RobotsService.make);
 }

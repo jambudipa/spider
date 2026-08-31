@@ -10,11 +10,13 @@ import { JsonUtils } from './JsonUtils.js';
 // Error Types
 // ============================================================================
 
+/** Represents a value that an Effect schema cannot encode. */
 export class SchemaEncodeError extends Data.TaggedError('SchemaEncodeError')<{
   readonly schema: string;
   readonly value: unknown;
   readonly cause?: unknown;
 }> {
+  /** Produces an encode failure message that identifies the schema and value type. */
   get message(): string {
     const valueType = typeof this.value === 'object' 
       ? this.value?.constructor?.name || 'Object'
@@ -23,11 +25,13 @@ export class SchemaEncodeError extends Data.TaggedError('SchemaEncodeError')<{
   }
 }
 
+/** Represents input that an Effect schema cannot decode. */
 export class SchemaDecodeError extends Data.TaggedError('SchemaDecodeError')<{
   readonly schema: string;
   readonly input: unknown;
   readonly cause?: unknown;
 }> {
+  /** Produces a decode failure message that identifies the schema and input type. */
   get message(): string {
     const inputType = typeof this.input === 'object'
       ? this.input?.constructor?.name || 'Object'
@@ -36,11 +40,13 @@ export class SchemaDecodeError extends Data.TaggedError('SchemaDecodeError')<{
   }
 }
 
+/** Represents a value that fails validation against an Effect schema. */
 export class SchemaValidationError extends Data.TaggedError('SchemaValidationError')<{
   readonly schema: string;
   readonly value: unknown;
   readonly errors: ReadonlyArray<unknown>;
 }> {
+  /** Formats all validation details so callers can report the complete failure. */
   get message(): string {
     const errorMessages = this.errors
       .map(e => `  - ${String(e)}`)
@@ -53,6 +59,7 @@ export class SchemaValidationError extends Data.TaggedError('SchemaValidationErr
 // Schema Operations
 // ============================================================================
 
+/** Provides safe Effect schema conversion and validation helpers. */
 export const SchemaUtils = {
   /**
    * Safely encode value with schema
@@ -432,6 +439,7 @@ function getSchemaName<A, I>(schema: Schema.Codec<A, I>): string {
 // Re-exports for convenience
 // ============================================================================
 
+/** Re-exports schema helpers for callers that prefer named imports. */
 export const {
   encode,
   decode,

@@ -193,6 +193,12 @@ export class LinkExtractorService extends Context.Service<LinkExtractorService>(
     }),
   }
 ) {
+  /**
+   * Layer that provides the pure HTML extraction service.
+   *
+   * The service has no runtime dependencies, so callers can provide this layer
+   * directly when they only need attribute extraction.
+   */
   static readonly layer = Layer.effect(
     LinkExtractorService,
     LinkExtractorService.make

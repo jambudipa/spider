@@ -12,34 +12,46 @@ import {
 import { EnhancedHttpClient, type HttpResponse } from './EnhancedHttpClient.js';
 import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 
-// Tagged error types for Effect-style error handling
+/** Signals that an authentication token was required but no valid value exists. */
 export class TokenNotAvailableError extends Data.TaggedError('TokenNotAvailableError')<{
   readonly message: string;
 }> {}
 
+/** Signals that a refresh response did not yield the requested token type. */
 export class TokenRefreshError extends Data.TaggedError('TokenRefreshError')<{
   readonly message: string;
   readonly tokenType: TokenType;
 }> {}
 
+/** Signals that a caller requested refresh without identifying its endpoint. */
 export class NoRefreshUrlError extends Data.TaggedError('NoRefreshUrlError')<{
   readonly message: string;
 }> {}
 
+/** Describes a token found in a response and the extraction rule that found it. */
 export interface TokenInfo {
+  /** State-manager token category that determines how the value is used. */
   type: TokenType;
+  /** Secret token value. Callers must avoid writing it to ordinary logs. */
   value: string;
+  /** Response location where the extractor found the value. */
   source: 'html' | 'header' | 'script' | 'json';
+  /** CSS selector used for an HTML result, when applicable. */
   selector?: string;
+  /** Named pattern used for a script or header result, when applicable. */
   pattern?: string;
 }
 
-// Common HTTP error type for methods that make HTTP requests
+/** Transport failures that token operations propagate without conversion. */
 type HttpRequestError = NetworkError | ParseError | TimeoutError;
 
-// Combined error type that includes HTTP and state management errors
+/** Full failure set for operations that fetch, validate, or refresh a token. */
 type TokenExtractorError = HttpRequestError | Error | TokenNotAvailableError | TokenRefreshError | NoRefreshUrlError;
 
+/**
+ * Extracts authentication values from HTTP responses and stores valid values
+ * through the state manager before an authenticated request uses them.
+ */
 export interface TokenExtractorService {
   /**
    * Extract all tokens from an HTTP response
@@ -94,6 +106,7 @@ export interface TokenExtractorService {
 
 export type { TokenExtractorError };
 
+/** Effect service key for response-token extraction and authenticated requests. */
 export class TokenExtractor extends Context.Service<
   TokenExtractor,
   TokenExtractorService

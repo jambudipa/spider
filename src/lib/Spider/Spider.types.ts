@@ -1,6 +1,12 @@
 import { Option } from 'effect';
 import { NetworkError, RequestAbortError, ResponseError } from '../errors/effect-errors.js';
 
+/**
+ * Stable categories for fetch failures reported through a crawl result.
+ *
+ * Retry configuration matches these values, so add a new category only when
+ * callers can distinguish it from every existing recovery policy.
+ */
 export type PageFetchErrorKind =
   | 'timeout'
   | 'dns'
@@ -10,14 +16,31 @@ export type PageFetchErrorKind =
   | 'connection_refused'
   | 'other';
 
+/**
+ * Normalized fetch failure information attached to an unsuccessful crawl result.
+ *
+ * `durationMs` measures the failed attempt path. `attemptsMade` includes the
+ * initial request, so it is always at least one.
+ */
 export interface PageFetchError {
+  /** Category used by retry and error-handling policies. */
   readonly kind: PageFetchErrorKind;
+  /** Elapsed failed-request time in milliseconds. */
   readonly durationMs: number;
+  /** HTTP status when an HTTP response caused the failure. */
   readonly statusCode?: number;
+  /** Human-readable source error message for diagnostics. */
   readonly message: string;
+  /** Number of requests attempted before this result was produced. */
   readonly attemptsMade: number;
 }
 
+/**
+ * Maps adapter and Effect failures into the finite retry-error vocabulary.
+ *
+ * Call this at the crawl boundary rather than exposing transport-specific
+ * error shapes to event sinks or retry configuration.
+ */
 export const classifyFetchError = (
   error: unknown,
   durationMs: number,

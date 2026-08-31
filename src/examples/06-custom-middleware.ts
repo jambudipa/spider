@@ -24,6 +24,7 @@ import {
 } from '../index.js';
 
 // Custom middleware to add request timing and custom headers
+/** Records request timing so the example can report middleware overhead. */
 const TimingMiddleware: SpiderMiddleware = {
   processRequest: (request: SpiderRequest) =>
     Effect.gen(function* () {
@@ -74,6 +75,7 @@ const TimingMiddleware: SpiderMiddleware = {
 };
 
 // Custom middleware for response content analysis
+/** Inspects response content to demonstrate post-fetch middleware work. */
 const ContentAnalysisMiddleware: SpiderMiddleware = {
   processResponse: (response: SpiderResponse, request: SpiderRequest) =>
     Effect.gen(function* () {
@@ -97,6 +99,7 @@ const ContentAnalysisMiddleware: SpiderMiddleware = {
 };
 
 // Custom middleware for URL pattern detection
+/** Detects configured response patterns as an example response policy. */
 const PatternDetectionMiddleware: SpiderMiddleware = {
   processRequest: (request: SpiderRequest) =>
     Effect.gen(function* () {
@@ -124,6 +127,7 @@ export {
   PatternDetectionMiddleware,
 };
 
+/** Runs the crawler with the three custom middleware examples installed. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('Example 06: Custom Middleware Usage');
   yield* Effect.logInfo(
@@ -258,6 +262,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration optimized for middleware demonstration
+/** Bounds the custom-middleware demonstration crawl. */
 const config = makeSpiderConfig({
   maxPages: 8,
   maxDepth: 1,
@@ -279,6 +284,7 @@ const config = makeSpiderConfig({
   maxConcurrentWorkers: 1, // Single worker to see clear middleware execution order
 });
 
+/** Supplies middleware and crawler layers to the demonstration program. */
 const mainEffect = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

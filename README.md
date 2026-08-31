@@ -41,8 +41,8 @@ A powerful, Effect-based web crawling framework for modern TypeScript applicatio
 - ✅ **Core Functionality**: All web scraping scenarios working
 - ✅ **Type Safety**: Full TypeScript compilation without errors
 - ✅ **Build System**: Package builds successfully for distribution
-- ✅ **Test Suite**: 243 tests passing against live websites (25 test files)
-- ✅ **Code Quality**: Clean - only 3 linting warnings (skipped test suites)
+- ✅ **Test Suite**: 523 tests passing (44 test files, one todo test)
+- ✅ **Code Quality**: Strict ESLint and Effect checks pass with zero diagnostics
 
 ## ✨ Key Features
 
@@ -66,8 +66,14 @@ npm install @jambudipa/spider effect
 ### Your First Crawl
 
 ```typescript
-import { CrawlResult, SpiderService } from '@jambudipa/spider'
-import { Effect, Sink } from 'effect'
+import {
+  CrawlResult,
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+} from '@jambudipa/spider'
+import { Effect, Layer, Sink } from 'effect'
 
 const program = Effect.gen(function* () {
   // Create spider instance
@@ -83,13 +89,25 @@ const program = Effect.gen(function* () {
   )
   
   // Start crawling
-  yield* spider.crawl('https://example.com', collectSink)
+  yield* spider.crawl(['https://example.com'], collectSink)
 })
 
-// Run with default configuration
-Effect.runPromise(program.pipe(
-  Effect.provide(SpiderService.Default)
-))
+const config = makeSpiderConfig({ maxPages: 10, maxDepth: 2 })
+
+const runnable = program.pipe(
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
+)
+
+Effect.runPromise(runnable)
 ```
 
 ## 📚 Documentation
@@ -193,12 +211,14 @@ Resume interrupted scraping sessions:
 import { 
   CrawlResult,
   makeSpiderConfig,
+  ResumabilityService,
   SpiderConfig,
   SpiderEventSinkNoop,
+  SpiderSchedulerService,
   SpiderService,
   SpiderStateKey,
 } from '@jambudipa/spider';
-import { Effect, Sink } from 'effect';
+import { Effect, Layer, Sink } from 'effect';
 
 // Enable resumability in config
 const config = makeSpiderConfig({ enableResumability: true, maxPages: 50 });
@@ -214,9 +234,18 @@ const startCrawl = Effect.gen(function* () {
   const spider = yield* SpiderService;
   yield* spider.crawl('https://example.com', collectSink);
 }).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderEventSinkNoop),
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ResumabilityService.layer,
+          SpiderSchedulerService.layer,
+          SpiderConfig.layerWith(config),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
 );
 
 // Resume a previous session
@@ -229,9 +258,18 @@ const resumeCrawl = Effect.gen(function* () {
   });
   yield* spider.resume(stateKey, collectSink);
 }).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(config)),
-  Effect.provide(SpiderEventSinkNoop),
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ResumabilityService.layer,
+          SpiderSchedulerService.layer,
+          SpiderConfig.layerWith(config),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
 );
 ```
 
@@ -242,6 +280,7 @@ See `src/examples/07-resumability-demo.ts` for a complete example with `FileStor
 Extract and process links from pages:
 
 ```typescript
+import { Effect } from 'effect';
 import { LinkExtractorService } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -259,7 +298,7 @@ const program = Effect.gen(function* () {
   console.log(`Found ${result.links.length} links`);
   return result;
 }).pipe(
-  Effect.provide(LinkExtractorService.Default)
+  Effect.provide(LinkExtractorService.layer)
 );
 ```
 
@@ -298,7 +337,7 @@ const program = Effect.gen(function* () {
     // `revealedBy.label` is what turns an opaque GUID into a nameable thing.
     console.log(request.url, request.revealedBy?.label ?? '(in markup)');
   }
-}).pipe(Effect.provide(InteractionDiscoveryService.Default));
+}).pipe(Effect.provide(InteractionDiscoveryService.layer));
 ```
 
 Three rules it holds to:
@@ -374,21 +413,35 @@ Spider exposes two independent observability surfaces, both overridable by clien
 
 ### 1. Diagnostic logs (Effect Logger)
 
-All `Effect.log*` calls inside Spider (`logDebug`, `logInfo`, `logWarning`, `logError`) flow through the standard Effect `Logger` system, with structured fields attached via `Effect.annotateLogs`. Override with `Logger.replace`:
+All `Effect.log*` calls inside Spider (`logDebug`, `logInfo`, `logWarning`, `logError`) flow through the standard Effect `Logger` system, with structured fields attached via `Effect.annotateLogs`. Provide a custom `Logger.layer`:
 
 ```typescript
-import { Effect, Logger, LogLevel } from 'effect';
+import { Effect, Layer, Logger, References } from 'effect';
 
-const myLogger = Logger.make(({ logLevel, message, annotations }) => {
+const myLogger = Logger.make(({ logLevel, message, fiber, date }) => {
+  const annotations = fiber.getRef(References.CurrentLogAnnotations);
   // Route to pino, datadog, OpenTelemetry, file, etc.
-  console.log(JSON.stringify({ level: logLevel.label, message, ...Object.fromEntries(annotations) }));
+  console.log(JSON.stringify({
+    timestamp: date.toISOString(),
+    level: logLevel.toUpperCase(),
+    fiberId: fiber.id,
+    message: Array.isArray(message) ? message.join(' ') : String(message),
+    ...annotations,
+  }));
 });
 
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
-  Logger.withMinimumLogLevel(LogLevel.Info),
+const loggingLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      SpiderConfig.layer,
+      SpiderEventSinkNoop,
+      Logger.layer([myLogger]),
+      Layer.succeed(References.MinimumLogLevel, 'Info'),
+    ),
+  ),
 );
+
+program.pipe(Effect.provide(loggingLayer));
 ```
 
 ### 2. Domain events (`SpiderEventSink`)
@@ -403,10 +456,11 @@ const AnalyticsSink = Layer.succeed(SpiderEventSink, {
   emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
 });
 
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(AnalyticsSink),
+const analyticsLayer = SpiderService.layer.pipe(
+  Layer.provide(Layer.mergeAll(SpiderConfig.layer, AnalyticsSink)),
 );
+
+program.pipe(Effect.provide(analyticsLayer));
 ```
 
 `SpiderEvent` is a discriminated union — switch on `_tag` for exhaustive handling.
@@ -474,7 +528,7 @@ Two changes address this:
 
 1. **`STALE_WORKER_THRESHOLD_MS` default bumped 60 s → 300 s.** Matches the worst case of the default `fetchRetry` policy: `maxAttempts (3) × per-attempt timeout (~45 s) + exponential backoff (1 s + 2 s) ≈ 138 s`, with ~160 s headroom. Override per-spider via `staleWorkerThresholdMs` (positive integer, capped at `2_147_483_647` ms).
 
-2. **Opt-in `workerHeartbeatMode: 'per-attempt'`** refreshes the heartbeat on each retry decision via `Schedule.tapInput`. Recommended whenever a single attempt can approach `staleWorkerThresholdMs / maxAttempts`.
+2. **Opt-in `workerHeartbeatMode: 'per-attempt'`** refreshes the heartbeat on each permitted retry through `Schedule.tap`. Recommended whenever a single attempt can approach `staleWorkerThresholdMs / maxAttempts`.
 
 Sample config for a very slow adapter with 5 retries (worst case = `5 × 60 s + (1 + 2 + 4 + 8) s = 315 s` ≈ 5.25 min, so 600 s gives ~50% headroom):
 
@@ -583,7 +637,7 @@ makeSpiderConfig({
 To abort a running crawl programmatically, pass a `Deferred<void>` via `crawl()` options. Requires `stopMode: 'interrupt'` in the config.
 
 ```typescript
-import { Deferred, Effect, Fiber } from 'effect';
+import { Deferred, Effect, Fiber, Layer } from 'effect';
 import { makeSpiderConfig, SpiderConfig, SpiderEventSinkNoop, SpiderService } from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
@@ -600,9 +654,16 @@ const program = Effect.gen(function* () {
   yield* Deferred.succeed(stopSignal, undefined);
   return yield* Fiber.join(crawlFiber);
 }).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(makeSpiderConfig({ stopMode: 'interrupt' }))),
-  Effect.provide(SpiderEventSinkNoop),
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(makeSpiderConfig({ stopMode: 'interrupt' })),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
 );
 ```
 
@@ -787,7 +848,7 @@ npm run typecheck
 npm run ci:validate
 
 # Code quality
-npm run lint        # Shows 3 warnings (skipped tests)
+npm run lint        # Fails on every ESLint or Effect diagnostic
 npm run format     # Formats code consistently
 ```
 
@@ -808,6 +869,58 @@ npm run lint
 # Fix auto-fixable issues
 npm run lint:fix
 ```
+
+## Repository development guidance
+
+Spider is a TypeScript npm package for Effect-based web crawling. It uses npm,
+Vite, Vitest, ESLint, Prettier, and the TypeScript compiler.
+
+The former root `CLAUDE.md` referenced `.claude/templates/CLAUDE.md`. This
+README now owns the repository guidance, so update this section when that
+template or the project stack changes.
+
+Use British English spelling in prose. Keep public names clear and
+tree-shakeable. Keep runtime dependencies small. Define public package entry
+points in `src/index.ts` and maintain their TypeScript declarations.
+
+Add unit tests for public APIs. Add integration tests for important workflows.
+Use descriptive test names in the form `should [behaviour] when [condition]`.
+Validate external input, avoid secrets in code or published artifacts, and
+consider bundle size and memory use in long-running crawls. Maintain at least
+80% test coverage when coverage measurement applies.
+
+The root layout uses `src/` for package code and tests, `docs/` for user
+documentation, `.claude/` for project tooling, and `package.json` for the npm
+contract. Build artifacts belong in `dist/`; do not treat them as source.
+
+Before a release, run the relevant tests, type checks, build, lint, and
+documentation checks. Use Changesets for version changes and publishing. When
+the project stack changes, update this section rather than creating a separate
+root instruction file. Confirm tests, coverage, security review, documentation,
+TypeScript compilation, and bundle size before publishing.
+
+<!-- docs-audit:maintenance -->
+
+## Keeping the documentation current
+
+This repository documents itself under three rules, and `npm run docs:audit` proves all three.
+CI runs the same command, so a change that breaks a rule fails the build.
+
+1. **Every declaration carries a JSDoc block** — exported, public, private, or internal alike.
+   Say why the thing exists and what a caller must know. Do not restate the signature.
+2. **Every folder that holds source files carries a `README.md`** describing what the folder is
+   for. One file, not two: every agent and every reader opens the same text.
+3. **This block stays in the root `README.md`.** The root `AGENTS.md` and `CLAUDE.md` point at
+   that file rather than repeating it.
+
+When you change the code:
+
+- Write or update the JSDoc block in the same commit as the declaration it describes. A stale
+  block is worse than no block, because a reader trusts it.
+- Update the folder's `README.md` when you change what the folder is for, add a new entry point,
+  or move code in or out of it.
+- Add a `README.md` when you add a folder.
+- Run `npm run docs:audit` before you commit.
 
 ## License
 

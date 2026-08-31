@@ -22,8 +22,10 @@ import {
  * @public
  */
 export class FullStatePersistence implements PersistenceStrategy {
+  /** Uses this backend for every complete-state write and read. */
   constructor(private readonly backend: StorageBackend) {}
 
+  /** Saves the complete resulting state for each scheduler operation. */
   persist = (
     operation: StateOperation
   ): Effect.Effect<void, PersistenceError> => {
@@ -43,6 +45,7 @@ export class FullStatePersistence implements PersistenceStrategy {
     });
   };
 
+  /** Restores a saved complete state, or none when the backend has no state. */
   restore = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -59,6 +62,7 @@ export class FullStatePersistence implements PersistenceStrategy {
     });
   };
 
+  /** Deletes the complete state that belongs to the selected session. */
   cleanup = (key: SpiderStateKey): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -73,6 +77,7 @@ export class FullStatePersistence implements PersistenceStrategy {
     });
   };
 
+  /** Describes the capacity and trade-off of full-state persistence. */
   getInfo = () => ({
     name: 'FullStatePersistence',
     description:
@@ -91,8 +96,10 @@ export class FullStatePersistence implements PersistenceStrategy {
  * @public
  */
 export class DeltaPersistence implements PersistenceStrategy {
+  /** Uses this backend for ordered delta storage and replay. */
   constructor(private readonly backend: StorageBackend) {}
 
+  /** Saves only the incremental delta from one scheduler operation. */
   persist = (
     operation: StateOperation
   ): Effect.Effect<void, PersistenceError> => {
@@ -109,6 +116,7 @@ export class DeltaPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Rebuilds a state by loading and replaying its ordered deltas. */
   restore = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -132,6 +140,7 @@ export class DeltaPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Removes all session deltas by compacting past their highest sequence. */
   cleanup = (key: SpiderStateKey): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -151,6 +160,7 @@ export class DeltaPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Replays deltas in sequence order to rebuild a state from no base snapshot. */
   reconstructStateFromDeltas = (
     key: SpiderStateKey,
     deltas: ReadonlyArray<import('./types.js').StateDelta>
@@ -216,6 +226,7 @@ export class DeltaPersistence implements PersistenceStrategy {
       });
     });
 
+  /** Describes the capacity and replay cost of delta persistence. */
   getInfo = () => ({
     name: 'DeltaPersistence',
     description:
@@ -234,15 +245,20 @@ export class DeltaPersistence implements PersistenceStrategy {
  * @public
  */
 export class HybridPersistence implements PersistenceStrategy {
+  /** Counts operations since this strategy instance began. */
   private operationCount = 0;
+  /** Records the sequence included in the most recent saved snapshot. */
   private lastSnapshotSequence = 0;
+  /** Holds deltas that await a batch write or snapshot. */
   private pendingDeltas: import('./types.js').StateDelta[] = [];
 
+  /** Combines this backend with snapshot and delta batching policy. */
   constructor(
     private readonly backend: StorageBackend,
     private readonly config: HybridPersistenceConfig = DEFAULT_HYBRID_CONFIG
   ) {}
 
+  /** Saves a delta or snapshot and flushes full delta batches when required. */
   persist = (
     operation: StateOperation
   ): Effect.Effect<void, PersistenceError> => {
@@ -278,6 +294,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Stores a recovery snapshot and clears deltas that it makes redundant. */
   private saveSnapshot = (
     operation: StateOperation
   ): Effect.Effect<void, PersistenceError> => {
@@ -312,6 +329,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Persists a delta immediately when batching is disabled. */
   private saveDelta = (
     operation: StateOperation
   ): Effect.Effect<void, PersistenceError> => {
@@ -331,6 +349,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Writes every queued delta through a batch operation or individual fallback. */
   private flushPendingDeltas = (): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -355,6 +374,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Restores from the latest snapshot, then applies later deltas in order. */
   restore = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -399,6 +419,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Applies ordered deltas to a snapshot, or rebuilds state when none exists. */
   private applyDeltasToState = (
     key: SpiderStateKey,
     baseState: Option.Option<SpiderState>,
@@ -475,6 +496,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Flushes queued deltas, then removes the session's snapshots and deltas. */
   cleanup = (key: SpiderStateKey): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -492,6 +514,7 @@ export class HybridPersistence implements PersistenceStrategy {
     });
   };
 
+  /** Describes hybrid recovery speed and batch persistence features. */
   getInfo = () => ({
     name: 'HybridPersistence',
     description:

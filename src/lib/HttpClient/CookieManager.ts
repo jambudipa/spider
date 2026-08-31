@@ -26,11 +26,13 @@ const SerializedCookieJarSchema = Schema.Struct({
 // Error Types
 // ============================================================================
 
+/** Carries the cookie operation that failed so callers can recover or report it. */
 export class CookieError extends Data.TaggedError('CookieError')<{
   readonly operation: 'set' | 'get' | 'serialize' | 'deserialize';
   readonly cause?: unknown;
   readonly message: string;
 }> {
+  /** Converts a tough-cookie write failure into the public error contract. */
   static set(cause: unknown): CookieError {
     return new CookieError({
       operation: 'set',
@@ -39,6 +41,7 @@ export class CookieError extends Data.TaggedError('CookieError')<{
     });
   }
 
+  /** Records the URL whose cookie lookup failed. */
   static get(url: string, cause: unknown): CookieError {
     return new CookieError({
       operation: 'get',
@@ -47,6 +50,7 @@ export class CookieError extends Data.TaggedError('CookieError')<{
     });
   }
 
+  /** Records a failure while the in-memory jar becomes persistence data. */
   static serialize(cause: unknown): CookieError {
     return new CookieError({
       operation: 'serialize',
@@ -55,6 +59,7 @@ export class CookieError extends Data.TaggedError('CookieError')<{
     });
   }
 
+  /** Records a failure while persisted cookies become a usable jar. */
   static deserialize(cause: unknown): CookieError {
     return new CookieError({
       operation: 'deserialize',
@@ -68,6 +73,12 @@ export class CookieError extends Data.TaggedError('CookieError')<{
 // Service Interface
 // ============================================================================
 
+/**
+ * Maintains the cookie jar shared by HTTP operations in one application layer.
+ *
+ * The implementation hides tough-cookie and returns Effect failures only for
+ * operations where callers need to distinguish a cookie problem.
+ */
 export interface CookieManagerService {
   /**
    * Set a cookie for a URL
@@ -103,6 +114,7 @@ export interface CookieManagerService {
   deserialize: (data: string) => Effect.Effect<void, CookieError | JsonParseError>;
 }
 
+/** Effect service key for the cookie jar consumed by HTTP client layers. */
 export class CookieManager extends Context.Service<
   CookieManager,
   CookieManagerService

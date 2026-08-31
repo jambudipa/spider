@@ -9,23 +9,28 @@ import { Effect, Data, Option } from 'effect';
 // Error Types
 // ============================================================================
 
+/** Unites URL syntax and policy validation failures. */
 export type UrlError = UrlParseError | UrlValidationError;
 
+/** Represents input that JavaScript cannot parse as a URL. */
 export class UrlParseError extends Data.TaggedError('UrlParseError')<{
   readonly input: string;
   readonly base?: string;
   readonly cause?: unknown;
 }> {
+  /** Produces a parse failure message that includes the optional base URL. */
   get message(): string {
     const baseInfo = this.base ? ` (base: ${this.base})` : '';
     return `Invalid URL: "${this.input}"${baseInfo}. ${this.cause}`;
   }
 }
 
+/** Represents a URL that breaks a crawler-specific validation rule. */
 export class UrlValidationError extends Data.TaggedError('UrlValidationError')<{
   readonly url: string;
   readonly reason: string;
 }> {
+  /** Produces a validation failure message with its reason. */
   get message(): string {
     return `URL validation failed for "${this.url}": ${this.reason}`;
   }
@@ -35,6 +40,7 @@ export class UrlValidationError extends Data.TaggedError('UrlValidationError')<{
 // URL Operations
 // ============================================================================
 
+/** Provides Effect-based URL parsing, normalisation, and comparison helpers. */
 export const UrlUtils = {
   /**
    * Safely parse URL string
@@ -402,6 +408,7 @@ export const UrlUtils = {
 // Re-exports for convenience
 // ============================================================================
 
+/** Re-exports URL helpers for callers that prefer named imports. */
 export const {
   parse,
   tryParse,

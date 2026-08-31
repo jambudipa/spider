@@ -26,9 +26,12 @@ import {
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
+/** Temporary local directory used only by this resumability demonstration. */
 const STORAGE_DIR = join(process.cwd(), 'examples', 'temp', 'spider-sessions');
+/** Stable session key that lets the example find its temporary persisted state. */
 const SESSION_ID = 'resumability-demo-session';
 
+/** Demonstrates configuring, inspecting, and cleaning a resumability backend. */
 const program = Effect.gen(function* () {
   yield* Effect.log('🕷️ Example 07: Resumability and State Persistence');
   yield* Effect.log('Demonstrating resumable crawling with state management\n');
@@ -199,6 +202,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration optimized for resumability demonstration
+/** Enables resumability with conservative limits for a repeatable example. */
 const config = makeSpiderConfig({
   maxPages: 12,
   maxDepth: 1,
@@ -216,6 +220,7 @@ const config = makeSpiderConfig({
   maxRequestsPerSecondPerDomain: 1,
 });
 
+/** Provides scheduler, persistence, configuration, and crawler layers. */
 const mainEffect = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

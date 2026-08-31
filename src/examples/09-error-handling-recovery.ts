@@ -29,19 +29,31 @@ import {
   SpiderService,
 } from '../index.js';
 
-// Error tracking statistics type
+/** Mutable counters that classify failures observed during the example crawl. */
 interface ErrorStats {
+  /** Number of crawl results received from the sink. */
   totalRequests: number;
+  /** Results that contained successful page data. */
   successfulRequests: number;
+  /** Failures classified as network errors. */
   networkErrors: number;
+  /** Failures classified as request timeouts. */
   timeoutErrors: number;
+  /** Failures classified as server-side HTTP errors. */
   serverErrors: number;
+  /** Failures classified as client-side HTTP errors. */
   clientErrors: number;
+  /** Failures raised while parsing a response. */
   parseErrors: number;
+  /** Failures that do not match a more specific counter. */
   otherErrors: number;
+  /** Failures for which the example applied a recovery path. */
   recoveredRequests: number;
+  /** Domains with at least one recorded failure. */
   failedDomains: HashSet.HashSet<string>;
+  /** Failure count grouped by domain. */
   errorsByDomain: HashMap.HashMap<string, number>;
+  /** Per-failure diagnostic records kept for the summary output. */
   errorDetails: Array<{
     url: string;
     error: string;
@@ -50,6 +62,7 @@ interface ErrorStats {
   }>;
 }
 
+/** Crawls a target and demonstrates typed failure classification and recovery. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo(
     '🕷️ Example 09: Error Handling and Recovery Strategies'
@@ -323,6 +336,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration optimized for error handling demonstration
+/** Configures retries and limits that exercise the recovery paths. */
 const customConfig = makeSpiderConfig({
   maxPages: 20,
   maxDepth: 1,
@@ -355,6 +369,7 @@ const customConfig = makeSpiderConfig({
   ],
 });
 
+/** Provides the configured crawler runtime to the recovery demonstration. */
 const runnable = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

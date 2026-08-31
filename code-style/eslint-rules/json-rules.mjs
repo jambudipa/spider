@@ -46,6 +46,7 @@ export const noTsconfigPaths = {
 };
 
 // Enforce composite and declaration in tsconfig.base.json
+/** Requires the compiler settings that make project references and declaration consumers reliable. */
 export const enforceTsconfigBaseComposite = {
   meta: {
     type: 'problem',
@@ -130,6 +131,7 @@ export const enforceTsconfigBaseComposite = {
 };
 
 // Enforce outDir in library tsconfig.lib.json
+/** Keeps library output at the path that package export maps expect. */
 export const enforceLibOutdir = {
   meta: {
     type: 'problem',
@@ -192,6 +194,7 @@ export const enforceLibOutdir = {
 };
 
 // Disallow batch in nx.json
+/** Prevents a non-functional persistent batch setting in Nx configuration. */
 export const noBatchInNxJson = {
   meta: {
     type: 'problem',

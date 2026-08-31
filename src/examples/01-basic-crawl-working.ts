@@ -19,6 +19,7 @@ import {
   SpiderService,
 } from '../index.js';
 
+/** Demonstrates a basic crawl and accumulates every result in a Chunk. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 01: Basic Web Crawling');
   yield* Effect.logInfo('Crawling web-scraping.dev for basic functionality\n');
@@ -99,6 +100,7 @@ const program = Effect.gen(function* () {
 });
 
 // Run the example with proper layers
+/** Limits the demonstration crawl to a small, polite request budget. */
 const customConfig = makeSpiderConfig({
   maxPages: 5,
   maxDepth: 1,
@@ -108,6 +110,7 @@ const customConfig = makeSpiderConfig({
   maxConcurrentWorkers: 2,
 });
 
+/** Provides the crawler and its required configuration for the example. */
 const runnable = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

@@ -259,6 +259,7 @@ export type SpiderEvent =
  * @public
  */
 export interface SpiderEventSinkService {
+  /** Consume one structured lifecycle event from a running spider. */
   readonly emit: (event: SpiderEvent) => Effect.Effect<void>;
 }
 

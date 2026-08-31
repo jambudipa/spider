@@ -68,8 +68,11 @@ export interface RevealedRequest {
  * @public
  */
 export interface SkippedControl {
+  /** Identifier of the declared control that could not run. */
   readonly id: string;
+  /** Human-readable control name for the diagnostic message. */
   readonly label: string;
+  /** Browser failure that prevented the control from running. */
   readonly reason: string;
 }
 
@@ -152,6 +155,7 @@ export class NoOracleDeclaredError extends Data.TaggedError(
 )<{
   readonly message: string;
 }> {
+  /** Create the configuration error raised when no interaction oracle exists. */
   static create(): NoOracleDeclaredError {
     return new NoOracleDeclaredError({
       message:
@@ -175,6 +179,7 @@ export class NoControlsDrivenError extends Data.TaggedError(
   readonly message: string;
   readonly skipped: readonly SkippedControl[];
 }> {
+  /** Preserve each failed control when discovery cannot drive any of them. */
   static create(skipped: readonly SkippedControl[]): NoControlsDrivenError {
     const detail = skipped
       .map((s) => `${s.label} (${s.id}): ${s.reason}`)
@@ -201,6 +206,7 @@ export class NothingRevealedError extends Data.TaggedError(
   readonly message: string;
   readonly driven: readonly { readonly id: string; readonly label: string }[];
 }> {
+  /** Refuse an empty measurement after at least one control ran. */
   static create(
     driven: readonly { readonly id: string; readonly label: string }[]
   ): NothingRevealedError {
@@ -229,6 +235,7 @@ export class SweepNavigatedAwayError extends Data.TaggedError(
   readonly from: string;
   readonly to: string;
 }> {
+  /** Report the control that invalidated the sweep by changing documents. */
   static create(
     controlId: string,
     from: string,
@@ -259,6 +266,7 @@ export class SweepNavigationFailedError extends Data.TaggedError(
   readonly url: string;
   readonly cause: string;
 }> {
+  /** Convert a navigation failure into an error that keeps its target URL. */
   static create(url: string, cause: unknown): SweepNavigationFailedError {
     const detail = cause instanceof Error ? cause.message : String(cause);
     return new SweepNavigationFailedError({
@@ -486,6 +494,7 @@ export class InteractionDiscoveryService extends Context.Service<InteractionDisc
     }),
   }
 ) {
+  /** Supply the dependency-free discovery service to a crawl program. */
   static readonly layer = Layer.effect(
     InteractionDiscoveryService,
     InteractionDiscoveryService.make

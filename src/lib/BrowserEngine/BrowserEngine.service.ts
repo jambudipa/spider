@@ -7,20 +7,31 @@ import { Context, Effect, Layer, Ref, Option } from 'effect';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { BrowserError, PageError } from '../errors/effect-errors.js';
 
+/** Describes a page element extracted by selector, text, and optional attributes. */
 export interface PageElement {
+  /** Records the CSS selector that identified the element. */
   selector: string;
+  /** Holds the element text when the extractor read text content. */
   text?: string;
+  /** Holds attributes that the extractor chose to retain. */
   attributes?: Record<string, string>;
 }
 
+/** Configures the browser and context that a BrowserEngine service creates. */
 export interface BrowserEngineConfig {
+  /** Runs Chromium without a visible window unless the caller sets false. */
   headless?: boolean;
+  /** Applies this Playwright timeout in milliseconds to browser operations. */
   timeout?: number;
+  /** Sets the viewport for pages that the engine creates. */
   viewport?: { width: number; height: number };
+  /** Identifies requests from pages that the engine creates. */
   userAgent?: string;
+  /** Sets the locale for pages that the engine creates. */
   locale?: string;
 }
 
+/** Defines the page lifecycle operations exposed through the BrowserEngine service key. */
 export interface BrowserEngineServiceInterface {
   /**
    * Launch the browser
@@ -425,6 +436,7 @@ export class BrowserEngineService extends Context.Service<
     make: makeBrowserEngine()
   }
 ) {
+  /** Provides the default engine through the service key with the default browser configuration. */
   static readonly layer = Layer.effect(
     BrowserEngineService,
     BrowserEngineService.make

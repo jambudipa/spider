@@ -9,12 +9,15 @@ import { Effect, Data, Schema, Option, pipe, Struct } from 'effect';
 // Error Types
 // ============================================================================
 
+/** Unites JSON parsing and serialisation failures. */
 export type JsonError = JsonParseError | JsonStringifyError;
 
+/** Represents JSON text that the decoder cannot parse. */
 export class JsonParseError extends Data.TaggedError('JsonParseError')<{
   readonly input: string;
   readonly cause?: unknown;
 }> {
+  /** Limits the input preview so a parse error remains readable. */
   get message(): string {
     const preview = this.input.length > 100 
       ? `${this.input.substring(0, 100)}...` 
@@ -23,10 +26,12 @@ export class JsonParseError extends Data.TaggedError('JsonParseError')<{
   }
 }
 
+/** Represents a value that cannot be serialised as JSON. */
 export class JsonStringifyError extends Data.TaggedError('JsonStringifyError')<{
   readonly input: unknown;
   readonly cause?: unknown;
 }> {
+  /** Names the value type without attempting to serialise the failed value again. */
   get message(): string {
     const typeInfo = typeof this.input === 'object' 
       ? this.input?.constructor?.name || 'Object'
@@ -35,11 +40,13 @@ export class JsonStringifyError extends Data.TaggedError('JsonStringifyError')<{
   }
 }
 
+/** Represents JSON that does not satisfy the caller's schema. */
 export class JsonSchemaValidationError extends Data.TaggedError('JsonSchemaValidationError')<{
   readonly input: unknown;
   readonly schemaName: string;
   readonly cause?: unknown;
 }> {
+  /** Produces a validation message that identifies the schema. */
   get message(): string {
     return `JSON validation failed for schema "${this.schemaName}": ${this.cause}`;
   }
@@ -154,6 +161,7 @@ const formatJsonString = (jsonString: string, space: string | number): string =>
 // JSON Operations
 // ============================================================================
 
+/** Provides Effect-based JSON conversion with typed parsing and validation errors. */
 export const JsonUtils = {
   /**
    * Safely parse JSON string with schema validation
@@ -434,6 +442,7 @@ export const JsonUtils = {
 // Re-exports for convenience
 // ============================================================================
 
+/** Re-exports JSON helpers for callers that prefer named imports. */
 export const {
   parse,
   parseUnknown,

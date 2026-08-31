@@ -1,5 +1,11 @@
 import { Schema } from 'effect';
 
+/**
+ * Runtime schema for a fetched page.
+ *
+ * The schema rejects malformed URLs, non-HTTP status values, and negative
+ * crawl depths before page data reaches downstream extraction or persistence.
+ */
 export const PageDataSchema = Schema.Struct({
   url: Schema.String.pipe(
     Schema.check(Schema.makeFilter((s) => URL.canParse(s) ? undefined : 'Invalid URL format'))
@@ -32,4 +38,10 @@ export const PageDataSchema = Schema.Struct({
   ),
 });
 
+/**
+ * Validated page data that the crawler sends to result sinks.
+ *
+ * This type is derived from {@link PageDataSchema}; update the schema rather
+ * than constructing a competing structural definition.
+ */
 export type PageData = Schema.Schema.Type<typeof PageDataSchema>;

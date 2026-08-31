@@ -123,6 +123,10 @@ export class ValidationRouteUnreachableError extends Data.TaggedError(
   readonly context: 'session' | 'anonymous';
   readonly cause: string;
 }> {
+  /**
+   * Records which context could not reach the validation route. It converts
+   * unknown Promise rejection values into stable diagnostic text.
+   */
   static create(
     url: string,
     context: 'session' | 'anonymous',
@@ -319,6 +323,10 @@ export class SessionValidationService extends Context.Service<SessionValidationS
     }),
   }
 ) {
+  /**
+   * Provides the evidence-based validation service without configuring either
+   * Playwright page. The caller owns the two isolated page contexts.
+   */
   static readonly layer = Layer.effect(
     SessionValidationService,
     SessionValidationService.make

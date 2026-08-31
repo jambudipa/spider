@@ -22,7 +22,7 @@ npm install @jambudipa/spider effect
 ## Minimal usage
 
 ```typescript
-import { Chunk, Effect, Sink } from 'effect';
+import { Chunk, Effect, Layer, Sink } from 'effect';
 import {
   CrawlResult,
   makeSpiderConfig,
@@ -47,10 +47,19 @@ const program = Effect.gen(function* () {
   return Chunk.toReadonlyArray(pages);
 });
 
+const config = makeSpiderConfig({ maxPages: 10, maxDepth: 2 });
+
 const runnable = program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(makeSpiderConfig({ maxPages: 10, maxDepth: 2 }))),
-  Effect.provide(SpiderEventSinkNoop),
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(config),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
 );
 
 Effect.runPromise(runnable);
@@ -58,12 +67,12 @@ Effect.runPromise(runnable);
 
 ## Required services
 
-`SpiderService.Default` declares two unsatisfied requirements that the caller must provide:
+`SpiderService.layer` requires two services during construction:
 
-1. **`SpiderConfig`** — runtime configuration. Use `SpiderConfig.Live(makeSpiderConfig({...}))` or `SpiderConfig.Default` for defaults.
+1. **`SpiderConfig`** — runtime configuration. Use `SpiderConfig.layerWith(makeSpiderConfig({...}))` or `SpiderConfig.layer` for defaults.
 2. **`SpiderEventSink`** — domain-event sink. Use `SpiderEventSinkNoop` to ignore, or supply a custom `Layer.succeed(SpiderEventSink, …)` to subscribe.
 
-Failing to provide either is a TypeScript error.
+Provide both layers below `SpiderService.layer`. The service captures the configuration, so `crawl` does not require `SpiderConfig` from callers.
 
 ## Logging and observability (v0.5+)
 
@@ -74,27 +83,34 @@ Spider has TWO independent observability surfaces. Both are overridable by the c
 Spider uses `Effect.logDebug` / `Effect.logInfo` / `Effect.logWarning` / `Effect.logError` for diagnostic messages, with structured fields attached via `Effect.annotateLogs`. To redirect every log to your own destination (pino, datadog, OpenTelemetry, file, etc.):
 
 ```typescript
-import { Effect, Logger, LogLevel } from 'effect';
+import { Effect, Layer, Logger, References } from 'effect';
 
-const myLogger = Logger.make(({ logLevel, message, annotations, fiberId, date }) => {
-  const meta = Object.fromEntries(annotations);
+const myLogger = Logger.make(({ logLevel, message, fiber, date }) => {
+  const annotations = fiber.getRef(References.CurrentLogAnnotations);
   console.log(JSON.stringify({
     timestamp: date.toISOString(),
-    level: logLevel.label,
-    fiberId: String(fiberId),
+    level: logLevel.toUpperCase(),
+    fiberId: fiber.id,
     message: Array.isArray(message) ? message.join(' ') : String(message),
-    ...meta,
+    ...annotations,
   }));
 });
 
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
-  Logger.withMinimumLogLevel(LogLevel.Info),
+const loggingLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      SpiderConfig.layer,
+      SpiderEventSinkNoop,
+      Logger.layer([myLogger]),
+      Layer.succeed(References.MinimumLogLevel, 'Info'),
+    ),
+  ),
 );
+
+program.pipe(Effect.provide(loggingLayer));
 ```
 
-`Logger.replace`, `Logger.add`, `Logger.replaceScoped` all work as documented in Effect.
+`Logger.layer` routes every Spider diagnostic log through the custom logger.
 
 ### Surface 2: SpiderEventSink (typed domain events)
 
@@ -137,10 +153,11 @@ const AnalyticsSink = Layer.succeed(SpiderEventSink, {
   emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
 });
 
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(AnalyticsSink),
+const analyticsLayer = SpiderService.layer.pipe(
+  Layer.provide(Layer.mergeAll(SpiderConfig.layer, AnalyticsSink)),
 );
+
+program.pipe(Effect.provide(analyticsLayer));
 ```
 
 Switch on `_tag` for exhaustive handling. Adding new event kinds in future versions is non-breaking — clients can ignore unknown tags or rely on TS exhaustiveness checks for coverage.
@@ -158,6 +175,7 @@ Top-level exports from `@jambudipa/spider`:
 - **Middleware**: `MiddlewareManager`, `RateLimitMiddleware`, `LoggingMiddleware`, `UserAgentMiddleware`, `StatsMiddleware`, `SpiderMiddleware`, `SpiderRequest`, `SpiderResponse`
 - **Link extraction**: `LinkExtractorService`, `LinkExtractorServiceLayer`, `LinkExtractorConfig`, `LinkExtractionResult`, `LinkExtractionError`
 - **Interaction discovery (v0.15+)**: `InteractionDiscoveryService`, `InteractionDiscoveryServiceLayer`, `InteractionControl`, `InteractionSweepOptions`, `InteractionSweepResult`, `InteractionSweepError`, `RevealedRequest`, `SkippedControl`, `NoOracleDeclaredError`, `NoControlsDrivenError`, `NothingRevealedError`, `SweepNavigatedAwayError`
+- **Session validation**: `SessionValidationService`, `SessionValidationServiceLayer`, `SessionValidationRequest`, `SessionValidationResult`, `SignedInMarker`, `ContextEvidence`, `SessionValidationReason`, `ValidationRouteUnreachableError`
 - **Robots / Scraper / PageData**: `RobotsService`, `ScraperService`, `PageData`, `RobotsCheck`, `RobotsCheckReason`, `RobotsRule`, `RobotsRules`
 - **Browser engine**: `BrowserEngineService`, `BrowserEngineLive`, `BrowserEngineWithConfig`, `makeBrowserEngine`, `DEFAULT_BROWSER_ENGINE_CONFIG`, `withBrowser`, `BrowserEngineConfig`, `BrowserEngineServiceInterface`
 - **HTTP client**: `EnhancedHttpClient`, `CookieManager`, `HttpRequestOptions`, `HttpResponse`, `Session`
@@ -243,7 +261,7 @@ Advanced config objects (v0.8+/v0.9+):
 ```typescript
 makeSpiderConfig({
   // Treat www.example.com and example.com as the same domain
-  domainEquivalence: { wwwHandling: 'ignore-www', protocolHandling: 'ignore-protocol', subdomainHandling: 'strict' },
+  domainEquivalence: { wwwHandling: 'ignore', protocolHandling: 'permissive', subdomainHandling: 'strict' },
 
   // Retry up to 3 times on transient errors
   fetchRetry: { maxAttempts: 3, baseBackoffMs: 500, retryOn: ['timeout', 'http_5xx', 'connection_refused'] },
@@ -274,7 +292,7 @@ Long retry chains under slow adapters can run past the worker-health staleness t
 
 - `staleWorkerThresholdMs` (default `300_000`, bounds `1..2_147_483_647`) — override the per-worker staleness threshold in milliseconds. Guideline: `fetchRetry.maxAttempts × per-attempt timeout + sum(backoff) + 30 s`. Default raised from 60 s in v0.12 to cover the default retry chain. Validated at `makeSpiderConfig` (`ConfigError` on `NaN`, `Infinity`, negatives, non-integers, zero, or values above the upper bound).
 - `staleWorkerCheckIntervalMs` (default `15_000`, same bounds) — how often the monitor scans for stale workers. Lower for tests, raise for low-overhead production.
-- `workerHeartbeatMode` (default `'per-iteration'`) — set to `'per-attempt'` to additionally refresh the worker heartbeat between retry attempts (via `Schedule.tapInput` on the fetch retry schedule). Recommended for any non-undici adapter whose per-attempt timeout can approach `staleWorkerThresholdMs / maxAttempts`.
+- `workerHeartbeatMode` (default `'per-iteration'`) — set to `'per-attempt'` to additionally refresh the worker heartbeat for each permitted retry (via `Schedule.tap` on the fetch retry schedule). Recommended for any non-undici adapter whose per-attempt timeout can approach `staleWorkerThresholdMs / maxAttempts`.
 
 The standalone `WorkerHealthMonitor` service shares the new 300 s default but is independent of `SpiderConfig`. Use `WorkerHealthMonitor.WithThreshold(ms)` to construct a layer with a different threshold.
 
@@ -321,8 +339,13 @@ When `stopMode: 'interrupt'`, in-flight fetches are cancelled immediately when a
 External abort via `Deferred` (requires `stopMode: 'interrupt'` in config):
 
 ```typescript
-import { Deferred, Effect, Fiber } from 'effect';
-import { makeSpiderConfig, SpiderService, SpiderConfig } from '@jambudipa/spider';
+import { Deferred, Effect, Fiber, Layer } from 'effect';
+import {
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+} from '@jambudipa/spider';
 
 const program = Effect.gen(function* () {
   const stopSignal = yield* Deferred.make<void>();
@@ -336,6 +359,21 @@ const program = Effect.gen(function* () {
   yield* Deferred.succeed(stopSignal, undefined); // abort crawl
   return yield* Fiber.join(crawlFiber);
 });
+
+const runnable = program.pipe(
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          SpiderConfig.layerWith(makeSpiderConfig({ stopMode: 'interrupt' })),
+          SpiderEventSinkNoop,
+        ),
+      ),
+    ),
+  ),
+);
+
+Effect.runPromise(runnable);
 ```
 
 Subscribe to interrupt events in a `SpiderEventSink`:

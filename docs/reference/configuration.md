@@ -9,54 +9,54 @@ Main configuration options passed to `makeSpiderConfig()`.
 ```typescript
 interface SpiderConfigOptions {
   // Core
-  ignoreRobotsTxt: boolean;
-  maxConcurrentWorkers: number;
-  concurrency: number | 'unbounded' | 'inherit';
-  resultChannelCapacity: number | 'unbounded';
-  requestDelayMs: number;
-  maxRobotsCrawlDelayMs: number;
-  userAgent: string;
-  maxDepth?: number;
-  maxPages?: number;
+  readonly ignoreRobotsTxt: boolean;
+  readonly maxConcurrentWorkers: number;
+  readonly concurrency: number | 'unbounded' | 'inherit';
+  readonly resultChannelCapacity: number | 'unbounded';
+  readonly requestDelayMs: number;
+  readonly maxRobotsCrawlDelayMs: number;
+  readonly userAgent: string;
+  readonly maxDepth?: number;
+  readonly maxPages?: number;
 
   // Domain / URL filters
-  allowedDomains?: string[];
-  blockedDomains?: string[];
-  allowedProtocols: string[];
-  followRedirects: boolean;
-  respectNoFollow: boolean;
-  fileExtensionFilters?: FileExtensionFilters;
-  technicalFilters?: TechnicalFilters;
-  skipFileExtensions?: string[];
-  customUrlFilters?: RegExp[];
-  normalizeUrlsForDeduplication: boolean;
+  readonly allowedDomains?: string[];
+  readonly blockedDomains?: string[];
+  readonly allowedProtocols: string[];
+  readonly followRedirects: boolean;
+  readonly respectNoFollow: boolean;
+  readonly fileExtensionFilters?: FileExtensionFilters;
+  readonly technicalFilters?: TechnicalFilters;
+  readonly skipFileExtensions?: string[];
+  readonly customUrlFilters?: RegExp[];
+  readonly normalizeUrlsForDeduplication: boolean;
 
   // Performance
-  maxConcurrentRequests: number;
-  maxRequestsPerSecondPerDomain: number;
+  readonly maxConcurrentRequests: number;
+  readonly maxRequestsPerSecondPerDomain: number;
 
   // Resumability
-  enableResumability: boolean;
+  readonly enableResumability: boolean;
 
   // Advanced (v0.8+/v0.9+)
-  domainEquivalence?: DomainEquivalenceConfig;
-  fetchRetry?: FetchRetryConfig;
-  crossDomainRedirects?: CrossDomainRedirectConfig;
-  userAgentStrategy?: UserAgentStrategy;
+  readonly domainEquivalence?: DomainEquivalenceConfig;
+  readonly fetchRetry?: FetchRetryConfig;
+  readonly crossDomainRedirects?: CrossDomainRedirectConfig;
+  readonly userAgentStrategy?: UserAgentStrategy;
 
   // Stop behaviour (v0.10+)
-  stopMode?: StopMode;
+  readonly stopMode?: StopMode;
 
   // Pluggable HTTP fetcher (v0.11+)
-  httpAdapter?: HttpAdapter | HttpAdapterSelector;
+  readonly httpAdapter?: HttpAdapter | HttpAdapterSelector;
 
   // Worker heartbeat & long fetches (v0.12+)
-  staleWorkerThresholdMs?: number;
-  staleWorkerCheckIntervalMs?: number;
-  workerHeartbeatMode?: 'per-iteration' | 'per-attempt';
+  readonly staleWorkerThresholdMs?: number;
+  readonly staleWorkerCheckIntervalMs?: number;
+  readonly workerHeartbeatMode?: 'per-iteration' | 'per-attempt';
 
   // In-cycle domain-level retry (v0.14+)
-  domainRetry?: DomainRetryConfig;
+  readonly domainRetry?: DomainRetryConfig;
 }
 ```
 
@@ -103,12 +103,12 @@ Granular control over which file-extension categories to skip. All categories de
 
 ```typescript
 interface FileExtensionFilters {
-  filterArchives?: boolean;        // .zip, .tar, .gz, .rar, …
-  filterImages?: boolean;          // .jpg, .png, .gif, .svg, …
-  filterAudio?: boolean;           // .mp3, .wav, .ogg, …
-  filterVideo?: boolean;           // .mp4, .avi, .mov, …
-  filterOfficeDocuments?: boolean; // .pdf, .doc, .xls, .ppt, …
-  filterOther?: boolean;           // .exe, .bin, .iso, …
+  readonly filterArchives: boolean;        // .zip, .tar, .gz, .rar, …
+  readonly filterImages: boolean;          // .jpg, .png, .gif, .svg, …
+  readonly filterAudio: boolean;           // .mp3, .wav, .ogg, …
+  readonly filterVideo: boolean;           // .mp4, .avi, .mov, …
+  readonly filterOfficeDocuments: boolean; // .pdf, .doc, .xls, .ppt, …
+  readonly filterOther: boolean;           // .exe, .bin, .iso, …
 }
 ```
 
@@ -135,10 +135,10 @@ Controls automatic rejection of technically problematic URLs. All options defaul
 
 ```typescript
 interface TechnicalFilters {
-  filterUnsupportedSchemes?: boolean; // reject mailto:, javascript:, data:, …
-  filterLongUrls?: boolean;           // reject URLs over maxUrlLength
-  maxUrlLength?: number;              // default 2083 (IE/Scrapy limit)
-  filterMalformedUrls?: boolean;      // reject unparseable URLs
+  readonly filterUnsupportedSchemes: boolean; // reject mailto:, javascript:, data:, …
+  readonly filterLongUrls: boolean;           // reject URLs over maxUrlLength
+  readonly maxUrlLength: number;              // default 2083 (IE/Scrapy limit)
+  readonly filterMalformedUrls: boolean;      // reject unparseable URLs
 }
 ```
 
@@ -150,22 +150,22 @@ Controls how hostnames are compared when restricting a crawl to its starting dom
 
 ```typescript
 interface DomainEquivalenceConfig {
-  wwwHandling: 'strict' | 'ignore-www';
-  protocolHandling: 'strict' | 'ignore-protocol';
-  subdomainHandling: 'strict' | 'allow-subdomains';
+  readonly wwwHandling: 'ignore' | 'strict';
+  readonly protocolHandling: 'permissive' | 'strict';
+  readonly subdomainHandling: 'ignore' | 'strict';
 }
 ```
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `wwwHandling` | `'strict'` / `'ignore-www'` | Whether `www.example.com` and `example.com` are treated as the same domain |
-| `protocolHandling` | `'strict'` / `'ignore-protocol'` | Whether `http://` and `https://` variants are equivalent |
-| `subdomainHandling` | `'strict'` / `'allow-subdomains'` | Whether `sub.example.com` is considered part of `example.com` |
+| `wwwHandling` | `'ignore'` / `'strict'` | Whether `www.example.com` and `example.com` are treated as the same domain |
+| `protocolHandling` | `'permissive'` / `'strict'` | Whether configured protocols may differ from the starting URL protocol |
+| `subdomainHandling` | `'ignore'` / `'strict'` | Whether `sub.example.com` is considered part of `example.com` |
 
 **Default (`defaultDomainEquivalence`):**
 
 ```typescript
-{ wwwHandling: 'ignore-www', protocolHandling: 'ignore-protocol', subdomainHandling: 'strict' }
+{ wwwHandling: 'ignore', protocolHandling: 'permissive', subdomainHandling: 'strict' }
 ```
 
 ---
@@ -176,9 +176,9 @@ Retry policy for the page-fetch pipeline. Added in v0.8. `makeSpiderConfig` thro
 
 ```typescript
 interface FetchRetryConfig {
-  maxAttempts: number;
-  baseBackoffMs: number;
-  retryOn: RetryableErrorKind[];
+  readonly maxAttempts: number;
+  readonly baseBackoffMs: number;
+  readonly retryOn: ReadonlyArray<RetryableErrorKind>;
 }
 
 type RetryableErrorKind = 'timeout' | 'dns' | 'http_4xx' | 'http_429' | 'http_5xx' | 'connection_refused' | 'other';
@@ -187,8 +187,8 @@ type RetryableErrorKind = 'timeout' | 'dns' | 'http_4xx' | 'http_429' | 'http_5x
 | Field | Default | Description |
 |-------|---------|-------------|
 | `maxAttempts` | `3` | Total attempts (including the first); must be ≥ 1 |
-| `baseBackoffMs` | `500` | Initial exponential-backoff delay |
-| `retryOn` | `['timeout','http_5xx','connection_refused']` | Which error kinds trigger a retry |
+| `baseBackoffMs` | `1000` | Initial exponential-backoff delay |
+| `retryOn` | `['timeout','http_5xx','http_429']` | Which error kinds trigger a retry |
 
 **Example:**
 
@@ -212,21 +212,21 @@ All passes share the same undici connection pool (process-global), robots cache,
 
 ```typescript
 interface DomainRetryConfig {
-  enabled: boolean;
-  maxPasses: number;
-  backoffMs: number;
-  retryOn: DomainRetryPredicate;
-  passOverrides?: DomainRetryPassOverrides;
+  readonly enabled: boolean;
+  readonly maxPasses: number;
+  readonly backoffMs: number;
+  readonly retryOn: DomainRetryPredicate;
+  readonly passOverrides?: DomainRetryPassOverrides;
 }
 
 interface DomainRetryPredicate {
-  reasons: ReadonlyArray<DomainCompleteReason>;
-  maxPagesAttempted: number;
+  readonly reasons: ReadonlyArray<DomainCompleteReason>;
+  readonly maxPagesAttempted: number;
 }
 
 interface DomainRetryPassOverrides {
-  concurrency?: number | 'unbounded' | 'inherit';
-  fetchRetry?: FetchRetryConfig;
+  readonly concurrency?: number | 'unbounded' | 'inherit';
+  readonly fetchRetry?: FetchRetryConfig;
 }
 
 type DomainCompleteReason =
@@ -309,8 +309,8 @@ Handles 3xx redirects that cross hostname boundaries when following a start URL.
 
 ```typescript
 interface CrossDomainRedirectConfig {
-  enabled: boolean;
-  maxHops: number;
+  readonly enabled: boolean;
+  readonly maxHops: number;
 }
 ```
 
@@ -326,9 +326,9 @@ Replaces the `userAgent` shorthand when more advanced behaviour is needed. Added
 
 ```typescript
 type UserAgentStrategy =
-  | { kind: 'static'; userAgent: string }
-  | { kind: 'rotating'; pool: string[]; perDomain: boolean }
-  | { kind: 'custom'; resolver: (url: string) => string };
+  | { readonly kind: 'static'; readonly userAgent: string }
+  | { readonly kind: 'rotating'; readonly pool: ReadonlyArray<string>; readonly perDomain: boolean }
+  | { readonly kind: 'custom'; readonly resolver: (url: string) => string };
 ```
 
 | Kind | Description |
@@ -658,7 +658,7 @@ makeSpiderConfig({
 
 - **Type:** `'per-iteration' | 'per-attempt'`
 - **Default:** `'per-iteration'` (preserves pre-0.12 behaviour byte-for-byte)
-- **`'per-attempt'`** wires `reportWorkerHealth` into the fetch retry schedule via `Schedule.tapInput`, firing on each failure input (before the backoff delay). Recommended whenever a single attempt can approach `staleWorkerThresholdMs / maxAttempts` — e.g. TLS-impersonating adapters, sidecar APIs.
+- **`'per-attempt'`** wires `reportWorkerHealth` into the fetch retry schedule with `Schedule.tap`. It fires on each permitted retry decision before the backoff delay. Use it when an attempt can approach `staleWorkerThresholdMs / maxAttempts`.
 - Runtime-validated; `ConfigError` on values outside the union.
 
 Note: the `WorkerHealthMonitor` standalone service shares the new 300 s default but is independent of `SpiderConfig`. Use `WorkerHealthMonitor.WithThreshold(ms)` for a custom threshold there.

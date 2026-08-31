@@ -2,7 +2,9 @@ import { Effect, Option } from 'effect';
 
 // `NodeJS.UncaughtExceptionOrigin` is `'uncaughtException' | 'unhandledRejection'`.
 // Inlined to keep the lint env free of `NodeJS` global namespace usage.
+/** Origin values reported by Node's uncaught-exception event. */
 type UncaughtExceptionOrigin = 'uncaughtException' | 'unhandledRejection';
+/** Process listener shape used by the narrow undici termination guard. */
 type UncaughtExceptionListener = (
   err: Error,
   origin: UncaughtExceptionOrigin
@@ -35,9 +37,17 @@ type UncaughtExceptionListener = (
  */
 
 let refCount = 0;
+/** Installed listener, if any, so shared crawl scopes register only once. */
 let installed: Option.Option<UncaughtExceptionListener> = Option.none();
+/** Number of known undici abort-race errors that this process suppressed. */
 let swallowedCount = 0;
 
+/**
+ * Matches only the Node-undici abort race that this guard may suppress.
+ *
+ * The stack-frame checks prevent an unrelated `TypeError: terminated` from
+ * changing the process failure behavior.
+ */
 const isUndiciTerminated = (err: unknown): err is TypeError => {
   if (!(err instanceof TypeError)) return false;
   if (err.message !== 'terminated') return false;
@@ -46,6 +56,12 @@ const isUndiciTerminated = (err: unknown): err is TypeError => {
   return stack.includes('Fetch.onAborted') && stack.includes('Fetch.terminate');
 };
 
+/**
+ * Preserves normal uncaught-exception handling except for the known undici race.
+ *
+ * When no other listener exists, it removes itself before rethrowing so Node
+ * still terminates as it would without this guard.
+ */
 const handler: UncaughtExceptionListener = (err, origin) => {
   if (isUndiciTerminated(err)) {
     swallowedCount++;
@@ -91,12 +107,14 @@ const handler: UncaughtExceptionListener = (err, origin) => {
   }
 };
 
+/** Installs the shared process listener once for all active crawl scopes. */
 const install = (): void => {
   if (Option.isSome(installed)) return;
   installed = Option.some(handler);
   process.on('uncaughtException', handler);
 };
 
+/** Removes the shared listener after the final crawl scope releases it. */
 const uninstall = (): void => {
   Option.match(installed, {
     onNone: () => {},

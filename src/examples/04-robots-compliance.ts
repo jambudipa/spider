@@ -21,12 +21,17 @@ import {
 } from '../index.js';
 import { RobotsService } from '../lib/Robots/Robots.service.js';
 
+/** Timestamped page result used to display the delay between completed crawls. */
 interface CrawlTiming {
+  /** URL whose completion time this record describes. */
   url: string;
+  /** Completion time as Unix milliseconds. */
   timestamp: number;
+  /** Elapsed milliseconds since the prior completed page. */
   delay: number;
 }
 
+/** Demonstrates robots checks and records the observed crawl spacing. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 04: Robots.txt Compliance & Rate Limiting');
   yield* Effect.logInfo('Demonstrating respectful crawling practices\n');
@@ -132,6 +137,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration emphasizing respectful crawling
+/** Configures a small crawl that exposes robots and rate-limit behavior. */
 const config = makeSpiderConfig({
   maxPages: 8,
   maxDepth: 1,
@@ -155,6 +161,7 @@ const config = makeSpiderConfig({
   ],
 });
 
+/** Supplies the robots and spider service layers to the demonstration. */
 const runnable = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

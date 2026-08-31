@@ -248,6 +248,7 @@ export class ResumabilityService extends Context.Service<ResumabilityService>()(
     }),
   }
 ) {
+  /** Provides an unconfigured service for callers that configure it at run time. */
   static readonly layer = Layer.effect(
     ResumabilityService,
     ResumabilityService.make

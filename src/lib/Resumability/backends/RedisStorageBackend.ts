@@ -19,6 +19,7 @@ const SnapshotDataSchema = Schema.Struct({
   timestamp: Schema.String,
 });
 
+/** Couples a snapshot state with the last delta sequence it includes. */
 type SnapshotData = typeof SnapshotDataSchema.Type;
 
 /**
@@ -31,29 +32,45 @@ type SnapshotData = typeof SnapshotDataSchema.Type;
  * @public
  */
 export interface RedisClientInterface {
+  /** Reads one string value, or null when Redis has no matching key. */
   get(_key: string): Promise<string | null>;
+  /** Replaces one string value at the given key. */
   set(_key: string, _value: string): Promise<void>;
+  /** Deletes one key and its value. */
   del(_key: string): Promise<void>;
+  /** Checks whether a key exists without reading its value. */
   exists(_key: string): Promise<boolean>;
+  /** Reads one field from a Redis hash. */
   hget(_key: string, _field: string): Promise<string | null>;
+  /** Replaces one field in a Redis hash. */
   hset(_key: string, _field: string, _value: string): Promise<void>;
+  /** Deletes one field from a Redis hash. */
   hdel(_key: string, _field: string): Promise<void>;
+  /** Reads every field from a Redis hash. */
   hgetall(_key: string): Promise<Record<string, string>>;
+  /** Inserts a member into a sorted set at the supplied score. */
   zadd(_key: string, _score: number, _member: string): Promise<void>;
+  /** Reads members by their sorted-set positions. */
   zrange(_key: string, _start: number, _stop: number): Promise<string[]>;
+  /** Reads members whose sorted-set scores are in the requested range. */
   zrangebyscore(
     _key: string,
     _min: number | string,
     _max: number | string
   ): Promise<string[]>;
+  /** Removes one member from a sorted set. */
   zrem(_key: string, _member: string): Promise<void>;
+  /** Removes every member whose score is in the requested range. */
   zremrangebyscore(
     _key: string,
     _min: number | string,
     _max: number | string
   ): Promise<void>;
+  /** Lists keys that match the supplied Redis pattern. */
   keys(_pattern: string): Promise<string[]>;
+  /** Creates a command batch when the client supports pipelining. */
   pipeline?(): RedisPipeline;
+  /** Creates a transaction batch when the client supports MULTI. */
   multi?(): RedisMulti;
 }
 
@@ -61,7 +78,9 @@ export interface RedisClientInterface {
  * Redis pipeline interface for batch operations.
  */
 export interface RedisPipeline {
+  /** Queues a sorted-set insert and returns the same pipeline. */
   zadd(_key: string, _score: number, _member: string): RedisPipeline;
+  /** Sends every queued command and returns the client replies. */
   exec(): Promise<unknown[]>;
 }
 
@@ -69,7 +88,9 @@ export interface RedisPipeline {
  * Redis multi/transaction interface.
  */
 export interface RedisMulti {
+  /** Queues a sorted-set insert inside the transaction. */
   zadd(_key: string, _score: number, _member: string): RedisMulti;
+  /** Executes the queued transaction commands. */
   exec(): Promise<unknown[]>;
 }
 
@@ -93,6 +114,7 @@ export interface RedisMulti {
  * @public
  */
 export class RedisStorageBackend implements StorageBackend {
+  /** Describes the Redis features that strategy selection can use. */
   readonly capabilities: StorageCapabilities = {
     supportsDelta: true,
     supportsSnapshot: true,
@@ -101,23 +123,30 @@ export class RedisStorageBackend implements StorageBackend {
     latency: 'low',
   };
 
+  /** Identifies this backend in strategy information and errors. */
   readonly name = 'RedisStorageBackend';
 
+  /** Holds the caller-owned Redis client. This backend never closes it. */
   private readonly redis: RedisClientInterface;
+  /** Separates this crawler's keys from other data in the same Redis database. */
   private readonly keyPrefix: string;
 
+  /** Uses the caller-owned client and namespaces all keys with the prefix. */
   constructor(redis: RedisClientInterface, keyPrefix = 'spider') {
     this.redis = redis;
     this.keyPrefix = keyPrefix;
   }
 
+  /** Requires no setup because Redis creates keys during the first write. */
   initialize = (): Effect.Effect<void, PersistenceError> =>
     Effect.void; // Redis doesn't need initialization
 
+  /** Leaves client cleanup to the caller that created the Redis connection. */
   cleanup = (): Effect.Effect<void, PersistenceError> =>
     Effect.void; // Redis client cleanup is handled externally
 
   // Full state operations
+  /** Stores a session's complete state and marks the session as present. */
   saveState = (
     key: SpiderStateKey,
     state: SpiderState
@@ -151,6 +180,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads a complete state, or none when Redis has no state key. */
   loadState = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -187,6 +217,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Removes all state, snapshot, delta, and session-index data for one session. */
   deleteState = (
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError> => {
@@ -228,6 +259,7 @@ export class RedisStorageBackend implements StorageBackend {
   };
 
   // Delta operations
+  /** Stores one delta in a sorted set keyed by its sequence. */
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -266,6 +298,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Stores many deltas with a pipeline when the supplied client supports it. */
   saveDeltas = (
     deltas: StateDelta[]
   ): Effect.Effect<void, PersistenceError> => {
@@ -339,6 +372,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads sorted deltas from the supplied inclusive sequence boundary. */
   loadDeltas = (
     key: SpiderStateKey,
     fromSequence = 0
@@ -379,6 +413,7 @@ export class RedisStorageBackend implements StorageBackend {
   };
 
   // Snapshot operations
+  /** Stores the latest complete recovery point and its final delta sequence. */
   saveSnapshot = (
     key: SpiderStateKey,
     state: SpiderState,
@@ -420,6 +455,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads the recovery point, or none when this session has no snapshot. */
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
@@ -468,6 +504,7 @@ export class RedisStorageBackend implements StorageBackend {
   };
 
   // Cleanup operations
+  /** Deletes deltas whose sequence is lower than the replay boundary. */
   compactDeltas = (
     key: SpiderStateKey,
     beforeSequence: number
@@ -488,6 +525,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Lists sessions with valid complete states under this backend's prefix. */
   listSessions = (): Effect.Effect<SpiderStateKey[], PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -536,17 +574,22 @@ export class RedisStorageBackend implements StorageBackend {
   };
 
   // Private helper methods
+  /** Builds the Redis key that holds a session's complete state. */
   private getStateKey = (key: SpiderStateKey): string =>
     `${this.keyPrefix}:state:${key.id}`;
 
+  /** Builds the Redis key that holds a session's latest snapshot. */
   private getSnapshotKey = (key: SpiderStateKey): string =>
     `${this.keyPrefix}:snapshot:${key.id}`;
 
+  /** Builds the sorted-set key that holds a session's ordered deltas. */
   private getDeltasKey = (key: SpiderStateKey): string =>
     `${this.keyPrefix}:deltas:${key.id}`;
 
+  /** Builds the sorted-set key used as the session presence index. */
   private getSessionsKey = (): string => `${this.keyPrefix}:sessions`;
 
+  /** Adds or refreshes a session entry with the current timestamp. */
   private addToSessionsList = (
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError> => {
@@ -567,6 +610,7 @@ export class RedisStorageBackend implements StorageBackend {
     });
   };
 
+  /** Removes a session from the presence index after its data is deleted. */
   private removeFromSessionsList = (
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError> => {

@@ -8,26 +8,51 @@ import { JsonUtils, JsonStringifyError } from '../utils/JsonUtils.js';
 import { NetworkError, ParseError, TimeoutError } from '../errors/effect-errors.js';
 import { CookieManager } from './CookieManager.js';
 
+/**
+ * Per-request transport choices for the enhanced client.
+ *
+ * Timeout and retry delays use milliseconds. Omitted values use the client
+ * defaults, so a caller only supplies deliberate overrides.
+ */
 export interface HttpRequestOptions {
+  /** HTTP verb; the convenience methods set this automatically. */
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  /** Headers merged after the default user agent. */
   headers?: Record<string, string>;
+  /** Request payload for methods that accept one. */
   body?: string | FormData | URLSearchParams;
+  /** Maximum request duration in milliseconds. */
   timeout?: number;
+  /** Selects Fetch manual redirects instead of the normal follow mode. */
   followRedirects?: boolean;
+  /** Fetch credential policy for the request. */
   credentials?: 'omit' | 'same-origin' | 'include';
+  /** Retry count after the initial failed request. */
   retries?: number;
+  /** Initial exponential-backoff delay in milliseconds. */
   retryDelay?: number;
 }
 
+/** Fully buffered HTTP response returned after status and body processing. */
 export interface HttpResponse {
+  /** Final request URL after Fetch applies redirects. */
   url: string;
+  /** HTTP response status code. */
   status: number;
+  /** HTTP response status text. */
   statusText: string;
+  /** Response headers copied into a plain object. */
   headers: Record<string, string>;
+  /** Fully decoded response body. */
   body: string;
+  /** Cookies received in Set-Cookie response headers, when present. */
   cookies?: string[];
 }
 
+/**
+ * High-level client API that adds cookies, form encoding, timeouts, and retry
+ * policy to the browser-compatible Fetch interface.
+ */
 export interface EnhancedHttpClientService {
   /**
    * Make a GET request
@@ -64,6 +89,7 @@ export interface EnhancedHttpClientService {
   ) => Effect.Effect<HttpResponse, NetworkError | ParseError | TimeoutError>;
 }
 
+/** Effect service key for the high-level HTTP client. */
 export class EnhancedHttpClient extends Context.Service<
   EnhancedHttpClient,
   EnhancedHttpClientService

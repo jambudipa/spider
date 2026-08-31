@@ -1,5 +1,15 @@
 # @jambudipa/spider
 
+## 0.16.1
+
+### Patch Changes
+
+- Documentation for the Effect v4 API.
+  - JSDoc on every public declaration, so editors and TypeDoc show the v4 layer contracts.
+  - A `README.md` in every source folder.
+  - Guides, reference, and `llms.txt` rewritten for `Service.layer` and the v4 retry and resumability APIs.
+  - A documentation audit gate (`npm run docs:audit`) runs in CI.
+
 ## 0.16.0
 
 ### Minor Changes

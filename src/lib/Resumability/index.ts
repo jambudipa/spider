@@ -15,25 +15,46 @@
  * ## Quick Start
  *
  * ```typescript
- * import { ResumabilityService, ResumabilityConfigs } from '@jambudipa/spider/resumability';
+ * import { Effect, Layer } from 'effect';
+ * import {
+ *   ResumabilityConfigs,
+ *   ResumabilityService,
+ *   SpiderConfig,
+ *   SpiderSchedulerService,
+ *   SpiderService,
+ * } from '@jambudipa/spider';
  *
  * // File-based resumability
- * const resumabilityLayer = ResumabilityService.fromConfig(
- *   ResumabilityConfigs.file('./spider-state', 'hybrid')
+ * const resumabilityLayer = Layer.effect(
+ *   ResumabilityService,
+ *   ResumabilityService.fromConfig(
+ *     ResumabilityConfigs.file('./spider-state', 'hybrid')
+ *   )
  * );
  *
- * // Use with Spider
+ * const spiderLayer = SpiderService.layer.pipe(
+ *   Layer.provideMerge(
+ *     Layer.mergeAll(
+ *       SpiderConfig.layerWith({ enableResumability: true }),
+ *       SpiderSchedulerService.layer,
+ *       resumabilityLayer
+ *     )
+ *   )
+ * );
+ *
+ * // Use the services in an Effect program.
  * const program = Effect.gen(function* () {
- *   const spider = yield* Spider;
+ *   const spider = yield* SpiderService;
  *   const resumability = yield* ResumabilityService;
  *
- *   // Configure resumable crawling...
+ *   const info = yield* resumability.getInfo();
+ *   console.log(info.backend.name);
+ *   // Call `spider.resume(stateKey, sink)` after scheduler persistence restores state.
  * });
  *
  * Effect.runPromise(
  *   program.pipe(
- *     Effect.provide(Spider.Default),
- *     Effect.provide(resumabilityLayer)
+ *     Effect.provide(spiderLayer)
  *   )
  * );
  * ```

@@ -32,26 +32,36 @@ import {
   SpiderService,
 } from '../index.js';
 
-// Memory usage type from process.memoryUsage()
+/** Node process-memory snapshot used for worker health reporting. */
 type MemoryUsage = ReturnType<typeof process.memoryUsage>;
 
-// Worker monitoring statistics type
+/** Mutable measurements collected while the worker-monitoring example runs. */
 interface WorkerStats {
+  /** Number of result events observed by the sink. */
   totalRequests: number;
+  /** Result events that carried successful page data. */
   successfulRequests: number;
+  /** Result events that carried a typed crawl failure. */
   failedRequests: number;
+  /** Mean successful response time in milliseconds. */
   averageResponseTime: number;
+  /** Sum of successful response times in milliseconds. */
   totalResponseTime: number;
+  /** Process-memory snapshots at the start, peak, and end of the crawl. */
   memoryUsage: {
     initial: MemoryUsage;
     peak: MemoryUsage;
     final: MemoryUsage;
   };
+  /** Number of workers observed as active by the example. */
   workersActive: number;
+  /** Domains that produced at least one observed result. */
   domainsProcessed: HashSet.HashSet<string>;
+  /** Result-event count grouped by domain. */
   requestsPerDomain: HashMap.HashMap<string, number>;
 }
 
+/** Crawls a target while collecting worker and memory measurements. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo(
     '🕷️ Example 08: Worker Health Monitoring & Performance Analysis'
@@ -342,6 +352,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration optimized for worker monitoring demonstration
+/** Configures enough work to make worker-health measurements visible. */
 const config = makeSpiderConfig({
   maxPages: 16,
   maxDepth: 2,
@@ -369,6 +380,7 @@ const config = makeSpiderConfig({
   },
 });
 
+/** Provides worker-health monitoring and the crawler runtime for the example. */
 const mainEffect = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

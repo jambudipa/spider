@@ -11,17 +11,20 @@ import { TokenType } from '../StateManager/StateManager.service.js';
 // Error Types
 // ============================================================================
 
+/** Identifies a session operation that cannot complete with the current store state. */
 export class SessionError extends Data.TaggedError('SessionError')<{
   readonly sessionId?: string;
   readonly operation: string;
   readonly cause?: unknown;
 }> {
+  /** Produces the stable human-readable error text from the stored operation and session id. */
   get message(): string {
     return `Session operation '${this.operation}' failed${
       this.sessionId ? ` for session ${this.sessionId}` : ''
     }`;
   }
 
+  /** Creates the load failure used when the requested id is absent from memory. */
   static notFound(id: string): SessionError {
     return new SessionError({
       sessionId: id,
@@ -30,6 +33,7 @@ export class SessionError extends Data.TaggedError('SessionError')<{
     });
   }
 
+  /** Creates the load failure used when the stored expiration time has passed. */
   static expired(id: string): SessionError {
     return new SessionError({
       sessionId: id,
@@ -38,6 +42,7 @@ export class SessionError extends Data.TaggedError('SessionError')<{
     });
   }
 
+  /** Creates the failure used by operations that require a selected session. */
   static noActive(): SessionError {
     return new SessionError({
       operation: 'access',
@@ -45,6 +50,7 @@ export class SessionError extends Data.TaggedError('SessionError')<{
     });
   }
 
+  /** Wraps invalid serialized session data at the import or export boundary. */
   static parseError(cause: unknown): SessionError {
     return new SessionError({
       operation: 'import',
@@ -52,6 +58,7 @@ export class SessionError extends Data.TaggedError('SessionError')<{
     });
   }
 
+  /** Wraps data that passed JSON decoding but cannot become a live session. */
   static reconstructError(cause: unknown): SessionError {
     return new SessionError({
       operation: 'import',
@@ -59,6 +66,7 @@ export class SessionError extends Data.TaggedError('SessionError')<{
     });
   }
 
+  /** Creates the export failure used when no session is selected. */
   static exportError(): SessionError {
     return new SessionError({
       operation: 'export',
@@ -71,8 +79,10 @@ export class SessionError extends Data.TaggedError('SessionError')<{
 // Schema Definitions
 // ============================================================================
 
+/** Validates the JSON-safe `[token type, token value]` representation. */
 const TokenEntrySchema = Schema.Tuple([Schema.String, Schema.String]);
 
+/** Validates the persisted session shape before reconstruction. */
 const SerializedSessionSchema = Schema.Struct({
   id: Schema.String,
   cookies: Schema.String,
@@ -83,9 +93,10 @@ const SerializedSessionSchema = Schema.Struct({
   expiresAt: Schema.OptionFromOptional(Schema.String)
 });
 
+/** JSON-safe session form used only at the persistence boundary. */
 type SerializedSession = typeof SerializedSessionSchema.Type;
 
-// Type guard for TokenType
+/** Lists runtime token discriminators because persisted JSON loses the enum type. */
 const tokenTypeValues: ReadonlyArray<string> = [
   TokenType.CSRF,
   TokenType.API,
@@ -93,11 +104,12 @@ const tokenTypeValues: ReadonlyArray<string> = [
   TokenType.REFRESH
 ];
 
+/** Narrows a persisted string to a token type that the state manager accepts. */
 const isTokenType = (value: string): value is TokenType => {
   return tokenTypeValues.includes(value);
 };
 
-// Type guard for token tuple
+/** Rejects persisted token pairs whose discriminator is no longer supported. */
 const isValidTokenTuple = (
   entry: readonly [string, string]
 ): entry is readonly [TokenType, string] => {
@@ -108,22 +120,40 @@ const isValidTokenTuple = (
 // Session Types
 // ============================================================================
 
+/** Mutable crawl-session state held in the in-memory store. */
 export interface Session {
+  /** Store key and stable identifier used by callers to reload the session. */
   id: string;
+  /** Serialized tough-cookie jar for restoring the request context. */
   cookies: string;
+  /** Authentication and anti-forgery tokens indexed by their purpose. */
   tokens: HashMap.HashMap<TokenType, string>;
+  /** Caller-owned metadata preserved when session data is updated. */
   userData: Option.Option<Record<string, unknown>>;
+  /** UTC time when this session first entered the store. */
   createdAt: DateTime.Utc;
+  /** UTC time of the most recent read or write through this service. */
   lastUsedAt: DateTime.Utc;
+  /** UTC expiry, or none when the session does not expire automatically. */
   expiresAt: Option.Option<DateTime.Utc>;
 }
 
+/** Credentials supplied by an authentication workflow before a session exists. */
 export interface Credentials {
+  /** Account identifier accepted by the target authentication endpoint. */
   username: string;
+  /** Secret used by the target authentication endpoint. */
   password: string;
+  /** Target-specific fields that do not fit the username/password pair. */
   additionalFields: Record<string, unknown>;
 }
 
+/**
+ * In-memory session API that keeps cookies and session metadata synchronized.
+ *
+ * A service instance owns its session map. Provide a fresh layer when tests or
+ * concurrent crawls require isolated session state.
+ */
 export interface SessionStoreService {
   /**
    * Create a new session
@@ -173,6 +203,7 @@ export interface SessionStoreService {
   importSession: (_data: string) => Effect.Effect<void, SessionError>;
 }
 
+/** Effect service key for the current crawl-session store. */
 export class SessionStore extends Context.Service<
   SessionStore,
   SessionStoreService

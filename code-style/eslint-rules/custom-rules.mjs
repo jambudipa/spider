@@ -68,6 +68,7 @@ export const noUnnecessarySchemaAlias = {
 };
 
 // Database access boundary rule
+/** Keeps database pool details inside repository and database service boundaries. */
 export const noDatabaseAccess = {
   meta: {
     type: 'problem',
@@ -158,6 +159,7 @@ export const noDatabaseAccess = {
 };
 
 // Direct fetch rule for UI app
+/** Keeps UI requests on the configured Effect HTTP API client instead of bare fetch. */
 export const noDirectFetch = {
   meta: {
     type: 'problem',
@@ -205,6 +207,7 @@ export const noDirectFetch = {
 };
 
 // Type assertion rule
+/** Reports unsafe TypeScript assertions while preserving the documented XState inference escape hatch. */
 export const noTypeAssertion = {
   meta: {
     type: 'problem',

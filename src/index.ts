@@ -167,7 +167,7 @@ export type {
 //
 // 1. Logs (debug/info/warn/error messages with structured annotations):
 //    flow through Effect's standard `Logger` system. Override with
-//    `Logger.replace(Logger.defaultLogger, myLogger)`.
+//    a custom `Logger.layer`.
 //
 // 2. Domain events (`PageScraped`, `DomainComplete`, etc.): emitted to a
 //    `SpiderEventSink` service. Override by providing a `Layer.succeed`

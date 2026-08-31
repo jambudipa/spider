@@ -11,6 +11,7 @@ const FUNCTION_NODE_TYPES = new Set([
   'FunctionExpression',
 ]);
 
+/** Stops function-owner searches at syntax nodes that start a separate executable scope. */
 const FUNCTION_OWNER_BARRIERS = new Set([
   'ClassDeclaration',
   'ClassExpression',
@@ -18,9 +19,11 @@ const FUNCTION_OWNER_BARRIERS = new Set([
   'StaticBlock',
 ]);
 
+/** Reads source text through either ESLint context API that supported project versions expose. */
 const getSourceCode = (context) =>
   context.sourceCode ?? context.getSourceCode();
 
+/** Finds the enclosing function without crossing a class or property ownership boundary. */
 const findNearestFunctionOwner = (node) => {
   let current = node.parent;
   while (current) {
@@ -82,6 +85,7 @@ const isUntypedJsonStringSchema = (node) => {
   );
 };
 
+/** Resolves a name through lexical scopes so rules can distinguish globals from local bindings. */
 const findVariable = (sourceCode, node, name) => {
   let scope = sourceCode.getScope(node);
   while (scope) {
@@ -95,11 +99,13 @@ const findVariable = (sourceCode, node, name) => {
   return null;
 };
 
+/** Confirms that a reference uses the host global rather than a caller-defined variable. */
 const isUnshadowedGlobal = (sourceCode, node, name) => {
   const variable = findVariable(sourceCode, node, name);
   return variable === null || variable.defs.length === 0;
 };
 
+/** Returns an imported member name across identifier and string-literal import syntax. */
 const importedName = (specifier) => {
   if (specifier.type !== 'ImportSpecifier') {
     return null;
@@ -109,6 +115,7 @@ const importedName = (specifier) => {
     : specifier.imported.value;
 };
 
+/** Determines whether an Effect import is available, missing, or unsafe to introduce automatically. */
 const effectImportState = (sourceCode, node, name) => {
   const effectImports = sourceCode.ast.body.filter(
     (statement) =>
@@ -144,6 +151,7 @@ const effectImportState = (sourceCode, node, name) => {
   return 'missing';
 };
 
+/** Finds a safe insertion point for a named Effect import without moving user comments. */
 const importInsertion = (sourceCode, name) => {
   if (sourceCode.ast.sourceType !== 'module') {
     return null;
@@ -178,6 +186,7 @@ const importInsertion = (sourceCode, name) => {
   return { anchor, placement: 'before', text: `${text}\n` };
 };
 
+/** Builds a suggestion that adds an Effect import only when no local binding conflicts with it. */
 const withNamedEffectImport = (context, node, name, makeLocalFixes) => {
   const sourceCode = getSourceCode(context);
   const state = effectImportState(sourceCode, node, name);
@@ -208,9 +217,11 @@ const withNamedEffectImport = (context, node, name, makeLocalFixes) => {
   };
 };
 
+/** Checks that a node can refer to the canonical named Effect import without an alias. */
 const hasCanonicalEffectImport = (context, node, name) =>
   effectImportState(getSourceCode(context), node, name) === 'available';
 
+/** Recognises the generator callback that belongs directly to `Effect.gen`. */
 const isDirectEffectGenCallback = (context, functionNode) => {
   const call = functionNode?.parent;
   return Boolean(
@@ -229,9 +240,11 @@ const isDirectEffectGenCallback = (context, functionNode) => {
   );
 };
 
+/** Detects work inside a direct `Effect.gen` callback for context-sensitive rule exceptions. */
 const isInsideDirectEffectGen = (context, node) =>
   isDirectEffectGenCallback(context, findNearestFunctionOwner(node));
 
+/** Identifies expressions that return an Effect value directly instead of deferring its execution. */
 const isDirectValuePosition = (node) => {
   const parent = node.parent;
   if (!parent) {
@@ -261,6 +274,7 @@ const isDirectValuePosition = (node) => {
   }
 };
 
+/** Extracts static member names from dot notation and string-literal bracket notation. */
 const staticPropertyName = (member) => {
   if (!member.computed && member.property.type === 'Identifier') {
     return member.property.name;
@@ -276,6 +290,7 @@ const staticPropertyName = (member) => {
 };
 
 
+/** Preserves user intent by detecting comments inside a candidate automatic-fix range. */
 const rangeContainsComment = (sourceCode, start, end) =>
   sourceCode
     .getAllComments()
@@ -283,6 +298,7 @@ const rangeContainsComment = (sourceCode, start, end) =>
 
 
 // Pattern #1: Asynchronous Computations (async/await -> Effect.gen)
+/** Reports native async and await syntax so Effect programs keep their error and dependency types. */
 export const noAsyncAwaitUseEffect = {
   meta: {
     type: 'problem',
@@ -337,6 +353,7 @@ export const noAsyncAwaitUseEffect = {
 };
 
 // Pattern #1: Promise constructor
+/** Reports Promise construction and static Promise helpers in code that should compose Effects. */
 export const noPromiseConstructor = {
   meta: {
     type: 'problem',
@@ -388,6 +405,7 @@ export const noPromiseConstructor = {
 };
 
 // Pattern #1/#4: Promise.resolve/reject
+/** Replaces simple Promise resolution with typed Effect success or failure values where safe. */
 export const noPromiseResolveReject = {
   meta: {
     type: 'problem',
@@ -461,6 +479,7 @@ export const noPromiseResolveReject = {
 };
 
 // Pattern #15: Concurrency - .then()/.catch() chains
+/** Reports likely Promise chains so callers use Effect composition and structured cleanup instead. */
 export const noPromiseThenCatch = {
   meta: {
     type: 'problem',
@@ -539,6 +558,7 @@ export const noPromiseThenCatch = {
 };
 
 // Pattern #2: Optional Values (null -> Option)
+/** Reports `null` values so absence stays explicit in the Effect data model. */
 export const noNullUseOption = {
   meta: {
     type: 'suggestion',
@@ -583,6 +603,7 @@ export const noNullUseOption = {
 };
 
 // Pattern #2: Optional Values (undefined -> Option)
+/** Reports explicit `undefined` values where an `Option` communicates absence to Effect consumers. */
 export const noUndefinedUseOption = {
   meta: {
     type: 'suggestion',
@@ -637,6 +658,7 @@ export const noUndefinedUseOption = {
 };
 
 // Pattern #4: Typed Error Handling (throw -> Effect.fail)
+/** Reports throws so recoverable failures remain in the Effect error channel. */
 export const noThrowUseEffect = {
   meta: {
     type: 'problem',
@@ -696,6 +718,7 @@ export const noThrowUseEffect = {
 };
 
 // Pattern #4: try/catch -> Effect error handling
+/** Reports native try/catch blocks that bypass Effect's typed failure handling. */
 export const noTryCatchUseEffect = {
   meta: {
     type: 'problem',
@@ -723,6 +746,7 @@ export const noTryCatchUseEffect = {
 };
 
 // Pattern #4/#5: Error constructor -> Data.TaggedError
+/** Reports generic Errors in recoverable paths so callers can handle tagged failures precisely. */
 export const noErrorConstructorUseData = {
   meta: {
     type: 'problem',
@@ -760,6 +784,7 @@ export const noErrorConstructorUseData = {
 };
 
 // Pattern #8: Date and Time (new Date -> DateTime)
+/** Reports mutable wall-clock Date construction in Effect code. */
 export const noNewDateUseDateTime = {
   meta: {
     type: 'problem',
@@ -809,6 +834,7 @@ export const noNewDateUseDateTime = {
 };
 
 // Pattern #8: Date static methods -> DateTime
+/** Reports Date static calls so time handling stays on the Effect DateTime APIs. */
 export const noDateStaticUseDateTime = {
   meta: {
     type: 'problem',
@@ -874,6 +900,7 @@ export const noDateStaticUseDateTime = {
 };
 
 // Pattern #10: Immutable Collections (Array mutations -> Chunk)
+/** Reports mutable array operations that weaken persistent Effect collection semantics. */
 export const noArrayMutationUseChunk = {
   meta: {
     type: 'suggestion',
@@ -917,6 +944,7 @@ export const noArrayMutationUseChunk = {
 };
 
 // Pattern #11: Sets (Set -> HashSet)
+/** Reports native Sets where Effect HashSet operations provide immutable value semantics. */
 export const noSetUseHashSet = {
   meta: {
     type: 'suggestion',
@@ -968,6 +996,7 @@ export const noSetUseHashSet = {
 };
 
 // Pattern #11: Maps (Map -> HashMap)
+/** Reports native Maps where Effect HashMap operations provide immutable value semantics. */
 export const noMapUseHashMap = {
   meta: {
     type: 'suggestion',
@@ -1019,6 +1048,7 @@ export const noMapUseHashMap = {
 };
 
 // Pattern #12: Schema-driven parsing (JSON.parse -> Schema)
+/** Reports unvalidated JSON parsing so untrusted data enters through a Schema boundary. */
 export const noJsonParseUseSchema = {
   meta: {
     type: 'problem',
@@ -1050,6 +1080,7 @@ export const noJsonParseUseSchema = {
 };
 
 // Pattern #12: JSON.stringify -> Schema.encode
+/** Reports ad-hoc JSON serialization where the schema should define the data contract. */
 export const noJsonStringifyUseSchema = {
   meta: {
     type: 'suggestion',
@@ -1081,6 +1112,7 @@ export const noJsonStringifyUseSchema = {
 };
 
 // Pattern #12: Data Module (_tag -> Data.TaggedError)
+/** Reports hand-written error tags that lack Data.TaggedError's consistent error semantics. */
 export const noManualTag = {
   meta: {
     type: 'problem',
@@ -1126,6 +1158,7 @@ export const noManualTag = {
 };
 
 // Pattern #15: Testability (Math.random -> Random service)
+/** Reports non-deterministic host randomness so Effect programs can use an injectable Random service. */
 export const noMathRandomUseRandom = {
   meta: {
     type: 'problem',
@@ -1182,6 +1215,7 @@ export const noMathRandomUseRandom = {
 };
 
 // Pattern #17: Logging (console -> Effect.log)
+/** Reports console logging so logs travel through the Effect runtime and its configured sinks. */
 export const noConsoleUseEffect = {
   meta: {
     type: 'problem',
@@ -1261,6 +1295,7 @@ export const noConsoleUseEffect = {
 };
 
 // Pattern #18: Configuration (process.env -> Config)
+/** Reports direct environment reads so configuration stays validated and layer-provided. */
 export const noProcessEnvUseConfig = {
   meta: {
     type: 'problem',
@@ -1321,6 +1356,7 @@ export const noProcessEnvUseConfig = {
 };
 
 // Pattern #20: Schema Libraries (Zod -> Effect Schema)
+/** Reports Zod imports so runtime validation uses the repository's Effect Schema standard. */
 export const noZodUseSchema = {
   meta: {
     type: 'problem',
@@ -1364,6 +1400,7 @@ export const noZodUseSchema = {
 };
 
 // Pattern #20: Schema Libraries (Yup -> Effect Schema)
+/** Reports Yup imports so runtime validation uses the repository's Effect Schema standard. */
 export const noYupUseSchema = {
   meta: {
     type: 'problem',
@@ -1411,6 +1448,7 @@ export const noYupUseSchema = {
 // =============================================================================
 
 // Pattern #23: File System (fs -> Effect FileSystem)
+/** Reports Node file-system imports so resource operations use Effect FileSystem services. */
 export const noFsUseEffectFs = {
   meta: {
     type: 'problem',
@@ -1451,6 +1489,7 @@ export const noFsUseEffectFs = {
 };
 
 // Pattern #24: HTTP Client (axios -> Effect HttpClient)
+/** Reports Axios imports so HTTP concerns stay inside the Effect HttpClient abstraction. */
 export const noAxiosUseHttpClient = {
   meta: {
     type: 'problem',
@@ -1477,6 +1516,7 @@ export const noAxiosUseHttpClient = {
 };
 
 // Pattern #25: HTTP Client (node-fetch -> Effect HttpClient)
+/** Reports node-fetch imports so HTTP concerns stay inside the Effect HttpClient abstraction. */
 export const noNodeFetchUseHttpClient = {
   meta: {
     type: 'problem',
@@ -1503,6 +1543,7 @@ export const noNodeFetchUseHttpClient = {
 };
 
 // Pattern #26: Date/Time Libraries (moment/dayjs -> DateTime)
+/** Reports Moment imports so time calculations use the Effect DateTime APIs. */
 export const noMomentUseDatetime = {
   meta: {
     type: 'problem',
@@ -1542,6 +1583,7 @@ export const noMomentUseDatetime = {
 };
 
 // Pattern #27: Debounce/Throttle (lodash -> Schedule)
+/** Reports lodash debounce so timing policies use Effect Schedule and remain testable. */
 export const noLodashDebounceUseSchedule = {
   meta: {
     type: 'problem',
@@ -1577,6 +1619,7 @@ export const noLodashDebounceUseSchedule = {
 };
 
 // Pattern #28: Event Emitter (EventEmitter -> PubSub)
+/** Reports EventEmitter imports so event lifecycles use Effect PubSub and Scope management. */
 export const noEventEmitterUsePubSub = {
   meta: {
     type: 'problem',
@@ -1608,6 +1651,7 @@ export const noEventEmitterUsePubSub = {
 };
 
 // Pattern #29: RxJS (rxjs -> Stream)
+/** Reports RxJS imports so stream composition uses the Effect Stream model. */
 export const noRxjsUseStream = {
   meta: {
     type: 'problem',
@@ -1634,6 +1678,7 @@ export const noRxjsUseStream = {
 };
 
 // Pattern #30: Crypto Random (crypto.randomBytes -> Random service)
+/** Reports direct crypto randomness where an Effect Random dependency is expected. */
 export const noCryptoRandomUseRandom = {
   meta: {
     type: 'problem',
@@ -1667,6 +1712,7 @@ export const noCryptoRandomUseRandom = {
 };
 
 // Pattern #31: Ajv (ajv -> Schema)
+/** Reports Ajv imports so runtime validation uses the repository's Effect Schema standard. */
 export const noAjvUseSchema = {
   meta: {
     type: 'problem',
@@ -1693,6 +1739,7 @@ export const noAjvUseSchema = {
 };
 
 // Pattern #32: Joi (joi -> Schema)
+/** Reports Joi imports so runtime validation uses the repository's Effect Schema standard. */
 export const noJoiUseSchema = {
   meta: {
     type: 'problem',
@@ -1719,6 +1766,7 @@ export const noJoiUseSchema = {
 };
 
 // Pattern #33: class-validator (class-validator -> Schema)
+/** Reports class-validator imports so runtime validation uses the repository's Effect Schema standard. */
 export const noClassValidatorUseSchema = {
   meta: {
     type: 'problem',
@@ -1745,6 +1793,7 @@ export const noClassValidatorUseSchema = {
 };
 
 // Pattern #34: io-ts (io-ts -> Schema)
+/** Reports io-ts imports so runtime validation uses the repository's Effect Schema standard. */
 export const noIoTsUseSchema = {
   meta: {
     type: 'problem',
@@ -1771,6 +1820,7 @@ export const noIoTsUseSchema = {
 };
 
 // Pattern #35: superstruct (superstruct -> Schema)
+/** Reports Superstruct imports so runtime validation uses the repository's Effect Schema standard. */
 export const noSuperstructUseSchema = {
   meta: {
     type: 'problem',
@@ -1801,6 +1851,7 @@ export const noSuperstructUseSchema = {
 // =============================================================================
 
 // Pattern #36: Config.redacted for secrets
+/** Reports plain secret fields so logs and errors cannot accidentally expose sensitive values. */
 export const preferRedactedForSecrets = {
   meta: {
     type: 'problem',
@@ -1864,6 +1915,7 @@ export const preferRedactedForSecrets = {
 };
 
 // Pattern #37: Duration over raw milliseconds
+/** Suggests unit-bearing duration literals so timeout values retain their intended unit. */
 export const preferDurationLiterals = {
   meta: {
     type: 'suggestion',
@@ -1975,6 +2027,7 @@ export const preferDurationLiterals = {
 };
 
 // Pattern #38: Prefer pipe method
+/** Reports standalone `pipe` calls so transformation ownership stays visible on the input value. */
 export const preferPipeMethod = {
   meta: {
     type: 'suggestion',
@@ -2046,6 +2099,7 @@ export const preferPipeMethod = {
 };
 
 // Pattern #39: No andThen with async function
+/** Reports async `andThen` callbacks that hide Promise failures from the Effect error type. */
 export const noAndThenWithAsync = {
   meta: {
     type: 'problem',
@@ -2106,8 +2160,10 @@ export const noAndThenWithAsync = {
 // callback must syntactically involve Request machinery. Where no `Request` is
 // mapped, `{ batching: true }` buys nothing and costs a deadlock, and the rule
 // stays silent rather than demanding it.
+/** Identifies request code where batching provides a real benefit instead of only extra failure risk. */
 const REQUEST_MACHINERY = /\bRequestResolver\b|\bEffect\s*\.\s*request\b|\bRequest\s*\.\s*(?:of|tagged|Class)\b/;
 
+/** Suggests batching only where a mapped request can benefit without a broad false-positive rule. */
 export const suggestBatchingOption = {
   meta: {
     type: 'suggestion',
@@ -2183,6 +2239,7 @@ export const suggestBatchingOption = {
 };
 
 // Pattern #41: No Effect.provide in loops
+/** Reports repeated layer provision in loops, which defeats shared setup and can hide resource churn. */
 export const noProvideInLoop = {
   meta: {
     type: 'problem',
@@ -2231,6 +2288,7 @@ export const noProvideInLoop = {
 };
 
 // Pattern #42: Prefer Effect.gen over long chains
+/** Reports long method chains that become clearer and safer as sequential `Effect.gen` code. */
 export const preferGenOverLongChains = {
   meta: {
     type: 'suggestion',
@@ -2281,6 +2339,7 @@ export const preferGenOverLongChains = {
 };
 
 // Pattern #43: No class extends Error
+/** Reports Error subclasses so expected failures have stable tags and typed payloads. */
 export const noClassExtendsError = {
   meta: {
     type: 'problem',
@@ -2330,6 +2389,7 @@ export const noClassExtendsError = {
 };
 
 // Pattern #44: No interface with _tag property
+/** Reports interfaces that hand-roll tags instead of using Effect's tagged data constructors. */
 export const noInterfaceWithTag = {
   meta: {
     type: 'problem',
@@ -2387,6 +2447,7 @@ export const noInterfaceWithTag = {
 // =============================================================================
 
 // Pattern #45: Prefer Context.Service over the retired v3 service constructors
+/** Reports legacy Context service declarations so services use the current Effect constructor. */
 export const preferContextService = {
   meta: {
     type: 'problem',
@@ -2435,6 +2496,7 @@ export const preferContextService = {
 };
 
 // Pattern #46: Require a service identifier
+/** Requires a stable service identifier so diagnostics and dependency graphs remain understandable. */
 export const requireServiceIdentifier = {
   meta: {
     type: 'problem',
@@ -2501,6 +2563,7 @@ export const requireServiceIdentifier = {
 };
 
 // Pattern #47: Suggest ManagedRuntime
+/** Suggests ManagedRuntime at application boundaries that otherwise assemble layers for every run. */
 export const suggestManagedRuntime = {
   meta: {
     type: 'suggestion',
@@ -2550,6 +2613,7 @@ export const suggestManagedRuntime = {
 };
 
 // Pattern #48: No Layer with duplicate service
+/** Reports duplicate service providers in a composed layer because their selection is ambiguous. */
 export const noLayerDuplicateService = {
   meta: {
     type: 'problem',
@@ -2664,6 +2728,7 @@ export const noLayerDuplicateService = {
 // =============================================================================
 
 // Pattern #49: Prefer Schema annotations
+/** Suggests Schema annotations so generated schemas retain useful names and documentation. */
 export const preferSchemaAnnotations = {
   meta: {
     type: 'suggestion',
@@ -2731,6 +2796,7 @@ export const preferSchemaAnnotations = {
 };
 
 // Pattern #50: No Schema.Any or Schema.Unknown in production
+/** Reports unconstrained schemas where a concrete decoded data contract is required. */
 export const noSchemaAnyUnknown = {
   meta: {
     type: 'problem',
@@ -2772,6 +2838,7 @@ export const noSchemaAnyUnknown = {
 };
 
 // Pattern #51: Prefer branded types for IDs
+/** Suggests branded schemas when identifiers need compile-time separation from plain strings. */
 export const preferSchemaBrand = {
   meta: {
     type: 'suggestion',
@@ -2862,6 +2929,7 @@ export const preferSchemaBrand = {
 };
 
 // Pattern #21: Effect Boundary Control (Effect.runSync -> proper boundaries)
+/** Reports synchronous Effect execution outside a proven application or framework boundary. */
 export const noEffectRunSyncUnguarded = {
   meta: {
     type: 'problem',
@@ -2918,6 +2986,7 @@ export const noEffectRunSyncUnguarded = {
 // See AGENTS.md §"What this bundle does not cover, on purpose".
 
 // Pattern #19: Scheduling (setTimeout -> Effect.sleep/Schedule)
+/** Reports host timers so delay and retry policy remain cancellable and testable in Effect. */
 export const noSetTimeoutUseSchedule = {
   meta: {
     type: 'problem',
@@ -2967,6 +3036,7 @@ export const noSetTimeoutUseSchedule = {
 };
 
 // Pattern #52: No String(err) in Effect.catch — loses real error messages
+/** Reports string failures in catch handlers so error channels preserve structured diagnostic context. */
 export const noStringErrorInCatchAll = {
   meta: {
     type: 'problem',

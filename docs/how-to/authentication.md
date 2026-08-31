@@ -7,9 +7,17 @@ This guide shows you how to scrape websites that require authentication using va
 Most websites use session cookies after login. Here's how to handle cookie-based authentication:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  CookieManager,
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
 const cookieAuthProgram = Effect.gen(function* () {
@@ -72,11 +80,17 @@ const config = makeSpiderConfig({
 // Run the cookie authentication program
 Effect.runPromise(
   cookieAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(CookieManager.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n📊 Successfully crawled ${results.length} protected pages`);
@@ -90,9 +104,16 @@ Effect.runPromise(
 For APIs or sites using token-based auth:
 
 ```typescript
-import { Effect, Sink, Ref } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient } from '@jambudipa/spider';
+import { Effect, Layer, Ref, Sink } from 'effect';
+import {
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 
 // Token authentication service
 const makeTokenAuthService = Effect.gen(function* () {
@@ -200,10 +221,17 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   tokenAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((result) => {
   console.log('\n📊 Token authentication completed successfully');
@@ -219,9 +247,17 @@ Effect.runPromise(
 For complex authentication flows, use session persistence:
 
 ```typescript
-import { Effect, Sink, Ref } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
+import { Effect, Layer, Ref, Sink } from 'effect';
+import {
+  CookieManager,
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 import * as fs from 'fs/promises';
 
 // Session management with persistent storage
@@ -373,11 +409,17 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   sessionAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(CookieManager.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n📊 Session-based authentication completed: ${results.length} pages crawled`);
@@ -391,9 +433,16 @@ Effect.runPromise(
 Handle complex forms with CSRF tokens and hidden fields:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
 const formAuthProgram = Effect.gen(function* () {
@@ -474,11 +523,17 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   formAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(CookieManager.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((results) => {
   console.log(`\n📊 Form authentication completed: ${results.length} pages accessed`);
@@ -492,9 +547,16 @@ Effect.runPromise(
 For OAuth-protected resources:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 
 const oauthAuthProgram = Effect.gen(function* () {
   const httpClient = yield* EnhancedHttpClient;
@@ -598,10 +660,17 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   oauthAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((result) => {
   console.log('\n📊 OAuth Authentication Results:');
@@ -627,9 +696,16 @@ Effect.runPromise(
 For complex authentication flows with multiple steps:
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient, CookieManager } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+  makeSpiderConfig,
+} from '@jambudipa/spider';
 import * as cheerio from 'cheerio';
 
 const multiStepAuthProgram = Effect.gen(function* () {
@@ -724,11 +800,17 @@ const config = makeSpiderConfig({
 
 Effect.runPromise(
   multiStepAuthProgram.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(CookieManager.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      Layer.mergeAll(SpiderService.layer, EnhancedHttpClientLive).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            SpiderConfig.layerWith(config),
+            CookieManagerLive,
+            SpiderEventSinkNoop
+          )
+        )
+      )
+    )
   )
 ).then((result) => {
   console.log('\n📊 Multi-Step Authentication Summary:');
@@ -759,9 +841,13 @@ Effect.runPromise(
 Implement robust error handling for authentication:
 
 ```typescript
-import { Effect, Schedule, Duration } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
-import { EnhancedHttpClient, NetworkError } from '@jambudipa/spider';
+import { Duration, Effect, Layer, Schedule } from 'effect';
+import {
+  CookieManagerLive,
+  EnhancedHttpClient,
+  EnhancedHttpClientLive,
+  NetworkError,
+} from '@jambudipa/spider';
 
 const robustAuthProgram = Effect.gen(function* () {
   const httpClient = yield* EnhancedHttpClient;
@@ -789,7 +875,7 @@ const robustAuthProgram = Effect.gen(function* () {
   // Create retry schedule with exponential backoff
   const retrySchedule = Schedule.exponential(Duration.seconds(2), 2).pipe(
     Schedule.compose(Schedule.recurs(3)), // Max 3 retries
-    Schedule.tapInput((error) =>
+    Schedule.tap(({ input: error }) =>
       Effect.sync(() => {
         console.log(`🔄 Retry attempt due to: ${error.message}`);
       })
@@ -843,18 +929,11 @@ const robustAuthProgram = Effect.gen(function* () {
   return loginResult;
 });
 
-// Configuration with error handling settings
-const config = makeSpiderConfig({
-  userAgent: 'Robust Auth Spider 1.0',
-  requestDelayMs: 1000,
-  // Add timeout and retry settings if available in your config
-});
-
 Effect.runPromise(
   robustAuthProgram.pipe(
-    Effect.provide(EnhancedHttpClient.Live),
-    Effect.provide(SpiderConfig.Live(config)),
-    Effect.provide()
+    Effect.provide(
+      EnhancedHttpClientLive.pipe(Layer.provide(CookieManagerLive))
+    )
   )
 ).then((result) => {
   console.log('\n🎯 Robust authentication completed successfully');

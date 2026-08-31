@@ -178,6 +178,11 @@ class CrawlResultError extends Data.TaggedClass('error')<{
  */
 type CrawlResult = CrawlResultOk | CrawlResultError;
 
+/**
+ * Type guards for the two crawl-result variants.
+ *
+ * Narrow a result with these guards before reading `pageData` or `error`.
+ */
 const CrawlResult = {
   isOk: (result: CrawlResult): result is CrawlResultOk => result._tag === 'ok',
   isError: (result: CrawlResult): result is CrawlResultError =>
@@ -229,11 +234,20 @@ const CrawlResult = {
  * @public
  */
 export interface StartUrlEntry {
+  /** Primary URL to probe and crawl for this entry. */
   readonly url: string;
+  /** Ordered alternatives used when the primary URL cannot be reached. */
   readonly fallbackUrls?: ReadonlyArray<string>;
+  /** Caller-owned context that travels with crawl events for this entry. */
   readonly metadata?: Record<string, unknown>;
 }
 
+/**
+ * Optional extraction behavior applied while the spider processes a page.
+ *
+ * Enable enhanced extraction only when the caller needs extracted link or
+ * field data in addition to the crawler's normal URL discovery.
+ */
 export interface SpiderLinkExtractionOptions {
   /** Configuration for the LinkExtractorService */
   readonly linkExtractorConfig?: LinkExtractorConfig;
@@ -261,6 +275,12 @@ export interface SpiderLinkExtractionOptions {
   readonly externalStopSignal?: Deferred.Deferred<void>;
 }
 
+/**
+ * Builds a spider implementation that captures one resolved configuration.
+ *
+ * Construction acquires the supporting crawler services once. Public crawl
+ * methods then avoid leaking `SpiderConfig` as a runtime requirement.
+ */
 const makeSpiderService = (config: SpiderConfigService) =>
   Effect.gen(function* () {
       const robots = yield* RobotsService;
@@ -2652,6 +2672,12 @@ export class SpiderService extends Context.Service<SpiderService>()(
     make: makeSpiderService(makeSpiderConfig({})),
   }
 ) {
+  /**
+   * Constructs a spider service from caller-provided configuration.
+   *
+   * Provide `SpiderConfig.layer` or `SpiderConfig.layerWith` below this layer.
+   * The result also requires the event-sink service selected by the caller.
+   */
   static readonly layer = Layer.effect(
     SpiderService,
     Effect.gen(function* () {

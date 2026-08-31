@@ -1,6 +1,6 @@
 {
   "name": "@jambudipa/spider",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Effect-native web crawler for TypeScript — typed results, domain events, resumable crawls, configurable retry and user-agent strategy",
   "type": "module",
   "main": "./dist/index.js",
@@ -55,7 +55,8 @@
     "ci:validate": "tsx scripts/validate-ci.ts",
     "ci:local": "npm run ci:validate",
     "clean": "npx tsx ./scripts/clean.ts",
-    "clean:verbose": "npx tsx ./scripts/clean.ts --verbose"
+    "clean:verbose": "npx tsx ./scripts/clean.ts --verbose",
+    "docs:audit": "node scripts/docs-audit.mjs"
   },
   "keywords": [
     "web-scraping",

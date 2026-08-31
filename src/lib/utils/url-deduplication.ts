@@ -58,7 +58,9 @@ export const DEFAULT_DEDUPLICATION_STRATEGY: DeduplicationStrategy = {
  * URL with metadata for crawling
  */
 export interface UrlWithMetadata {
+  /** Stores the candidate URL before normalisation. */
   url: string;
+  /** Carries caller-owned crawl data without affecting deduplication. */
   metadata?: Record<string, unknown>;
 }
 
@@ -66,9 +68,13 @@ export interface UrlWithMetadata {
  * Normalized URL result
  */
 export interface NormalizedUrl {
+  /** Stores the candidate URL before strategy rules apply. */
   original: string;
+  /** Stores the URL after the selected strategy rules apply. */
   normalized: string;
+  /** Stores the hostname used for domain-based deduplication. */
   domain: string;
+  /** Preserves crawl metadata when the caller attaches it. */
   metadata?: Record<string, unknown>;
 }
 

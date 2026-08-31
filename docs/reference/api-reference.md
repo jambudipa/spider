@@ -4,13 +4,19 @@ This reference provides complete documentation for all Effect services and inter
 
 ## Core Architecture
 
-Spider is built on [Effect](https://effect.website/) and uses service-based architecture with dependency injection. All services are implemented as `Effect.Service` classes and accessed through the Effect service pattern.
+Spider is built on [Effect](https://effect.website/) and uses service-based architecture with dependency injection. Services use `Context.Service` classes and are accessed through the Effect service pattern.
 
 ### Basic Usage Pattern
 
 ```typescript
-import { Effect, Sink } from 'effect';
-import { SpiderService, SpiderConfig, makeSpiderConfig } from '@jambudipa/spider';
+import { Effect, Layer, Sink } from 'effect';
+import {
+  CrawlResult,
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSinkNoop,
+  SpiderService,
+} from '@jambudipa/spider';
 
 // All operations are Effect programs
 const program = Effect.gen(function* () {
@@ -31,12 +37,14 @@ const program = Effect.gen(function* () {
 });
 
 // Execute the program with required services
-const result = await Effect.runPromise(
-  program.pipe(
-    Effect.provide(SpiderService.Default),
-    Effect.provide(SpiderConfig.Live(makeSpiderConfig({ maxPages: 10 })))
+const config = makeSpiderConfig({ maxPages: 10 });
+const spiderLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(SpiderConfig.layerWith(config), SpiderEventSinkNoop)
   )
 );
+
+const result = await Effect.runPromise(program.pipe(Effect.provide(spiderLayer)));
 ```
 
 ## Core Services
@@ -46,10 +54,12 @@ const result = await Effect.runPromise(
 The main service for web crawling operations.
 
 ```typescript
-export class SpiderService extends Effect.Service<SpiderService>()(
+export class SpiderService extends Context.Service<SpiderService>()(
   '@jambudipa/spider',
   { /* implementation */ }
-) {}
+) {
+  static readonly layer: Layer.Layer<SpiderService, SpiderConfig | SpiderEventSink>;
+}
 ```
 
 **Access Pattern:**
@@ -62,15 +72,20 @@ const program = Effect.gen(function* () {
 
 **Layer Composition:**
 ```typescript
-// Default layer with all dependencies
-SpiderService.Default
+// The Spider layer receives its configuration and event sink at construction.
+SpiderService.layer
 
 // Custom configuration and event sink
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(customConfig)),
-  Effect.provide(SpiderEventSinkNoop), // or a custom sink
+const spiderLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      SpiderConfig.layerWith(customConfig),
+      SpiderEventSinkNoop, // or a custom sink
+    )
+  )
 );
+
+program.pipe(Effect.provide(spiderLayer));
 ```
 
 #### Methods
@@ -235,12 +250,14 @@ const program = Effect.gen(function* () {
 Configuration service for Spider crawling behaviour.
 
 ```typescript
-export class SpiderConfig extends Effect.Service<SpiderConfigService>()(
+export class SpiderConfig extends Context.Service<SpiderConfig, SpiderConfigService>()(
   '@jambudipa/spiderConfig',
   { /* implementation */ }
 ) {
-  static Live = (config: Partial<SpiderConfigOptions> | SpiderConfigService) =>
-    Layer.effect(SpiderConfig, Effect.succeed(/* service implementation */));
+  static readonly layer: Layer.Layer<SpiderConfig>;
+  static layerWith = (
+    config: Partial<SpiderConfigOptions> | SpiderConfigService
+  ) => Layer.effect(SpiderConfig, Effect.succeed(/* service implementation */));
 }
 ```
 
@@ -265,7 +282,7 @@ const program = Effect.gen(function* () {
 });
 
 // Provide configuration layer
-Effect.provide(program, SpiderConfig.Live(config));
+program.pipe(Effect.provide(SpiderConfig.layerWith(config)));
 ```
 
 ### SpiderEventSink
@@ -273,10 +290,9 @@ Effect.provide(program, SpiderConfig.Live(config));
 Typed domain-event sink for lifecycle and progress signals. Spider has two independent observability surfaces; `SpiderEventSink` is the structured-event one.
 
 ```typescript
-class SpiderEventSink extends Context.Tag('@jambudipa/spider/SpiderEventSink')<
-  SpiderEventSink,
-  { emit: (event: SpiderEvent) => Effect.Effect<void> }
->() {}
+class SpiderEventSink extends Context.Service<SpiderEventSink, SpiderEventSinkService>()(
+  '@jambudipa/spider/SpiderEventSink'
+) {}
 
 // No-op default (discards all events)
 const SpiderEventSinkNoop: Layer.Layer<SpiderEventSink>;
@@ -285,17 +301,25 @@ const SpiderEventSinkNoop: Layer.Layer<SpiderEventSink>;
 **Providing a custom sink:**
 
 ```typescript
-import { Layer } from 'effect';
-import { SpiderEventSink } from '@jambudipa/spider';
+import { Effect, Layer } from 'effect';
+import {
+  makeSpiderConfig,
+  SpiderConfig,
+  SpiderEventSink,
+  SpiderService,
+} from '@jambudipa/spider';
 
 const AnalyticsSink = Layer.succeed(SpiderEventSink, {
   emit: (event) => Effect.sync(() => analytics.track(event._tag, event)),
 });
 
-program.pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(AnalyticsSink),
+const spiderLayer = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(SpiderConfig.layerWith(makeSpiderConfig({})), AnalyticsSink)
+  )
 );
+
+program.pipe(Effect.provide(spiderLayer));
 ```
 
 #### SpiderEvent
@@ -490,8 +514,8 @@ When `fallbackUrls` is present each candidate is HEAD-probed in order; the first
 Low-level HTTP scraping functionality.
 
 ```typescript
-export class ScraperService extends Effect.Service<ScraperService>()(
-  '@jambudipa/scraper',
+export class ScraperService extends Context.Service<ScraperService>()(
+  '@jambudipa.io/ScraperService',
   { /* implementation */ }
 ) {}
 ```
@@ -508,8 +532,8 @@ export class ScraperService extends Effect.Service<ScraperService>()(
 Handles robots.txt parsing and compliance.
 
 ```typescript
-export class RobotsService extends Effect.Service<RobotsService>()(
-  '@jambudipa/robots',
+export class RobotsService extends Context.Service<RobotsService>()(
+  '@jambudipa.io/RobotsService',
   { /* implementation */ }
 ) {}
 ```
@@ -522,8 +546,8 @@ export class RobotsService extends Effect.Service<RobotsService>()(
 Extracts and filters links from HTML content.
 
 ```typescript
-export class LinkExtractorService extends Effect.Service<LinkExtractorService>()(
-  '@jambudipa/link-extractor',
+export class LinkExtractorService extends Context.Service<LinkExtractorService>()(
+  '@jambudipa.io/LinkExtractorService',
   { /* implementation */ }
 ) {}
 ```
@@ -536,8 +560,8 @@ export class LinkExtractorService extends Effect.Service<LinkExtractorService>()
 Handles URL deduplication during crawling.
 
 ```typescript
-export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorService>()(
-  '@jambudipa/url-deduplicator',
+export class UrlDeduplicatorService extends Context.Service<UrlDeduplicatorService>()(
+  '@jambudipa.io/UrlDeduplicatorService',
   { /* implementation */ }
 ) {}
 ```
@@ -552,7 +576,7 @@ export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorServic
 Standalone worker-health tracker exported alongside the spider's inline checks. The staleness threshold defaults to `SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS` (300 s in v0.12+). Independent of `SpiderConfig` — direct consumers don't need to provide the full spider configuration layer.
 
 ```typescript
-export class WorkerHealthMonitor extends Effect.Service<WorkerHealthMonitor>()(
+export class WorkerHealthMonitor extends Context.Service<WorkerHealthMonitor>()(
   '@jambudipa.io/WorkerHealthMonitor',
   { /* implementation */ }
 ) {}
@@ -653,7 +677,13 @@ const program = Effect.gen(function* () {
   const spider = yield* SpiderService;
   // Use spider...
 }).pipe(
-  Effect.provide(SpiderService.Default) // Provides all default dependencies
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(SpiderConfig.layer, SpiderEventSinkNoop)
+      )
+    )
+  )
 );
 
 // Custom configuration
@@ -667,8 +697,13 @@ const programWithConfig = Effect.gen(function* () {
   const spider = yield* SpiderService;
   // Use spider with custom config...
 }).pipe(
-  Effect.provide(SpiderService.Default),
-  Effect.provide(SpiderConfig.Live(customConfig))
+  Effect.provide(
+    SpiderService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(SpiderConfig.layerWith(customConfig), SpiderEventSinkNoop)
+      )
+    )
+  )
 );
 ```
 
@@ -679,17 +714,15 @@ Combine multiple services and configurations:
 ```typescript
 import { Layer } from 'effect';
 
-const customLayers = Layer.mergeAll(
-  SpiderService.Default,
-  SpiderConfig.Live(customConfig),
-  BrowserEngineService.Live({ headless: true })
+const customLayers = SpiderService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(SpiderConfig.layerWith(customConfig), SpiderEventSinkNoop)
+  )
 );
 
 const program = Effect.gen(function* () {
   const spider = yield* SpiderService;
-  const browser = yield* BrowserEngineService;
-  
-  // Both services available with custom configuration
+  // Spider uses the custom configuration and the no-op event sink.
 }).pipe(
   Effect.provide(customLayers)
 );
@@ -837,17 +870,11 @@ export class NetworkError extends Data.TaggedError('NetworkError')<{
 
 // Usage with error handling
 const program = Effect.gen(function* () {
-  const httpClient = yield* EnhancedHttpClient;
-  
-  yield* httpClient.get('https://example.com').pipe(
-    Effect.catchTags({
-      NetworkError: (error) => {
-        console.error(`Network error for ${error.url}: ${error.statusCode}`);
-        return Effect.succeed(null);
-      }
-    })
-  );
-});
+const sink = Sink.forEach<CrawlResult>((result) =>
+  CrawlResult.isError(result)
+    ? Effect.logWarning(`${result.error.kind}: ${result.url}`)
+    : Effect.void
+);
 ```
 
 ### TimeoutError
@@ -926,8 +953,8 @@ export class StateError extends Data.TaggedError('StateError')<{
 Service for URL deduplication during crawling operations.
 
 ```typescript
-export class UrlDeduplicatorService extends Effect.Service<UrlDeduplicatorService>()(
-  '@jambudipa/url-deduplicator',
+export class UrlDeduplicatorService extends Context.Service<UrlDeduplicatorService>()(
+  '@jambudipa.io/UrlDeduplicatorService',
   { /* implementation */ }
 ) {}
 
@@ -953,8 +980,8 @@ const program = Effect.gen(function* () {
 Service for robots.txt parsing and compliance checking.
 
 ```typescript
-export class RobotsService extends Effect.Service<RobotsService>()(
-  '@jambudipa/robots',
+export class RobotsService extends Context.Service<RobotsService>()(
+  '@jambudipa.io/RobotsService',
   { /* implementation */ }
 ) {}
 

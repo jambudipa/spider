@@ -15,17 +15,26 @@ import {
 import { BrowserManager } from './BrowserManager';
 import { AdapterNotInitialisedError } from '../lib/errors/effect-errors.js';
 
+/** Receives each Playwright request from the adapter's current page. */
 export type RequestHandler = (request: PlaywrightRequest) => void;
+/** Receives each Playwright response from the adapter's current page. */
 export type ResponseHandler = (response: PlaywrightResponse) => void;
 
+/** Configures navigation and page-load waits that the adapter delegates to Playwright. */
 export interface WaitOptions {
+  /** Limits the wait in milliseconds when Playwright does not use its context default. */
   timeout?: number;
+  /** Selects the browser lifecycle state that completes the wait. */
   state?: 'load' | 'domcontentloaded' | 'networkidle';
 }
 
+/** Configures the bounded scroll loop used for lazy-loaded pages. */
 export interface ScrollOptions {
+  /** Pauses between scroll operations in milliseconds. */
   delay?: number;
+  /** Stops the loop after this many scroll operations, even if page height changes. */
   maxScrolls?: number;
+  /** Moves the viewport by this many CSS pixels on each loop iteration. */
   scrollDistance?: number;
 }
 
@@ -36,6 +45,7 @@ export class PageClosedError extends Data.TaggedError('PageClosedError')<{
   readonly operation: string;
   readonly message: string;
 }> {
+  /** Creates a stable error that identifies the interrupted page operation. */
   static create(operation: string): PageClosedError {
     return new PageClosedError({
       operation,
@@ -51,6 +61,7 @@ export class StreamReadError extends Data.TaggedError('StreamReadError')<{
   readonly cause: unknown;
   readonly message: string;
 }> {
+  /** Preserves the read failure so callers can distinguish stream errors from page errors. */
   static fromCause(cause: unknown): StreamReadError {
     return new StreamReadError({
       cause,
@@ -59,13 +70,24 @@ export class StreamReadError extends Data.TaggedError('StreamReadError')<{
   }
 }
 
+/**
+ * Adapts one named BrowserManager context to Effect-based Playwright page operations.
+ *
+ * Initialise the adapter before a page operation, and retain it for one page lifecycle.
+ */
 export class PlaywrightAdapter {
+  /** Creates pages and contexts for this adapter. */
   private browserManager: BrowserManager;
+  /** Holds the page only after {@link initialise} creates it. */
   private page: Option.Option<Page> = Option.none();
+  /** Names the BrowserManager context that owns this adapter's page. */
   private contextId: string;
+  /** Stores request listeners until the page forwards requests to them. */
   private requestHandlers: Chunk.Chunk<RequestHandler> = Chunk.empty();
+  /** Stores response listeners until the page forwards responses to them. */
   private responseHandlers: Chunk.Chunk<ResponseHandler> = Chunk.empty();
 
+  /** Binds the adapter to one manager context without creating the page yet. */
   constructor(browserManager: BrowserManager, contextId: string) {
     this.browserManager = browserManager;
     this.contextId = contextId;

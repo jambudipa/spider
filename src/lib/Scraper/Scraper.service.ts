@@ -38,9 +38,22 @@ import { defaultUndiciAdapter } from '../HttpAdapter/defaultUndiciAdapter.js';
  * @internal
  */
 export const ADAPTER_DNS_SENTINEL = '[adapter-kind:dns:ENOTFOUND]';
+
+/**
+ * Marks a custom adapter connection refusal without matching an arbitrary
+ * caller error message that contains the native error code.
+ *
+ * @internal
+ */
 export const ADAPTER_CONN_REFUSED_SENTINEL =
   '[adapter-kind:connection_refused:ECONNREFUSED]';
 
+/**
+ * Supplies a representative HTTP status when an adapter identifies a failure
+ * family but does not return the actual status.
+ *
+ * @internal
+ */
 const inferStatusCode = (
   kind: HttpAdapterError['kind'],
   provided: number | undefined
@@ -52,6 +65,12 @@ const inferStatusCode = (
   return undefined;
 };
 
+/**
+ * Preserves the Spider error contract when an HTTP adapter reports its
+ * structured failure instead of throwing a native fetch error.
+ *
+ * @internal
+ */
 const adapterErrorToTypedError = (
   url: string,
   durationMs: number,
@@ -305,5 +324,9 @@ export class ScraperService extends Context.Service<ScraperService>()(
     })),
   }
 ) {
+  /**
+   * Provides the default scraper service. The layer has no dependencies, so
+   * callers can provide it directly to a crawl program.
+   */
   static readonly layer = Layer.effect(ScraperService, ScraperService.make);
 }

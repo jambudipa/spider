@@ -12,25 +12,37 @@ import {
 import { SPIDER_DEFAULTS } from '../Spider/Spider.defaults.js';
 import { ConfigError } from '../errors/effect-errors.js';
 
+/** Describes the latest activity that identifies one monitored worker. */
 interface WorkerStatus {
+  /** Identifies the worker across monitor updates. */
   workerId: string;
+  /** Names the domain that the worker currently serves. */
   domain: string;
+  /** Records the most recent URL when the caller supplies one. */
   currentUrl?: string;
+  /** Marks the last received activity time in UTC. */
   lastActivity: DateTime.Utc;
+  /** Marks the current fetch start time in UTC when a fetch is active. */
   fetchStartTime?: DateTime.Utc;
 }
 
+/** Defines the operations that maintain the worker health registry. */
 interface WorkerHealthMonitorService {
+  /** Refreshes a worker record and keeps its current crawl context. */
   readonly recordActivity: (
     workerId: string,
     domain: string,
     activity: { url?: string; fetchStart?: boolean }
   ) => Effect.Effect<void>;
+  /** Removes a worker when its crawl task ends. */
   readonly removeWorker: (workerId: string) => Effect.Effect<void>;
+  /** Reads workers that exceed the configured inactivity threshold. */
   readonly getStuckWorkers: Effect.Effect<WorkerStatus[]>;
+  /** Starts the repeating warning loop for inactive workers. */
   readonly startMonitoring: Effect.Effect<void>;
 }
 
+/** Creates an isolated monitor with the supplied inactivity threshold in milliseconds. */
 const makeWorkerHealthMonitor = (stuckThresholdMs: number) =>
   Effect.gen(function* () {
     const workers = yield* Ref.make(HashMap.empty<string, WorkerStatus>());
@@ -153,6 +165,7 @@ export class WorkerHealthMonitor extends Context.Service<
     make: makeWorkerHealthMonitor(SPIDER_DEFAULTS.STALE_WORKER_THRESHOLD_MS),
   }
 ) {
+  /** Provides the monitor built with the library default threshold. */
   static readonly layer = Layer.effect(
     WorkerHealthMonitor,
     WorkerHealthMonitor.make

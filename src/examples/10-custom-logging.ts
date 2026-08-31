@@ -25,6 +25,7 @@ import {
 
 // 1. Custom Effect Logger — formats annotations alongside the message.
 //    In production wire this to pino, OpenTelemetry, datadog, etc.
+/** Converts Effect log annotations into a compact console suffix. */
 const formatAnnotations = (
   annotations: Readonly<Record<string, unknown>>
 ): string => {
@@ -37,6 +38,7 @@ const formatAnnotations = (
     : '';
 };
 
+/** Logger implementation that writes structured Effect logs to standard output. */
 const myLogger = Logger.make(({ logLevel, message, fiber, date }) => {
   const annotations = fiber.getRef(References.CurrentLogAnnotations);
   const messageText = Array.isArray(message)
@@ -49,6 +51,7 @@ const myLogger = Logger.make(({ logLevel, message, fiber, date }) => {
 
 // Custom event sink: log every spider event with structured annotations.
 // In production, route this to analytics, a database, or an event bus.
+/** Event-sink layer that demonstrates typed domain-event routing. */
 const AnalyticsSink = Layer.succeed(SpiderEventSink, {
   emit: (event) =>
     Effect.logInfo(`spider event: ${event._tag}`).pipe(
@@ -56,6 +59,7 @@ const AnalyticsSink = Layer.succeed(SpiderEventSink, {
     ),
 });
 
+/** Crawls a small target while emitting custom logs and domain events. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('starting custom-logging example');
 
@@ -73,6 +77,7 @@ const program = Effect.gen(function* () {
   return Chunk.toReadonlyArray(collected);
 });
 
+/** Restricts the logging demonstration to a small polite crawl. */
 const config = makeSpiderConfig({
   maxPages: 3,
   maxDepth: 1,
@@ -80,6 +85,7 @@ const config = makeSpiderConfig({
   maxConcurrentWorkers: 2,
 });
 
+/** Provides the logger, event sink, configuration, and crawler services. */
 const runnable = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

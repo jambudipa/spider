@@ -245,7 +245,9 @@ export const buildFetchRetrySchedule = (
  * @public
  */
 export interface CrossDomainRedirectConfig {
+  /** Enables follow-up crawling on the host selected by a start-URL redirect. */
   readonly enabled: boolean;
+  /** Retained redirect-hop limit for event consumers; Fetch does not expose intermediate hops. */
   readonly maxHops: number;
 }
 
@@ -309,10 +311,13 @@ export type StopMode =
  * @public
  */
 export interface ResolvedStopMode {
+  /** The normalized shutdown action that worker coordination must apply. */
   readonly kind: 'drain' | 'interrupt';
+  /** Time in milliseconds allowed for interrupted fetches to finish cleanup. */
   readonly gracePeriodMs: number;
 }
 
+/** Applies the default grace period so shutdown code handles one stable shape. */
 const resolveStopMode = (mode?: StopMode): ResolvedStopMode => {
   if (!mode || mode === 'drain') return { kind: 'drain', gracePeriodMs: 5000 };
   if (mode === 'interrupt') return { kind: 'interrupt', gracePeriodMs: 5000 };
@@ -790,6 +795,7 @@ export class SpiderConfig extends Context.Service<
 >()('@jambudipa/spiderConfig', {
   make: Effect.sync(() => makeSpiderConfig({})),
 }) {
+  /** Provides the validated default configuration to an Effect program. */
   static readonly layer = Layer.effect(SpiderConfig, SpiderConfig.make);
 
   /**
@@ -805,18 +811,6 @@ export class SpiderConfig extends Context.Service<
     );
 }
 
-/**
- * Creates a SpiderConfigService implementation with custom options.
- *
- * This is the factory function that creates the actual service implementation.
- * Options are merged with defaults, providing a complete configuration.
- *
- * @param options - Partial configuration options to merge with defaults
- * @returns Complete SpiderConfigService implementation
- *
- * @group Configuration
- * @public
- */
 /**
  * Common file extension categories for filtering.
  * Based on commonly ignored file types in web scraping (86 total extensions).
@@ -1014,6 +1008,15 @@ const normaliseDomainForComparison = (
   return h;
 };
 
+/**
+ * Builds a complete configuration from caller overrides and spider defaults.
+ *
+ * The factory throws {@link ConfigError} synchronously for invalid startup
+ * input. Call it at the configuration boundary before an Effect program runs.
+ *
+ * @group Configuration
+ * @public
+ */
 export const makeSpiderConfig = (
   options: Partial<SpiderConfigOptions> = {}
 ): SpiderConfigService => {

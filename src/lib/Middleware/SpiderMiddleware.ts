@@ -178,6 +178,7 @@ export class MiddlewareManager extends Context.Service<MiddlewareManager>()(
     })),
   }
 ) {
+  /** Provide the middleware pipeline manager without external dependencies. */
   static readonly layer = Layer.effect(
     MiddlewareManager,
     MiddlewareManager.make
@@ -273,6 +274,7 @@ export class RateLimitMiddleware extends Context.Service<RateLimitMiddleware>()(
     }),
   }
 ) {
+  /** Provide a rate-limiter instance with counters shared by its middleware. */
   static readonly layer = Layer.effect(
     RateLimitMiddleware,
     RateLimitMiddleware.make
@@ -375,6 +377,7 @@ export class LoggingMiddleware extends Context.Service<LoggingMiddleware>()(
     })),
   }
 ) {
+  /** Provide a middleware factory that sends records through Effect logging. */
   static readonly layer = Layer.effect(
     LoggingMiddleware,
     LoggingMiddleware.make
@@ -407,6 +410,7 @@ export class UserAgentMiddleware extends Context.Service<UserAgentMiddleware>()(
     })),
   }
 ) {
+  /** Provide the middleware factory that sets a caller-selected User-Agent. */
   static readonly layer = Layer.effect(
     UserAgentMiddleware,
     UserAgentMiddleware.make
@@ -503,5 +507,6 @@ export class StatsMiddleware extends Context.Service<StatsMiddleware>()(
     }),
   }
 ) {
+  /** Provide a statistics factory whose counters start when the layer builds. */
   static readonly layer = Layer.effect(StatsMiddleware, StatsMiddleware.make);
 }

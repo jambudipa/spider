@@ -12,6 +12,7 @@ import { JsonUtils } from './JsonUtils.js';
 // Type Definitions
 // ============================================================================
 
+/** Lists the Node encodings that these text helpers accept. */
 type FileEncoding =
   | 'ascii'
   | 'utf8'
@@ -25,14 +26,18 @@ type FileEncoding =
   | 'binary'
   | 'hex';
 
+/** Narrows an unknown failure to a Node error that may expose an error code. */
 interface NodeError extends Error {
+  /** Carries the Node filesystem error code when Node provides one. */
   code?: string;
 }
 
+/** Identifies Node errors before the helpers read their optional code. */
 function isNodeError(error: unknown): error is NodeError {
   return error instanceof Error && 'code' in error;
 }
 
+/** Returns a Node error code without exposing nullable error properties. */
 function getErrorCode(error: unknown): Option.Option<string> {
   if (isNodeError(error)) {
     return Option.fromNullishOr(error.code);
@@ -44,14 +49,18 @@ function getErrorCode(error: unknown): Option.Option<string> {
 // Error Types
 // ============================================================================
 
+/** Unites the typed failures emitted by the filesystem helpers. */
 export type FileError = FileReadError | FileWriteError | DirectoryError;
+/** Lists stable tags for filesystem failure handling. */
 export type FileErrorType = 'FileReadError' | 'FileWriteError' | 'DirectoryError';
 
+/** Represents a failed read and preserves the path and Node error code. */
 export class FileReadError extends Data.TaggedError('FileReadError')<{
   readonly path: string;
   readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
+  /** Maps common read codes to actionable user-facing text. */
   get message(): string {
     if (Option.isSome(this.code) && this.code.value === 'ENOENT') {
       return `File not found: ${this.path}`;
@@ -63,11 +72,13 @@ export class FileReadError extends Data.TaggedError('FileReadError')<{
   }
 }
 
+/** Represents a failed write and preserves the target path. */
 export class FileWriteError extends Data.TaggedError('FileWriteError')<{
   readonly path: string;
   readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
+  /** Maps common write codes to actionable user-facing text. */
   get message(): string {
     if (Option.isSome(this.code) && this.code.value === 'EACCES') {
       return `Permission denied writing file: ${this.path}`;
@@ -79,12 +90,14 @@ export class FileWriteError extends Data.TaggedError('FileWriteError')<{
   }
 }
 
+/** Represents a failed directory operation and its target path. */
 export class DirectoryError extends Data.TaggedError('DirectoryError')<{
   readonly path: string;
   readonly operation: 'create' | 'read' | 'delete';
   readonly code: Option.Option<string>;
   readonly cause?: unknown;
 }> {
+  /** Produces the directory operation failure text. */
   get message(): string {
     return `Failed to ${this.operation} directory ${this.path}: ${this.cause}`;
   }
@@ -94,6 +107,7 @@ export class DirectoryError extends Data.TaggedError('DirectoryError')<{
 // File Operations
 // ============================================================================
 
+/** Provides effectful filesystem operations that convert Node failures into typed errors. */
 export const FileUtils = {
   /**
    * Read file as text
@@ -553,6 +567,7 @@ export const FileUtils = {
 // Re-exports for convenience
 // ============================================================================
 
+/** Re-exports filesystem helpers for callers that prefer named imports. */
 export const {
   readText,
   writeText,

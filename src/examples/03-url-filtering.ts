@@ -19,6 +19,7 @@ import {
   SpiderService,
 } from '../index.js';
 
+/** Demonstrates crawler URL allow and exclusion filters. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo('🕷️ Example 03: URL Filtering and Restrictions');
   yield* Effect.logInfo('Demonstrating various filtering capabilities\n');
@@ -74,6 +75,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration with comprehensive filtering
+/** Selects a bounded target and the filters demonstrated by this example. */
 const config = makeSpiderConfig({
   maxPages: 15,
   maxDepth: 2,
@@ -119,6 +121,7 @@ const config = makeSpiderConfig({
   maxConcurrentWorkers: 2,
 });
 
+/** Provides the crawler layer for the URL-filtering program. */
 const mainEffect = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

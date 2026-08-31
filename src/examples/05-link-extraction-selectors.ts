@@ -24,6 +24,7 @@ import {
   SpiderService,
 } from '../index.js';
 
+/** Demonstrates direct and crawl-time link extraction with CSS restrictions. */
 const program = Effect.gen(function* () {
   yield* Effect.logInfo(
     '🕷️ Example 05: Advanced Link Extraction with CSS Selectors'
@@ -193,6 +194,7 @@ const program = Effect.gen(function* () {
 });
 
 // Configuration optimized for link extraction
+/** Configures the target and selector-oriented extraction behavior. */
 const config = makeSpiderConfig({
   maxPages: 6,
   maxDepth: 1,
@@ -216,6 +218,7 @@ const config = makeSpiderConfig({
   maxConcurrentWorkers: 2,
 });
 
+/** Provides the spider, scraper, and extraction services for the example. */
 const runnable = program.pipe(
   Effect.provide(
     SpiderService.layer.pipe(

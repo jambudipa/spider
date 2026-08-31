@@ -14,9 +14,11 @@ import {
  * Type guard for NodeJS error with code property
  */
 interface NodeJSError extends Error {
+  /** Carries the Node.js file-system code used to identify missing data. */
   readonly code?: string;
 }
 
+/** Distinguishes expected file-system absence from persistence failures. */
 const isNodeJSError = (error: unknown): error is NodeJSError =>
   error instanceof Error && 'code' in error;
 
@@ -33,7 +35,9 @@ const SnapshotData = Schema.Struct({
  * JSON schemas for serialisation/deserialisation
  */
 const SpiderStateJsonSchema = Schema.fromJsonString(SpiderState, { space: 2 });
+/** Serialises a delta as readable JSON for ordered on-disk replay. */
 const StateDeltaJsonSchema = Schema.fromJsonString(StateDelta, { space: 2 });
+/** Serialises the snapshot envelope, including its replay sequence. */
 const SnapshotDataJsonSchema = Schema.fromJsonString(SnapshotData, { space: 2 });
 
 /**
@@ -59,6 +63,7 @@ const SnapshotDataJsonSchema = Schema.fromJsonString(SnapshotData, { space: 2 })
  * @public
  */
 export class FileStorageBackend implements StorageBackend {
+  /** Describes the local storage features that strategy selection can use. */
   readonly capabilities: StorageCapabilities = {
     supportsDelta: true,
     supportsSnapshot: true,
@@ -67,14 +72,18 @@ export class FileStorageBackend implements StorageBackend {
     latency: 'low',
   };
 
+  /** Identifies this backend in strategy information and errors. */
   readonly name = 'FileStorageBackend';
 
+  /** Holds the root directory that owns every persisted session. */
   private readonly storageDir: string;
 
+  /** Keeps every session below the caller-selected base directory. */
   constructor(baseDir: string) {
     this.storageDir = baseDir;
   }
 
+  /** Creates the stable directory layout before the first write. */
   initialize = (): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -100,9 +109,11 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Leaves files intact because this backend owns no live connection. */
   cleanup = (): Effect.Effect<void, PersistenceError> => Effect.void;
 
   // Full state operations
+  /** Replaces a session's complete state document with the supplied state. */
   saveState = (
     key: SpiderStateKey,
     state: SpiderState
@@ -145,6 +156,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads a complete state, and returns none when the session has no state file. */
   loadState = (
     key: SpiderStateKey
   ): Effect.Effect<Option.Option<SpiderState>, PersistenceError> => {
@@ -191,6 +203,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Removes every persisted file for the selected session. */
   deleteState = (
     key: SpiderStateKey
   ): Effect.Effect<void, PersistenceError> => {
@@ -211,6 +224,7 @@ export class FileStorageBackend implements StorageBackend {
   };
 
   // Delta operations
+  /** Stores one delta under its zero-padded sequence number. */
   saveDelta = (delta: StateDelta): Effect.Effect<void, PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -258,6 +272,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Stores each supplied delta in order because files have no batch primitive. */
   saveDeltas = (
     deltas: StateDelta[]
   ): Effect.Effect<void, PersistenceError> => {
@@ -270,6 +285,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads ordered deltas at or after the requested sequence. */
   loadDeltas = (
     key: SpiderStateKey,
     fromSequence = 0
@@ -337,6 +353,7 @@ export class FileStorageBackend implements StorageBackend {
   };
 
   // Snapshot operations
+  /** Stores a recoverable state snapshot with its last included sequence. */
   saveSnapshot = (
     key: SpiderStateKey,
     state: SpiderState,
@@ -385,6 +402,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Loads the latest snapshot, or none when no snapshot exists. */
   loadLatestSnapshot = (
     key: SpiderStateKey
   ): Effect.Effect<
@@ -438,6 +456,7 @@ export class FileStorageBackend implements StorageBackend {
   };
 
   // Cleanup operations
+  /** Deletes deltas older than the caller's exclusive replay boundary. */
   compactDeltas = (
     key: SpiderStateKey,
     beforeSequence: number
@@ -488,6 +507,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Returns only directories that contain a valid complete state document. */
   listSessions = (): Effect.Effect<SpiderStateKey[], PersistenceError> => {
     const self = this;
     return Effect.gen(function* () {
@@ -551,6 +571,7 @@ export class FileStorageBackend implements StorageBackend {
     });
   };
 
+  /** Derives the directory shared by one session's state, snapshot, and deltas. */
   private getSessionDir = (key: SpiderStateKey): string => {
     return path.join(this.storageDir, 'sessions', key.id);
   };

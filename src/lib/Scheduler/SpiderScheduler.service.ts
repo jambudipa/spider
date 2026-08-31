@@ -421,6 +421,10 @@ export class SpiderSchedulerService extends Context.Service<SpiderSchedulerServi
     }),
   }
 ) {
+  /**
+   * Builds the scheduler with the repository configuration that controls URL
+   * normalization for deduplication.
+   */
   static readonly layer = Layer.effect(
     SpiderSchedulerService,
     SpiderSchedulerService.make

@@ -46,6 +46,9 @@ jobs:
       run: npm run lint || echo "Linting issues found - needs cleanup but not blocking CI"
       continue-on-error: true
 
+    - name: Audit code documentation
+      run: npm run docs:audit
+
     - name: Run unit tests
       run: npm test -- --run src/test/unit src/test/integration --exclude="**/scenarios/**"
 
